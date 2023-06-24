@@ -29,7 +29,7 @@ public:
     void extensions(const std::string& ext);
     major_minor mode() const;
     unsigned number() const;
-    std::optional<flat_sharp> step() const;
+    const std::optional<flat_sharp>& step() const;
     void step(flat_sharp fs);
 
 private:
@@ -75,7 +75,7 @@ inline unsigned chord::number() const
     return number_;
 }
 
-inline std::optional<chord::flat_sharp> chord::step() const
+inline const std::optional<chord::flat_sharp>& chord::step() const
 {
     return step_;
 }
