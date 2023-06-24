@@ -1,7 +1,11 @@
-#include "bar.hpp"
-int main()
+#include "ui_nashville.h"
+
+int main(int argc, char* argv[])
 {
-    nashville::model::chord ch(1);
-    nashville::model::bar b;
-    b.add_chord(std::move(ch));
+    QApplication app(argc, argv);
+    QMainWindow main_win;
+    Ui::main_window ui;
+    ui.setupUi(&main_win);
+    main_win.show();
+    return app.exec();
 }
