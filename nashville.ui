@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>main_window</class>
- <widget class="QMainWindow" name="main_window">
+ <class>window</class>
+ <widget class="QMainWindow" name="window">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -14,17 +14,11 @@
    <string>Nashville</string>
   </property>
   <widget class="QWidget" name="central_widget">
-   <widget class="QWidget" name="horizontalLayoutWidget">
-    <property name="geometry">
-     <rect>
-      <x>180</x>
-      <y>140</y>
-      <width>160</width>
-      <height>80</height>
-     </rect>
-    </property>
-    <layout class="QHBoxLayout" name="horizontal_layout"/>
-   </widget>
+   <layout class="QGridLayout" name="top_grid_layout">
+    <item row="0" column="0">
+     <layout class="QGridLayout" name="grid_layout"/>
+    </item>
+   </layout>
   </widget>
   <widget class="QMenuBar" name="menu_bar">
    <property name="geometry">
@@ -58,7 +52,7 @@
   <connection>
    <sender>action_exit</sender>
    <signal>triggered()</signal>
-   <receiver>main_window</receiver>
+   <receiver>window</receiver>
    <slot>close()</slot>
    <hints>
     <hint type="sourcelabel">
