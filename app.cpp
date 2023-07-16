@@ -1,6 +1,5 @@
 #include "app.hpp"
-#include <QGridLayout>
-#include <QLineEdit>
+#include "title_text.hpp"
 
 namespace nashville
 {
@@ -10,18 +9,9 @@ app::app(int argc, char* argv[])
 {
     nashville_win_.setupUi(&main_win_);
 
-    auto title = new QLineEdit();
-    title->setPlaceholderText("Title");
-    title->setFrame(false);
-    title->setReadOnly(true);
-    nashville_win_.grid_layout->addWidget(title, 0, 0, 1, 2, Qt::AlignCenter);
-    auto title2 = new QLineEdit();
-    title2->setPlaceholderText("two");
-    nashville_win_.grid_layout->addWidget(title2, 1, 0, Qt::AlignLeft);
-    auto title3 = new QLineEdit();
-    title3->setPlaceholderText("three");
-    nashville_win_.grid_layout->addWidget(title3, 1, 1, Qt::AlignLeft);
+    auto title = new ui::title_text(central_widget());
 
+    main_win_.setFocus();
     main_win_.show();
 }
 

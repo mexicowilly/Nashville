@@ -18,11 +18,17 @@ private:
     QApplication qapp_;
     QMainWindow main_win_;
     Ui::window nashville_win_;
+    QString title_;
 };
 
 inline QWidget& app::central_widget()
 {
     return *nashville_win_.central_widget;
+}
+
+inline QString app::title() const
+{
+    return title_;
 }
 
 }

@@ -11,16 +11,10 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Nashville</string>
+   <string>MainWindow</string>
   </property>
-  <widget class="QWidget" name="central_widget">
-   <layout class="QGridLayout" name="top_grid_layout">
-    <item row="0" column="0">
-     <layout class="QGridLayout" name="grid_layout"/>
-    </item>
-   </layout>
-  </widget>
-  <widget class="QMenuBar" name="menu_bar">
+  <widget class="QWidget" name="central_widget"/>
+  <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
@@ -29,16 +23,16 @@
      <height>30</height>
     </rect>
    </property>
-   <widget class="QMenu" name="menu_file">
+   <widget class="QMenu" name="menuFile">
     <property name="title">
      <string>File</string>
     </property>
-    <addaction name="action_exit"/>
+    <addaction name="actionExit"/>
    </widget>
-   <addaction name="menu_file"/>
+   <addaction name="menuFile"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
-  <action name="action_exit">
+  <action name="actionExit">
    <property name="text">
     <string>Exit</string>
    </property>
@@ -50,7 +44,7 @@
  <resources/>
  <connections>
   <connection>
-   <sender>action_exit</sender>
+   <sender>actionExit</sender>
    <signal>triggered()</signal>
    <receiver>window</receiver>
    <slot>close()</slot>
