@@ -3,6 +3,13 @@ project('nashville', 'cpp', default_options : [ 'cpp_std=c++17' ])
 comp = meson.get_compiler('cpp')
 if comp.has_argument('-fPIC')
     pic_flag = '-fPIC'
+else
+    pic_flag = ''
+endif
+if comp.has_link_argument('-Wl,--copy-dt-needed-entries')
+    dt_flag = '-Wl,--copy-dt-needed-entries'
+else
+    dt_flag = ''
 endif
 
 chucho_lib = comp.find_library('chucho', dirs: [ '/usr/local/lib' ])
@@ -30,4 +37,5 @@ executable('nashville',
            sources,
            dependencies: [ chucho_lib, qt5_dep ],
            include_directories: [ '/usr/local/include', qt5_includes ],
-           cpp_args: [ pic_flag ])
+           cpp_args: [ pic_flag ],
+           link_args: [ dt_flag ])
