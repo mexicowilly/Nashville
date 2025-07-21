@@ -114,11 +114,18 @@ void chord::parse_user_input(const std::string& usr)
         {
             auto mode = result[3].str();
             if (mode == "-")
+            {
                 mode_ = type::MINOR;
+            }
             else if (mode == "dim")
+            {
                 mode_ = type::DIMINISHED;
+            }
             else
+            {
+                assert(mode == "+");
                 mode_ = type::AUGMENTED;
+            }
         }
         if (result[4].length() > 0)
         {
