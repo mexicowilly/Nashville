@@ -16,20 +16,21 @@ std::ostream& operator<< (std::ostream& out, const chord& c)
     switch (c.mode_)
     {
         case chord::type::MINOR:
-            out << " min ";
+            out << "min";
             break;
         case chord::type::DIMINISHED:
-            out << " dim ";
+            out << "dim";
             break;
         case chord::type::AUGMENTED:
-            out << " aug ";
+            out << "aug";
             break;
         default: ;
     }
-    out << c.extensions_;
+    if (!c.extensions_.empty())
+        out << " " << c.extensions_;
     if (c.bass_note_)
     {
-        out << "/ ";
+        out << " / ";
         if (c.bass_note_step_)
             out << (*c.bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
         out << *c.bass_note_;

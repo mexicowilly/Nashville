@@ -47,6 +47,8 @@ public:
 
     std::optional<unsigned> bass_note() const;
     chord& bass_note(unsigned bn);
+    std::optional<flat_sharp> bass_note_step() const;
+    chord& bass_note_step(flat_sharp fs);
     std::optional<chord::time> duration() const;
     chord& duration(chord::time dur);
     const std::string& extensions() const;
@@ -88,6 +90,17 @@ inline std::optional<unsigned> chord::bass_note() const
 inline chord& chord::bass_note(unsigned bn)
 {
     bass_note_ = bn;
+    return *this;
+}
+
+inline std::optional<chord::flat_sharp> chord::bass_note_step() const
+{
+    return bass_note_step_;
+}
+
+inline chord& chord::bass_note_step(chord::flat_sharp fs)
+{
+    bass_note_step_ = fs;
     return *this;
 }
 
