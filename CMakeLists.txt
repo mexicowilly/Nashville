@@ -16,6 +16,7 @@ qt_add_executable(nashville
     app.cpp
     app.hpp
     bar.hpp
+    chord.cpp
     chord.hpp
     main.cpp
     nashville.ui
