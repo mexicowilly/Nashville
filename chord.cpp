@@ -24,9 +24,7 @@ std::ostream& operator<< (std::ostream& out, const chord& c)
         case chord::type::AUGMENTED:
             out << " aug ";
             break;
-        default:
-            out << " ";
-            break;
+        default: ;
     }
     out << c.extensions_;
     if (c.bass_note_)
@@ -84,9 +82,22 @@ std::ostream& operator<< (std::ostream& out, const chord& c)
     return out;
 }
 
+bool chord::operator== (const chord& other) const
+{
+    return number_ == other.number_ &&
+           mode_ == other. mode_ &&
+           step_ == other.step_ &&
+           bass_note_ == other.bass_note_ &&
+           bass_note_step_ == other.bass_note_step_ &&
+           extensions_ == other.extensions_ &&
+           is_staccato_ == other.is_staccato_ &&
+           is_diamond_ == other.is_diamond_ &&
+           duration_ == other.duration_;
+}
+
 void chord::parse_user_input(const std::string& usr)
 {
-    CHUCHO_DEBUG_L("Parsing user input: ''" << usr << "'");
+    CHUCHO_DEBUG_L("Parsing user input: '" << usr << "'");
     if (usr.empty())
         throw std::invalid_argument("The chord description cannot be empty");
     chord saved(*this);

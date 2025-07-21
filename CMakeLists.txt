@@ -12,6 +12,8 @@ set(CMAKE_AUTOUIC ON)
 
 find_library(CHUCHO_LIB chucho REQUIRED)
 
+find_package(GTest REQUIRED)
+
 qt_add_executable(nashville
     app.cpp
     app.hpp
@@ -25,3 +27,5 @@ qt_add_executable(nashville
 )
 
 target_link_libraries(nashville PRIVATE Qt6::Widgets ${CHUCHO_LIB})
+
+add_subdirectory(test)
