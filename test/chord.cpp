@@ -63,4 +63,44 @@ TEST(chord, user_input)
     EXPECT_NO_THROW(c.parse_user_input("3dimdiddly/b7"));
     ref.mode(model::chord::type::DIMINISHED);
     EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("#2-/b5"));
+    ref = model::chord()
+          .number(2)
+          .mode(model::chord::type::MINOR)
+          .step(model::chord::flat_sharp::SHARP)
+          .bass_note(5)
+          .bass_note_step(model::chord::flat_sharp::FLAT);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:s"));
+    ref = model::chord().duration(model::chord::time::SIXTEENTH);
+    EXPECT_EQ(c, ref);
+    // There is no dotted sixteenth, but we allow it and ignore
+    EXPECT_NO_THROW(c.parse_user_input("1:s."));
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:e"));
+    ref.duration(model::chord::time::EIGHTH);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:e."));
+    ref.duration(model::chord::time::DOTTED_EIGHTH);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:q"));
+    ref.duration(model::chord::time::QUARTER);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:q."));
+    ref.duration(model::chord::time::DOTTED_QUARTER);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:h"));
+    ref.duration(model::chord::time::HALF);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:h."));
+    ref.duration(model::chord::time::DOTTED_HALF);
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("1:w"));
+    ref.duration(model::chord::time::WHOLE);
+    EXPECT_EQ(c, ref);
+    // There is no dotted whole, but we allow it and ignore
+    EXPECT_NO_THROW(c.parse_user_input("1:w."));
+    EXPECT_EQ(c, ref);
+    EXPECT_THROW(c.parse_user_input("mydoghasfleas"), std::invalid_argument);
+    EXPECT_THROW(c.parse_user_input("7dim:blah"), std::invalid_argument);
 }
