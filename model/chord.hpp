@@ -4,12 +4,15 @@
 #include <optional>
 #include <string>
 #include <ostream>
+#include <QObject>
 
 namespace nashville::model
 {
 
-class chord : chucho::loggable<chord>
+class chord : public QObject, chucho::loggable<chord>
 {
+    Q_OBJECT
+
 public:
     enum class type
     {
@@ -37,11 +40,9 @@ public:
         WHOLE
     };
 
-    chord() = default;
+    chord();
     chord(unsigned number, type md = type::MAJOR);
-    chord(const chord& other) = default;
 
-    chord& operator= (const chord& other) = default;
     friend std::ostream& operator<< (std::ostream& out, const chord& c);
     bool operator== (const chord& other) const;
 
@@ -57,25 +58,38 @@ public:
     chord& is_diamond(bool state);
     bool is_staccato() const;
     chord& is_staccato(bool state);
+    bool is_tied() const;
+    chord& is_tied(bool state);
     type mode() const;
     chord& mode(type m);
     unsigned number() const;
     chord& number(unsigned num);
     void parse_user_input(const std::string& usr);
+    chord& reset();
     std::optional<flat_sharp> step() const;
     chord& step(flat_sharp fs);
+    std::string to_user_input() const;
+
+signals:
+    void changed() const;
 
 private:
-    unsigned number_ = 1;
-    type mode_ = type::MAJOR;
+    unsigned number_;
+    type mode_;
     std::optional<flat_sharp> step_;
     std::optional<unsigned> bass_note_;
     std::optional<flat_sharp> bass_note_step_;
     std::string extensions_;
-    bool is_staccato_ = false;
-    bool is_diamond_ = false;
+    bool is_staccato_;
+    bool is_diamond_;
     std::optional<time> duration_;
+    bool is_tied_;
 };
+
+inline chord::chord()
+{
+    reset();
+}
 
 inline chord::chord(unsigned number, type md)
     : number_(number), mode_(md)
@@ -145,6 +159,17 @@ inline bool chord::is_staccato() const
 inline chord& chord::is_staccato(bool state)
 {
     is_staccato_ = state;
+    return *this;
+}
+
+inline bool chord::is_tied() const
+{
+    return is_tied_;
+}
+
+inline chord& chord::is_tied(bool state)
+{
+    is_tied_ = state;
     return *this;
 }
 
