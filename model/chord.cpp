@@ -136,6 +136,73 @@ bool chord::operator== (const chord& other) const
            duration_ == other.duration_;
 }
 
+chord& chord::bass_note(unsigned bn)
+{
+    if (bn < 1 || bn > 7)
+        throw std::invalid_argument("The bass note number must be from 1 to 7");
+    bass_note_ = bn;
+    emit changed();
+    return *this;
+}
+
+chord& chord::bass_note_step(chord::flat_sharp fs)
+{
+    bass_note_step_ = fs;
+    emit changed();
+    return *this;
+}
+
+chord& chord::duration(chord::time dur)
+{
+    duration_ = dur;
+    emit changed();
+    return *this;
+}
+
+chord& chord::extensions(const std::string& ext)
+{
+    extensions_ = ext;
+    emit changed();
+    return *this;
+}
+
+chord& chord::is_diamond(bool state)
+{
+    is_diamond_ = state;
+    emit changed();
+    return *this;
+}
+
+chord& chord::is_staccato(bool state)
+{
+    is_staccato_ = state;
+    emit changed();
+    return *this;
+}
+
+chord& chord::is_tied(bool state)
+{
+    is_tied_ = state;
+    emit changed();
+    return *this;
+}
+
+chord& chord::mode(chord::type m)
+{
+    mode_ = m;
+    emit changed();
+    return *this;
+}
+
+chord& chord::number(unsigned num)
+{
+    if (num < 1 || num > 7)
+        throw std::invalid_argument("The chord number must be from 1 to 7");
+    number_ = num;
+    emit changed();
+    return *this;
+}
+
 void chord::parse_user_input(const std::string& usr)
 {
     CHUCHO_DEBUG_L("Parsing user input: '" << usr << "'");
@@ -224,6 +291,7 @@ void chord::parse_user_input(const std::string& usr)
         throw std::invalid_argument("'" + usr + "' is not a valid chord description");
     }
     CHUCHO_DEBUG_L("Found " << *this);
+    emit changed();
 }
 
 chord& chord::reset()
@@ -238,6 +306,13 @@ chord& chord::reset()
     is_diamond_ = false;
     duration_.reset();
     is_tied_ = false;
+    return *this;
+}
+
+chord& chord::step(flat_sharp fs)
+{
+    step_ = fs;
+    emit changed();
     return *this;
 }
 
@@ -262,11 +337,15 @@ std::string chord::to_user_input() const
     }
     out << extensions_;
     if (bass_note_)
+    {
+        out << '/';
+        if (bass_note_step_)
+            out << (*bass_note_step_ == flat_sharp::FLAT ? 'b' : '#');
         out << *bass_note_;
-    if (bass_note_step_)
-        out << (*bass_note_step_ == flat_sharp::FLAT ? 'b' : '#');
+    }
     if (duration_)
     {
+        out << ':';
         switch (*duration_)
         {
         case time::SIXTEENTH:

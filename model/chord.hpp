@@ -101,21 +101,9 @@ inline std::optional<unsigned> chord::bass_note() const
     return bass_note_;
 }
 
-inline chord& chord::bass_note(unsigned bn)
-{
-    bass_note_ = bn;
-    return *this;
-}
-
 inline std::optional<chord::flat_sharp> chord::bass_note_step() const
 {
     return bass_note_step_;
-}
-
-inline chord& chord::bass_note_step(chord::flat_sharp fs)
-{
-    bass_note_step_ = fs;
-    return *this;
 }
 
 inline std::optional<chord::time> chord::duration() const
@@ -123,21 +111,9 @@ inline std::optional<chord::time> chord::duration() const
     return duration_;
 }
 
-inline chord& chord::duration(chord::time dur)
-{
-    duration_ = dur;
-    return *this;
-}
-
 inline const std::string& chord::extensions() const
 {
     return extensions_;
-}
-
-inline chord& chord::extensions(const std::string& ext)
-{
-    extensions_ = ext;
-    return *this;
 }
 
 inline bool chord::is_diamond() const
@@ -145,21 +121,9 @@ inline bool chord::is_diamond() const
     return is_diamond_;
 }
 
-inline chord& chord::is_diamond(bool state)
-{
-    is_diamond_ = state;
-    return *this;
-}
-
 inline bool chord::is_staccato() const
 {
     return is_staccato_;
-}
-
-inline chord& chord::is_staccato(bool state)
-{
-    is_staccato_ = state;
-    return *this;
 }
 
 inline bool chord::is_tied() const
@@ -167,21 +131,9 @@ inline bool chord::is_tied() const
     return is_tied_;
 }
 
-inline chord& chord::is_tied(bool state)
-{
-    is_tied_ = state;
-    return *this;
-}
-
 inline chord::type chord::mode() const
 {
     return mode_;
-}
-
-inline chord& chord::mode(chord::type m)
-{
-    mode_ = m;
-    return *this;
 }
 
 inline unsigned chord::number() const
@@ -189,21 +141,9 @@ inline unsigned chord::number() const
     return number_;
 }
 
-inline chord& chord::number(unsigned num)
-{
-    number_ = num;
-    return *this;
-}
-
 inline std::optional<chord::flat_sharp> chord::step() const
 {
     return step_;
-}
-
-inline chord& chord::step(flat_sharp fs)
-{
-    step_ = fs;
-    return *this;
 }
 
 }
