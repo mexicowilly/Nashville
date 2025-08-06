@@ -1,20 +1,25 @@
 #pragma once
 
+#include <QSettings>
+
 namespace nashville::settings
 {
 
-enum class minor_chord_style
+enum
 {
-    DASH,
-    LETTER_M,
-    ABBREV_MIN
+    MINOR_DASH,
+    MINOR_LETTER_M,
+    MINOR_ABBREV_MIN
 };
+
+const char* MINOR_CHORD_STYLE = "minor chord style";
+const char* SHOW_CHORD_SYMBOLS = "show chord symbols";
 
 namespace defaults
 {
 
 bool SHOW_CHORD_SYMBOLS = true;
-minor_chord_style MINOR_CHORD_STYLE = minor_chord_style::DASH;
+int MINOR_CHORD_STYLE = MINOR_DASH;
 
 }
 
