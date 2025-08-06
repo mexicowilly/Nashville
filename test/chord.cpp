@@ -76,7 +76,7 @@ TEST(chord, user_input)
        .bass_note_step(model::chord::flat_sharp::FLAT);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("1:s"));
-    ref.reset().duration(model::chord::time::SIXTEENTH);
+    ref.reset().number(1).duration(model::chord::time::SIXTEENTH);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("1:S"));
     EXPECT_EQ(c, ref);
@@ -135,6 +135,7 @@ TEST(chord, user_input)
 TEST(chord, to_user_input)
 {
     model::chord c;
+    EXPECT_EQ(std::string(), c.to_user_input());
     EXPECT_THROW(c.number(0), std::invalid_argument);
     EXPECT_THROW(c.number(8), std::invalid_argument);
     for (const auto& num : { 1, 2, 3, 4, 5, 6, 7 })

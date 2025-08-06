@@ -19,7 +19,8 @@ public:
         MAJOR,
         MINOR,
         DIMINISHED,
-        AUGMENTED
+        AUGMENTED,
+        UNDEFINED
     };
 
     enum class flat_sharp
@@ -41,7 +42,6 @@ public:
     };
 
     chord();
-    chord(unsigned number, type md = type::MAJOR);
 
     friend std::ostream& operator<< (std::ostream& out, const chord& c);
     bool operator== (const chord& other) const;
@@ -89,11 +89,6 @@ private:
 inline chord::chord()
 {
     reset();
-}
-
-inline chord::chord(unsigned number, type md)
-    : number_(number), mode_(md)
-{
 }
 
 inline std::optional<unsigned> chord::bass_note() const

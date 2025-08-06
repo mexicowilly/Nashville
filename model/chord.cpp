@@ -44,79 +44,82 @@ namespace nashville::model
 std::ostream& operator<< (std::ostream& out, const chord& c)
 {
     out << "chord:{";
-    if (c.step_)
-        out << (c.step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
-    out << c.number_;
-    switch (c.mode_)
+    if (c.mode_ != chord::type::UNDEFINED)
     {
-        case chord::type::MINOR:
-            out << "min";
-            break;
-        case chord::type::DIMINISHED:
-            out << "dim";
-            break;
-        case chord::type::AUGMENTED:
-            out << "aug";
-            break;
-        default: ;
-    }
-    if (!c.extensions_.empty())
-        out << " " << c.extensions_;
-    if (c.bass_note_)
-    {
-        out << " / ";
-        if (c.bass_note_step_)
-            out << (*c.bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
-        out << *c.bass_note_;
-    }
-    if (c.is_staccato_ || c.is_diamond_ || c.is_tied_)
-    {
-        out << " (";
-        if (c.is_diamond_)
+        if (c.step_)
+            out << (c.step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
+        out << c.number_;
+        switch (c.mode_)
         {
-            out << "d";
-            if (c.is_staccato_ || c.is_tied_)
-                out << ",";
+            case chord::type::MINOR:
+                out << "min";
+                break;
+            case chord::type::DIMINISHED:
+                out << "dim";
+                break;
+            case chord::type::AUGMENTED:
+                out << "aug";
+                break;
+            default: ;
         }
-        if (c.is_staccato_)
+        if (!c.extensions_.empty())
+            out << " " << c.extensions_;
+        if (c.bass_note_)
         {
-            out << "s";
-            if (c.is_tied_)
-                out << ",";
+            out << " / ";
+            if (c.bass_note_step_)
+                out << (*c.bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
+            out << *c.bass_note_;
         }
-        if (c.is_tied_)
-            out << "t";
-        out << ")";
-    }
-    if (c.duration_)
-    {
-        out << " ";
-        switch (*c.duration_)
+        if (c.is_staccato_ || c.is_diamond_ || c.is_tied_)
         {
-            case chord::time::SIXTEENTH:
+            out << " (";
+            if (c.is_diamond_)
+            {
+                out << "d";
+                if (c.is_staccato_ || c.is_tied_)
+                    out << ",";
+            }
+            if (c.is_staccato_)
+            {
                 out << "s";
-                break;
-            case chord::time::EIGHTH:
-                out << "e";
-                break;
-            case chord::time::DOTTED_EIGHTH:
-                out << "e.";
-                break;
-            case chord::time::QUARTER:
-                out << "q";
-                break;
-            case chord::time::DOTTED_QUARTER:
-                out << "q.";
-                break;
-            case chord::time::HALF:
-                out << "h";
-                break;
-            case chord::time::DOTTED_HALF:
-                out << "h.";
-                break;
-            case chord::time::WHOLE:
-                out << "w";
-                break;
+                if (c.is_tied_)
+                    out << ",";
+            }
+            if (c.is_tied_)
+                out << "t";
+            out << ")";
+        }
+        if (c.duration_)
+        {
+            out << " ";
+            switch (*c.duration_)
+            {
+                case chord::time::SIXTEENTH:
+                    out << "s";
+                    break;
+                case chord::time::EIGHTH:
+                    out << "e";
+                    break;
+                case chord::time::DOTTED_EIGHTH:
+                    out << "e.";
+                    break;
+                case chord::time::QUARTER:
+                    out << "q";
+                    break;
+                case chord::time::DOTTED_QUARTER:
+                    out << "q.";
+                    break;
+                case chord::time::HALF:
+                    out << "h";
+                    break;
+                case chord::time::DOTTED_HALF:
+                    out << "h.";
+                    break;
+                case chord::time::WHOLE:
+                    out << "w";
+                    break;
+            }
         }
     }
     out << "}";
@@ -199,6 +202,8 @@ chord& chord::number(unsigned num)
     if (num < 1 || num > 7)
         throw std::invalid_argument("The chord number must be from 1 to 7");
     number_ = num;
+    if (mode_ == type::UNDEFINED)
+        mode_ = type::MAJOR;
     emit changed();
     return *this;
 }
@@ -234,6 +239,10 @@ void chord::parse_user_input(const std::string& usr)
                 assert(mode == "+");
                 mode_ = type::AUGMENTED;
             }
+        }
+        else
+        {
+            mode_ = type::MAJOR;
         }
         if (result[4].length() > 0)
         {
@@ -297,7 +306,7 @@ void chord::parse_user_input(const std::string& usr)
 chord& chord::reset()
 {
     number_ = 1;
-    mode_ = type::MAJOR;
+    mode_ = type::UNDEFINED;
     step_.reset();
     bass_note_.reset();
     bass_note_step_.reset();
@@ -318,6 +327,8 @@ chord& chord::step(flat_sharp fs)
 
 std::string chord::to_user_input() const
 {
+    if (mode_ == type::UNDEFINED)
+        return std::string();
     std::ostringstream out;
     if (step_)
         out << (*step_ == flat_sharp::FLAT ? 'b' : '#');
