@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QLabel>
-#include <QGridLayout>
+#include <QVBoxLayout>
 #include "../model/chord.hpp"
 
 namespace nashville::widgets
@@ -21,7 +21,7 @@ private:
     void set_chord_label_text();
 
     model::chord& model_;
-    QGridLayout* layout_;
+    QVBoxLayout* layout_;
     QLabel* chord_text_;
 };
 

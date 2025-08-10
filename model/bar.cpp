@@ -1,0 +1,39 @@
+#include "bar.hpp"
+#include <chucho/log.hpp>
+#include <string.h>
+
+namespace nashville::model
+{
+
+chord& bar::add_chord()
+{
+    return chords_.emplace_back(chord());
+}
+
+void bar::parse_user_input(const std::string& str)
+{
+    CHUCHO_DEBUG_L("Parsing bar input: '" << str << "'");
+    std::string src(str);
+    std::vector<chord> new_chords;
+    char* token = strtok(const_cast<char*>(src.c_str()), " ");
+    while (token != nullptr)
+    {
+        new_chords.emplace_back(chord()).parse_user_input(token);
+        token = strtok(nullptr, " ");
+    }
+    chords_ = new_chords;
+    CHUCHO_DEBUG_L("Done");
+}
+
+std::string bar::to_user_input() const
+{
+    std::ostringstream out;
+    for (const auto& ch : chords_)
+        out << ch.to_user_input() << ' ';
+    auto inp = out.str();
+    if (!inp.empty())
+        inp.pop_back();
+    return inp;
+}
+
+}

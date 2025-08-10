@@ -4,15 +4,12 @@
 #include <optional>
 #include <string>
 #include <ostream>
-#include <QObject>
 
 namespace nashville::model
 {
 
-class chord : public QObject, chucho::loggable<chord>
+class chord : public chucho::loggable<chord>
 {
-    Q_OBJECT
-
 public:
     enum class type
     {
@@ -50,6 +47,7 @@ public:
     chord& bass_note(unsigned bn);
     std::optional<flat_sharp> bass_note_step() const;
     chord& bass_note_step(flat_sharp fs);
+    chord& clear();
     std::optional<chord::time> duration() const;
     chord& duration(chord::time dur);
     const std::string& extensions() const;
@@ -65,13 +63,9 @@ public:
     unsigned number() const;
     chord& number(unsigned num);
     void parse_user_input(const std::string& usr);
-    chord& reset();
     std::optional<flat_sharp> step() const;
     chord& step(flat_sharp fs);
     std::string to_user_input() const;
-
-signals:
-    void changed() const;
 
 private:
     unsigned number_;
@@ -86,11 +80,6 @@ private:
     bool is_tied_;
 };
 
-inline chord::chord()
-{
-    reset();
-}
-
 inline std::optional<unsigned> chord::bass_note() const
 {
     return bass_note_;
@@ -99,6 +88,12 @@ inline std::optional<unsigned> chord::bass_note() const
 inline std::optional<chord::flat_sharp> chord::bass_note_step() const
 {
     return bass_note_step_;
+}
+
+inline chord& chord::clear()
+{
+    *this = chord();
+    return *this;
 }
 
 inline std::optional<chord::time> chord::duration() const

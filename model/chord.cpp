@@ -41,6 +41,15 @@ struct memento
 namespace nashville::model
 {
 
+chord::chord()
+    : number_(1),
+      mode_(type::UNDEFINED),
+      is_staccato_(false),
+      is_diamond_(false),
+      is_tied_(false)
+{
+}
+
 std::ostream& operator<< (std::ostream& out, const chord& c)
 {
     out << "chord:{";
@@ -144,56 +153,48 @@ chord& chord::bass_note(unsigned bn)
     if (bn < 1 || bn > 7)
         throw std::invalid_argument("The bass note number must be from 1 to 7");
     bass_note_ = bn;
-    emit changed();
     return *this;
 }
 
 chord& chord::bass_note_step(chord::flat_sharp fs)
 {
     bass_note_step_ = fs;
-    emit changed();
     return *this;
 }
 
 chord& chord::duration(chord::time dur)
 {
     duration_ = dur;
-    emit changed();
     return *this;
 }
 
 chord& chord::extensions(const std::string& ext)
 {
     extensions_ = ext;
-    emit changed();
     return *this;
 }
 
 chord& chord::is_diamond(bool state)
 {
     is_diamond_ = state;
-    emit changed();
     return *this;
 }
 
 chord& chord::is_staccato(bool state)
 {
     is_staccato_ = state;
-    emit changed();
     return *this;
 }
 
 chord& chord::is_tied(bool state)
 {
     is_tied_ = state;
-    emit changed();
     return *this;
 }
 
 chord& chord::mode(chord::type m)
 {
     mode_ = m;
-    emit changed();
     return *this;
 }
 
@@ -204,17 +205,16 @@ chord& chord::number(unsigned num)
     number_ = num;
     if (mode_ == type::UNDEFINED)
         mode_ = type::MAJOR;
-    emit changed();
     return *this;
 }
 
 void chord::parse_user_input(const std::string& usr)
 {
-    CHUCHO_DEBUG_L("Parsing user input: '" << usr << "'");
+    CHUCHO_DEBUG_L("Parsing chord input: '" << usr << "'");
     if (usr.empty())
         throw std::invalid_argument("The chord description cannot be empty");
-    memento saved(*this);
-    this->reset();
+    chord saved(*this);
+    *this = chord();
     auto re = std::regex("([b#])?([1-7])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
     std::smatch result;
     if (std::regex_match(usr, result, re))
@@ -287,41 +287,15 @@ void chord::parse_user_input(const std::string& usr)
     }
     else
     {
-        number_ = saved.number_;
-        mode_ = saved.mode_;
-        step_ = saved.step_;
-        bass_note_ = saved.bass_note_;
-        bass_note_step_ = saved.bass_note_step_;
-        extensions_ = saved.extensions_;
-        is_staccato_ = saved.is_staccato_;
-        is_diamond_ = saved.is_diamond_;
-        duration_ = saved.duration_;
-        is_tied_ = saved.is_tied_;
+        *this = saved;
         throw std::invalid_argument("'" + usr + "' is not a valid chord description");
     }
     CHUCHO_DEBUG_L("Found " << *this);
-    emit changed();
-}
-
-chord& chord::reset()
-{
-    number_ = 1;
-    mode_ = type::UNDEFINED;
-    step_.reset();
-    bass_note_.reset();
-    bass_note_step_.reset();
-    extensions_.clear();
-    is_staccato_ = false;
-    is_diamond_ = false;
-    duration_.reset();
-    is_tied_ = false;
-    return *this;
 }
 
 chord& chord::step(flat_sharp fs)
 {
     step_ = fs;
-    emit changed();
     return *this;
 }
 

@@ -1,6 +1,5 @@
 #include "chord.hpp"
 #include "../settings.hpp"
-#include <QGridLayout>
 #include <QLabel>
 #include <QTextStream>
 #include <memory>
@@ -21,13 +20,11 @@ namespace nashville::widgets
 chord::chord(QWidget* parent, model::chord& mdl)
     : QWidget(parent),
       model_(mdl),
-      layout_(new QGridLayout())
+      layout_(new QVBoxLayout())
 {
-    connect(&model_, &model::chord::changed,
-            this, &chord::model_changed);
     setLayout(layout_);
     chord_text_ = new QLabel(this);
-    layout_->addWidget(chord_text_, 0, 0);
+    layout_->addWidget(chord_text_);
 }
 
 void chord::set_chord_label_text()

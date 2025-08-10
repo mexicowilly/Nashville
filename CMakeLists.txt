@@ -18,6 +18,7 @@ find_package(GTest REQUIRED)
 qt_add_executable(nashville
     app.cpp
     app.hpp
+    model/bar.cpp
     model/bar.hpp
     model/chord.cpp
     model/chord.hpp
@@ -25,6 +26,8 @@ qt_add_executable(nashville
     nashville.ui
     title_text.cpp
     title_text.hpp
+    widgets/bar.cpp
+    widgets/bar.hpp
     widgets/chord.cpp
     widgets/chord.hpp
 )

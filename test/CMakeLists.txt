@@ -1,7 +1,9 @@
 enable_testing()
 
 add_executable(unit-test
+    ../model/bar.cpp
     ../model/chord.cpp
+    bar.cpp
     chord.cpp
     main.cpp
 )

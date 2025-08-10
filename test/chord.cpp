@@ -16,49 +16,47 @@ TEST(chord, user_input)
     EXPECT_THROW(c.parse_user_input("0"), std::invalid_argument);
     EXPECT_THROW(c.parse_user_input("8"), std::invalid_argument);
     EXPECT_THROW(c.parse_user_input("9"), std::invalid_argument);
-    c.reset();
     EXPECT_NO_THROW(c.parse_user_input("b5"));
     ref.number(5).step(model::chord::flat_sharp::FLAT);
     EXPECT_EQ(c, ref);
-    c.reset();
     EXPECT_NO_THROW(c.parse_user_input("#7"));
     ref.number(7).step(model::chord::flat_sharp::SHARP);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("6-"));
-    ref.reset()
+    ref.clear()
        .number(6)
        .mode(model::chord::type::MINOR);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("7dim"));
-    ref.reset()
+    ref.clear()
        .number(7)
        .mode(model::chord::type::DIMINISHED);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("4+"));
-    ref.reset()
+    ref.clear()
        .number(4)
        .mode(model::chord::type::AUGMENTED);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("b3-7"));
-    ref.reset()
+    ref.clear()
        .number(3)
        .step(model::chord::flat_sharp::FLAT)
        .mode(model::chord::type::MINOR)
        .extensions("7");
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("#7diddly"));
-    ref.reset()
+    ref.clear()
        .number(7)
        .step(model::chord::flat_sharp::SHARP)
        .extensions("diddly");
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("6/1"));
-    ref.reset()
+    ref.clear()
        .number(6)
        .bass_note(1);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("3diddly/b7"));
-    ref.reset()
+    ref.clear()
        .number(3)
        .extensions("diddly")
        .bass_note(7)
@@ -68,15 +66,16 @@ TEST(chord, user_input)
     ref.mode(model::chord::type::DIMINISHED);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("#2-/b5"));
-    ref.reset()
+    ref.clear()
        .number(2)
        .mode(model::chord::type::MINOR)
        .step(model::chord::flat_sharp::SHARP)
        .bass_note(5)
        .bass_note_step(model::chord::flat_sharp::FLAT);
+    EXPECT_THROW(c.parse_user_input("5:"), std::invalid_argument);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("1:s"));
-    ref.reset().number(1).duration(model::chord::time::SIXTEENTH);
+    ref.clear().number(1).duration(model::chord::time::SIXTEENTH);
     EXPECT_EQ(c, ref);
     EXPECT_NO_THROW(c.parse_user_input("1:S"));
     EXPECT_EQ(c, ref);
@@ -139,14 +138,14 @@ TEST(chord, to_user_input)
     EXPECT_THROW(c.number(0), std::invalid_argument);
     EXPECT_THROW(c.number(8), std::invalid_argument);
     for (const auto& num : { 1, 2, 3, 4, 5, 6, 7 })
-        EXPECT_EQ(std::to_string(num), c.reset().number(num).to_user_input());
-    c.reset()
+        EXPECT_EQ(std::to_string(num), c.clear().number(num).to_user_input());
+    c.clear()
      .step(model::chord::flat_sharp::FLAT)
      .number(5);
     EXPECT_EQ(std::string("b5"), c.to_user_input());
     c.step(model::chord::flat_sharp::SHARP);
     EXPECT_EQ(std::string("#5"), c.to_user_input());
-    c.reset()
+    c.clear()
      .number(6)
      .mode(model::chord::type::MINOR);
     EXPECT_EQ(std::string("6-"), c.to_user_input());
@@ -154,18 +153,18 @@ TEST(chord, to_user_input)
     EXPECT_EQ(std::string("6dim"), c.to_user_input());
     c.mode(model::chord::type::AUGMENTED);
     EXPECT_EQ(std::string("6+"), c.to_user_input());
-    c.reset()
+    c.clear()
      .step(model::chord::flat_sharp::FLAT)
      .number(2)
      .mode(model::chord::type::MINOR)
      .extensions("7");
     EXPECT_EQ(std::string("b2-7"), c.to_user_input());
-    c.reset()
+    c.clear()
      .step(model::chord::flat_sharp::SHARP)
      .number(3)
      .extensions("7");
     EXPECT_EQ(std::string("#37"), c.to_user_input());
-    c.reset()
+    c.clear()
      .number(6)
      .mode(model::chord::type::MINOR)
      .bass_note(1);
@@ -174,7 +173,7 @@ TEST(chord, to_user_input)
     EXPECT_EQ(std::string("6-/b1"), c.to_user_input());
     c.number(6).bass_note_step(model::chord::flat_sharp::SHARP);
     EXPECT_EQ(std::string("6-/#1"), c.to_user_input());
-    c.reset()
+    c.clear()
      .number(1)
      .duration(model::chord::time::SIXTEENTH);
     EXPECT_EQ(std::string("1:s"), c.to_user_input());
