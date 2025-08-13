@@ -50,6 +50,11 @@ inline const std::vector<section>& song::sections() const
     return sections_;
 }
 
+inline unsigned song::tempo() const
+{
+    return tempo_;
+}
+
 inline const time_signature& song::time_sig() const
 {
     return time_signature_;
