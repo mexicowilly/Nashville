@@ -1,6 +1,6 @@
 #include "bar.hpp"
 #include <chucho/log.hpp>
-#include <string.h>
+#include <cstring>
 
 namespace nashville::model
 {
@@ -15,11 +15,11 @@ void bar::parse_user_input(const std::string& str)
     CHUCHO_DEBUG_L("Parsing bar input: '" << str << "'");
     std::string src(str);
     std::vector<chord> new_chords;
-    char* token = strtok(const_cast<char*>(src.c_str()), " ");
+    auto token = std::strtok(const_cast<char*>(src.c_str()), " ");
     while (token != nullptr)
     {
         new_chords.emplace_back(chord()).parse_user_input(token);
-        token = strtok(nullptr, " ");
+        token = std::strtok(nullptr, " ");
     }
     chords_ = new_chords;
     CHUCHO_DEBUG_L("Done");

@@ -54,6 +54,8 @@ public:
     chord& extensions(const std::string& ext);
     bool is_diamond() const;
     chord& is_diamond(bool state);
+    bool is_pushed() const;
+    chord& is_pushed(bool state);
     bool is_staccato() const;
     chord& is_staccato(bool state);
     bool is_tied() const;
@@ -78,6 +80,7 @@ private:
     bool is_diamond_;
     std::optional<time> duration_;
     bool is_tied_;
+    bool is_pushed_;
 };
 
 inline std::optional<unsigned> chord::bass_note() const
@@ -109,6 +112,11 @@ inline const std::string& chord::extensions() const
 inline bool chord::is_diamond() const
 {
     return is_diamond_;
+}
+
+inline bool chord::is_pushed() const
+{
+    return is_pushed_;
 }
 
 inline bool chord::is_staccato() const

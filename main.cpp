@@ -4,7 +4,7 @@
 int main(int argc, char* argv[])
 {
     QCoreApplication::setOrganizationName("Will Mason");
-    QCoreApplication::setApplicationName("Studio B");
+    QCoreApplication::setApplicationName("Nashville");
     nashville::app app(argc, argv);
     return app.run();
 }

@@ -1,24 +1,27 @@
 #pragma once
 
-#include <QWidget>
-#include <QHBoxLayout>
+#include <QFrame>
 #include "../model/bar.hpp"
 
 namespace nashville::widgets
 {
 
-class bar : public QWidget
+class bar : public QFrame
 {
     Q_OBJECT
 
 public:
-    bar(QWidget* parent, model::bar& mdl);
+    bar(QFrame* parent, model::bar& mdl);
 
     bool empty() const;
 
+protected:
+    virtual void focusInEvent(QFocusEvent* evt) override;
+    virtual void focusOutEvent(QFocusEvent* evt) override;
+    virtual void mousePressEvent(QMouseEvent* evt) override;
+
 private:
     model::bar& model_;
-    QHBoxLayout* layout_;
 };
 
 inline bool bar::empty() const

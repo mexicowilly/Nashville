@@ -180,6 +180,12 @@ chord& chord::is_diamond(bool state)
     return *this;
 }
 
+chord& chord::is_pushed(bool state)
+{
+    is_pushed_ = state;
+    return *this;
+}
+
 chord& chord::is_staccato(bool state)
 {
     is_staccato_ = state;

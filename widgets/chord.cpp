@@ -2,7 +2,8 @@
 #include "../settings.hpp"
 #include <QLabel>
 #include <QTextStream>
-#include <memory>
+#include <QVBoxLayout>
+#include <QMouseEvent>
 
 namespace
 {
@@ -17,14 +18,40 @@ const QString MAJOR_SEVENTH_SYMBOL(u'\u0394');
 namespace nashville::widgets
 {
 
-chord::chord(QWidget* parent, model::chord& mdl)
-    : QWidget(parent),
-      model_(mdl),
-      layout_(new QVBoxLayout())
+chord::chord(QWidget* parent)
+    : chord(parent, model::chord())
 {
-    setLayout(layout_);
-    chord_text_ = new QLabel(this);
-    layout_->addWidget(chord_text_);
+}
+
+chord::chord(QWidget* parent, const model::chord& mdl)
+    : QWidget(parent),
+      model_(mdl)
+{
+    setLayout(new QVBoxLayout);
+    chord_text_ = new QLabel();
+    layout()->addWidget(chord_text_);
+    underbar_ = new QWidget();
+    QSettings settings;
+    auto thickness = settings.value(settings::BAR_UNDERLINE_THICKNESS,
+                                    settings::defaults::BAR_UNDERLINE_THICKNESS).toInt();
+    underbar_->setFixedHeight(thickness);
+    underbar_->setAutoFillBackground(true);
+    layout()->addWidget(underbar_);
+    underlined(false);
+    setAutoFillBackground(true);
+    set_chord_label_text();
+}
+
+chord& chord::selected(bool state)
+{
+    if (state != selected_)
+    {
+        selected_ = state;
+        QPalette pal = palette();
+        pal.setColor(backgroundRole(), (selected_ ? Qt::lightGray : Qt::white));
+        setPalette(pal);   
+    }
+    return *this;
 }
 
 void chord::set_chord_label_text()
@@ -93,8 +120,18 @@ void chord::set_chord_label_text()
     }
 }
 
-void chord::model_changed()
+chord& chord::underline_thickness(unsigned th)
 {
+    underbar_->setFixedHeight(th);
+    return *this;
+}
+
+chord& chord::underlined(bool state)
+{
+    QPalette pal = underbar_->palette();
+    pal.setColor(backgroundRole(), (state ? Qt::black : Qt::white));
+    underbar_->setPalette(pal);   
+    return *this;
 }
 
 }

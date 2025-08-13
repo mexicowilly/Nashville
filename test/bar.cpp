@@ -14,4 +14,6 @@ TEST(bar, user_input)
     EXPECT_EQ(3, b.chords().size());
     EXPECT_NO_THROW(b.parse_user_input("5:q 4:q 3:q 4:q"));
     EXPECT_EQ(4, b.chords().size());
+    EXPECT_NO_THROW(b.parse_user_input(" 5:q 4:q 3:q 4:q  57       "));
+    EXPECT_EQ(5, b.chords().size());
 }

@@ -22,6 +22,9 @@ qt_add_executable(nashville
     model/bar.hpp
     model/chord.cpp
     model/chord.hpp
+    model/section.hpp
+    model/song.cpp
+    model/song.hpp
     main.cpp
     nashville.ui
     title_text.cpp
