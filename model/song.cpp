@@ -3,13 +3,19 @@
 namespace nashville::model
 {
 
+song& song::key(const std::string& k)
+{
+    key_ = k;
+    return *this;
+}
+
 song& song::tempo(unsigned t)
 {
     tempo_ = t;
     return *this;
 }
 
-song& song::title(const std::string t)
+song& song::title(const std::string& t)
 {
     title_ = t;
     return *this;

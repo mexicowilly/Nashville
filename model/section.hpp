@@ -6,7 +6,7 @@
 namespace nashville::model
 {
 
-class section : public chucho::loggable<section>
+class section : chucho::loggable<section>
 {
 public:
     bar& add_bar();

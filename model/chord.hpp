@@ -8,7 +8,7 @@
 namespace nashville::model
 {
 
-class chord : public chucho::loggable<chord>
+class chord : chucho::loggable<chord>
 {
 public:
     enum class type

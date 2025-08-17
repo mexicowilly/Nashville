@@ -9,7 +9,7 @@
 namespace nashville::model
 {
 
-class bar : public chucho::loggable<bar>
+class bar : chucho::loggable<bar>
 {
 public:
     chord& add_chord();

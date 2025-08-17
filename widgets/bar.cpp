@@ -6,7 +6,12 @@
 namespace nashville::widgets
 {
 
-bar::bar(QFrame* parent, model::bar& mdl)
+bar::bar(QWidget* parent)
+    : bar(parent, model::bar())
+{
+}
+
+bar::bar(QWidget* parent, const model::bar& mdl)
     : QFrame(parent),
       model_(mdl)
 {

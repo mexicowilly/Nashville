@@ -11,7 +11,8 @@ class bar : public QFrame
     Q_OBJECT
 
 public:
-    bar(QFrame* parent, model::bar& mdl);
+    bar(QWidget* parent);
+    bar(QWidget* parent, const model::bar& mdl);
 
     bool empty() const;
 
@@ -21,7 +22,7 @@ protected:
     virtual void mousePressEvent(QMouseEvent* evt) override;
 
 private:
-    model::bar& model_;
+    model::bar model_;
 };
 
 inline bool bar::empty() const

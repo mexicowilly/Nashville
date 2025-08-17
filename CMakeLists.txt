@@ -25,14 +25,20 @@ qt_add_executable(nashville
     model/section.hpp
     model/song.cpp
     model/song.hpp
+    model/time_signature.cpp
+    model/time_signature.hpp
     main.cpp
     nashville.ui
-    title_text.cpp
-    title_text.hpp
     widgets/bar.cpp
     widgets/bar.hpp
     widgets/chord.cpp
     widgets/chord.hpp
+    widgets/key_column.cpp
+    widgets/key_column.hpp
+    widgets/song.cpp
+    widgets/song.hpp
+    widgets/title_text.cpp
+    widgets/title_text.hpp
 )
 
 target_link_libraries(nashville PRIVATE ${CHUCHO_LIB} Qt6::Widgets Qt6::Core)

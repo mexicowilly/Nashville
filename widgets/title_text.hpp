@@ -2,7 +2,7 @@
 
 #include <QtWidgets/QLineEdit>
 
-namespace nashville::ui
+namespace nashville::widgets
 {
 
 class title_text : public QLineEdit
@@ -10,7 +10,10 @@ class title_text : public QLineEdit
     Q_OBJECT
 
 public:
-    title_text(QWidget& parent);
+    title_text();
+
+signals:
+    void title_changed(const QString& t);
 
 protected:
     virtual void mousePressEvent(QMouseEvent* event) override;
