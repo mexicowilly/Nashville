@@ -10,6 +10,12 @@ chord& bar::add_chord()
     return chords_.emplace_back(chord());
 }
 
+bar& bar::is_eol(bool state)
+{
+    is_eol_ = state;
+    return *this;
+}
+
 void bar::parse_user_input(const std::string& str)
 {
     CHUCHO_DEBUG_L("Parsing bar input: '" << str << "'");
@@ -23,6 +29,12 @@ void bar::parse_user_input(const std::string& str)
     }
     chords_ = new_chords;
     CHUCHO_DEBUG_L("Done");
+}
+
+bar& bar::time_sig(const time_signature& ts)
+{
+    time_signature_ = ts;
+    return *this;
 }
 
 std::string bar::to_user_input() const

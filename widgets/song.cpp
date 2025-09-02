@@ -13,18 +13,24 @@ song::song(QWidget* parent)
 
 song::song(QWidget* parent, const model::song& mdl)
     : QWidget(parent),
-      model_(mdl)
+      model_(mdl),
+      bar_grid_(new QGridLayout)
 {
+    auto pal = palette();
+    pal.setColor(QPalette::Window, Qt::white);
+    setAutoFillBackground(true);
+    setPalette(pal);   
     auto grid = new QGridLayout();
     setLayout(grid);
     auto tit = new title_text();
     connect(tit, &title_text::title_changed, this, &song::title_changed);
-    grid->addWidget(tit, 0, 0, -1, 1, Qt::AlignCenter);
+    grid->addWidget(tit, 0, 0, 1, -1, Qt::AlignCenter);
     auto kc = new key_column();
     connect(kc, &key_column::key_changed, this, &song::key_changed);
     connect(kc, &key_column::tempo_changed, this, &song::tempo_changed);
     connect(kc, &key_column::time_signature_changed, this, &song::time_signature_changed);
-    grid->addWidget(kc, 0, 0, 1, -1, Qt::AlignTop);
+    grid->addWidget(kc, 1, 0, -1, 1, Qt::AlignTop);
+    grid->addLayout(bar_grid_, 1, 1, -1, -1);
 }
 
 void song::key_changed(const QString& key)

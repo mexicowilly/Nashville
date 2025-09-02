@@ -1,4 +1,5 @@
 #include "title_text.hpp"
+#include <QFontDatabase>
 
 namespace nashville::widgets
 {
@@ -9,6 +10,7 @@ title_text::title_text()
     setPlaceholderText("Title");
     setAlignment(Qt::AlignHCenter);
     setReadOnly(true);
+    setFont(QFontDatabase::systemFont(QFontDatabase::TitleFont));
     connect(this, &title_text::editingFinished,
             this, &title_text::edit_finished);
 }

@@ -10,7 +10,7 @@ class app
 public:
     app(int argc, char* argv[]);
 
-    QWidget& central_widget();
+    QWidget* central_widget();
     int run();
     QString title() const;
 
@@ -21,9 +21,9 @@ private:
     QString title_;
 };
 
-inline QWidget& app::central_widget()
+inline QWidget* app::central_widget()
 {
-    return *nashville_win_.central_widget;
+    return nashville_win_.central_widget;
 }
 
 inline QString app::title() const

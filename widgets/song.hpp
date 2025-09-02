@@ -2,6 +2,7 @@
 
 #include "../model/song.hpp"
 #include <QWidget>
+#include <QGridLayout>
 
 namespace nashville::widgets
 {
@@ -11,7 +12,7 @@ class song : public QWidget
     Q_OBJECT
 
 public:
-    song(QWidget* parent);
+    song(QWidget* parent = nullptr);
     song(QWidget* parent, const model::song& mdl);
 
 private slots:
@@ -22,6 +23,7 @@ private slots:
 
 private:
     model::song model_;
+    QGridLayout* bar_grid_;
 };
 
 }

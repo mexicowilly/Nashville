@@ -12,6 +12,7 @@ const QString FLAT_SIGN(u'\u266d');
 const QString SHARP_SIGN(u'\u266f');
 const QString DIMINISHED_SYMBOL(u'\u26ac');
 const QString MAJOR_SEVENTH_SYMBOL(u'\u0394');
+const QString STACCATO_SYMBOL(u'\u2b29');
 
 }
 
@@ -25,12 +26,14 @@ chord::chord(QWidget* parent)
 
 chord::chord(QWidget* parent, const model::chord& mdl)
     : QWidget(parent),
-      model_(mdl)
+      model_(mdl),
+      chord_text_(new QLabel),
+      underbar_(new QWidget),
+      modifier_text_(new QLabel(" "))
 {
     setLayout(new QVBoxLayout);
-    chord_text_ = new QLabel();
+    layout()->addWidget(modifier_text_);
     layout()->addWidget(chord_text_);
-    underbar_ = new QWidget();
     QSettings settings;
     auto thickness = settings.value(settings::BAR_UNDERLINE_THICKNESS,
                                     settings::defaults::BAR_UNDERLINE_THICKNESS).toInt();

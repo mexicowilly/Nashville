@@ -25,6 +25,7 @@ private:
     model::chord model_;
     QLabel* chord_text_;
     QWidget* underbar_;
+    QLabel* modifier_text_;
     bool selected_;
 };
 

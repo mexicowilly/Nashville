@@ -15,6 +15,8 @@ public:
     chord& add_chord();
     const std::vector<chord>& chords() const;
     bool empty() const;
+    bool is_eol() const;
+    bar& is_eol(bool state);
     void parse_user_input(const std::string& str);
     const std::optional<time_signature>& time_sig() const;
     bar& time_sig(const time_signature& ts);
@@ -23,6 +25,7 @@ public:
 private:
     std::vector<chord> chords_;
     std::optional<time_signature> time_signature_;
+    bool is_eol_ = false;
 };
 
 inline const std::vector<chord>& bar::chords() const
@@ -35,15 +38,14 @@ inline bool bar::empty() const
     return chords_.empty();
 }
 
+inline bool bar::is_eol() const
+{
+    return is_eol_;
+}
+
 inline const std::optional<time_signature>& bar::time_sig() const
 {
     return time_signature_;
-}
-
-inline bar& bar::time_sig(const time_signature& ts)
-{
-    time_signature_ = ts;
-    return *this;
 }
 
 }

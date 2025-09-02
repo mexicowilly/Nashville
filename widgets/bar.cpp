@@ -3,6 +3,14 @@
 #include <QHBoxLayout>
 #include <QMouseEvent>
 
+namespace
+{
+
+const QString CARRIAGE_RETURN_SYMBOL(u'\u21b5');
+const QString BULLET_SYMBOL(u'\u2022');
+
+}
+
 namespace nashville::widgets
 {
 
