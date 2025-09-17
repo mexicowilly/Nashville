@@ -1,5 +1,6 @@
 #include "title_text.hpp"
 #include <QFontDatabase>
+#include <QMouseEvent>
 
 namespace nashville::widgets
 {
@@ -22,9 +23,10 @@ void title_text::edit_finished()
     emit title_changed(text());
 }
 
-void title_text::mousePressEvent(QMouseEvent* event)
+void title_text::mouseReleaseEvent(QMouseEvent* event)
 {
-    QLineEdit::mousePressEvent(event);
+    QLineEdit::mouseReleaseEvent(event);
+    event->setAccepted(true);
     if (isReadOnly())
     {
         setReadOnly(false);

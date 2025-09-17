@@ -23,14 +23,24 @@ bar::bar(QWidget* parent, const model::bar& mdl)
     : QFrame(parent),
       model_(mdl)
 {
+    setMinimumWidth(DEFAULT_MINIMUM_WIDTH);
+    setMinimumHeight(DEFAULT_MINIMUM_HEIGHT);
     setLayout(new QHBoxLayout);
     setFocusPolicy(Qt::StrongFocus);
     setLineWidth(1);
+    setAutoFillBackground(true);
+    if (model_.empty())
+    {
+        auto pal = palette();
+        pal.setColor(QPalette::Window, Qt::lightGray);
+        setPalette(pal);
+    }
 }
 
 void bar::focusInEvent(QFocusEvent* evt)
 {
     QFrame::focusInEvent(evt);
+    evt->setAccepted(true);
     setFrameShape(QFrame::Box);
     if (model_.empty())
     {
@@ -44,9 +54,9 @@ void bar::focusOutEvent(QFocusEvent* evt)
     setFrameShape(QFrame::NoFrame);
 }
 
-void bar::mousePressEvent(QMouseEvent* evt)
+void bar::mouseReleaseEvent(QMouseEvent* evt)
 {
-    QFrame::mousePressEvent(evt);
+    QFrame::mouseReleaseEvent(evt);
     evt->setAccepted(true);
     if (!children().empty())
     {

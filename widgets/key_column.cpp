@@ -7,6 +7,7 @@ namespace nashville::widgets
 key_column::key_column()
 {
     setLayout(new QVBoxLayout);
+    setMaximumWidth(50);
 }
 
 }

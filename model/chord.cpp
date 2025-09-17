@@ -1,42 +1,9 @@
 #include "chord.hpp"
-#include "chucho/log.hpp"
+#include <chucho/log.hpp>
 #include <stdexcept>
 #include <regex>
 #include <cassert>
 #include <sstream>
-
-namespace
-{
-
-struct memento
-{
-    memento(nashville::model::chord& c)
-        : number_(c.number()),
-          mode_(c.mode()),
-          step_(c.step()),
-          bass_note_(c.bass_note()),
-          bass_note_step_(c.bass_note_step()),
-          extensions_(c.extensions()),
-          is_staccato_(c.is_staccato()),
-          is_diamond_(c.is_diamond()),
-          duration_(c.duration()),
-          is_tied_(c.is_tied())
-    {
-    }
-
-    unsigned number_;
-    nashville::model::chord::type mode_;
-    std::optional<nashville::model::chord::flat_sharp> step_;
-    std::optional<unsigned> bass_note_;
-    std::optional<nashville::model::chord::flat_sharp> bass_note_step_;
-    std::string extensions_;
-    bool is_staccato_;
-    bool is_diamond_;
-    std::optional<nashville::model::chord::time> duration_;
-    bool is_tied_;
-};
-
-}
 
 namespace nashville::model
 {

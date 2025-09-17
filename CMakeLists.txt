@@ -24,7 +24,6 @@ qt_add_executable(nashville
     model/bar.hpp
     model/chord.cpp
     model/chord.hpp
-    model/section.hpp
     model/song.cpp
     model/song.hpp
     model/time_signature.cpp
@@ -33,6 +32,8 @@ qt_add_executable(nashville
     nashville.ui
     widgets/bar.cpp
     widgets/bar.hpp
+    widgets/bar_placeholder.cpp
+    widgets/bar_placeholder.hpp
     widgets/chord.cpp
     widgets/chord.hpp
     widgets/key_column.cpp

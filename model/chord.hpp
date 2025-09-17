@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chucho/loggable.hpp"
+#include <chucho/loggable.hpp>
 #include <optional>
 #include <string>
 #include <ostream>

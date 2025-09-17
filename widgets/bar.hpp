@@ -11,7 +11,10 @@ class bar : public QFrame
     Q_OBJECT
 
 public:
-    bar(QWidget* parent);
+    static inline constexpr int DEFAULT_MINIMUM_WIDTH = 100;
+    static inline constexpr int DEFAULT_MINIMUM_HEIGHT = 30;
+
+    bar(QWidget* parent = nullptr);
     bar(QWidget* parent, const model::bar& mdl);
 
     bool empty() const;
@@ -19,7 +22,7 @@ public:
 protected:
     virtual void focusInEvent(QFocusEvent* evt) override;
     virtual void focusOutEvent(QFocusEvent* evt) override;
-    virtual void mousePressEvent(QMouseEvent* evt) override;
+    virtual void mouseReleaseEvent(QMouseEvent* evt) override;
 
 private:
     model::bar model_;

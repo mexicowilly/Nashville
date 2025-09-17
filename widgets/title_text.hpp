@@ -16,7 +16,7 @@ signals:
     void title_changed(const QString& t);
 
 protected:
-    virtual void mousePressEvent(QMouseEvent* event) override;
+    virtual void mouseReleaseEvent(QMouseEvent* event) override;
 
 private slots:
     void edit_finished();

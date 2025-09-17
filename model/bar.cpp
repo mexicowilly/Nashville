@@ -31,6 +31,12 @@ void bar::parse_user_input(const std::string& str)
     CHUCHO_DEBUG_L("Done");
 }
 
+bar& bar::section(const std::string& sec)
+{
+    section_ = sec;
+    return *this;
+}
+
 bar& bar::time_sig(const time_signature& ts)
 {
     time_signature_ = ts;
