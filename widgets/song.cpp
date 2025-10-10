@@ -19,6 +19,11 @@ song::song(QWidget* parent, const model::song& mdl)
 {
     bar_grid_->setHorizontalSpacing(10);
     bar_grid_->setVerticalSpacing(10);
+    // This is the only way that seems to work to get the
+    // columns not to stretch. If you set column stretch
+    // as you add the columns, then it doesn't work.
+    for (int i = 0; i < 10; i++)
+        bar_grid_->setColumnStretch(i, 1);
     auto pal = palette();
     pal.setColor(QPalette::Window, Qt::white);
     setAutoFillBackground(true);
@@ -36,9 +41,13 @@ song::song(QWidget* parent, const model::song& mdl)
     // Column zero of the bar grid belongs to the section names. This allows
     // the section names to line up with the bars at which they start.
     grid->addLayout(bar_grid_, 1, 1, -1, -1);
-    bar_grid_->addWidget(new bar(), 1, 1);
+    // This is the potentional section name
+    auto le = new QLineEdit();
+    le->setFixedWidth(30);
+    bar_grid_->addWidget(le, 0, 0);
+    bar_grid_->addWidget(new bar(), 0, 1);
     for (int i = 2; i <= model_.bars_per_line(); i++)
-        bar_grid_->addWidget(new bar_placeholder(), 1, i);
+        bar_grid_->addWidget(new bar_placeholder(), 0, i);
 }
 
 void song::key_changed(const QString& key)

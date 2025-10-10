@@ -11,8 +11,8 @@ class bar : public QFrame
     Q_OBJECT
 
 public:
-    static inline constexpr int DEFAULT_MINIMUM_WIDTH = 100;
-    static inline constexpr int DEFAULT_MINIMUM_HEIGHT = 30;
+    static inline constexpr double DEFAULT_MINIMUM_WIDTH = 0.5;
+    static inline constexpr double DEFAULT_MINIMUM_HEIGHT = 1/3;
 
     bar(QWidget* parent = nullptr);
     bar(QWidget* parent, const model::bar& mdl);

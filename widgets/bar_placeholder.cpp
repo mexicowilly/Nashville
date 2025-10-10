@@ -1,13 +1,16 @@
 #include "bar_placeholder.hpp"
+#include <QGuiApplication>
+#include <QScreen>
 
 namespace nashville::widgets
 {
 
 bar_placeholder::bar_placeholder(QWidget* parent)
-    : QWidget(parent)
+    : QFrame(parent)
 {
-    setMinimumWidth(bar::DEFAULT_MINIMUM_WIDTH);
-    setMinimumHeight(bar::DEFAULT_MINIMUM_HEIGHT);
+    setFixedWidth(QGuiApplication::primaryScreen()->logicalDotsPerInchX() * bar::DEFAULT_MINIMUM_WIDTH);
+    setMinimumHeight(QGuiApplication::primaryScreen()->logicalDotsPerInchY() * bar::DEFAULT_MINIMUM_HEIGHT);
+    setFrameShape(QFrame::Box);
 }
 
 }

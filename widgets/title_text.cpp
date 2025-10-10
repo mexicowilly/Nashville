@@ -20,6 +20,8 @@ void title_text::edit_finished()
 {
     setFrame(false);
     setReadOnly(true);
+    QFontMetrics fm(font());
+    setFixedWidth(fm.boundingRect(text()).width() + 20);
     emit title_changed(text());
 }
 

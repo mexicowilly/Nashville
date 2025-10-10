@@ -2,6 +2,8 @@
 #include "chord.hpp"
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QGuiApplication>
+#include <QScreen>
 
 namespace
 {
@@ -23,12 +25,13 @@ bar::bar(QWidget* parent, const model::bar& mdl)
     : QFrame(parent),
       model_(mdl)
 {
-    setMinimumWidth(DEFAULT_MINIMUM_WIDTH);
-    setMinimumHeight(DEFAULT_MINIMUM_HEIGHT);
+    setFixedWidth(QGuiApplication::primaryScreen()->logicalDotsPerInchX() * DEFAULT_MINIMUM_WIDTH);
+    setMinimumHeight(QGuiApplication::primaryScreen()->logicalDotsPerInchY() * DEFAULT_MINIMUM_HEIGHT);
     setLayout(new QHBoxLayout);
     setFocusPolicy(Qt::StrongFocus);
     setLineWidth(1);
     setAutoFillBackground(true);
+    setFrameShape(QFrame::Box);
     if (model_.empty())
     {
         auto pal = palette();
