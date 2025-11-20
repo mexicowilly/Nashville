@@ -20,6 +20,8 @@ find_package(GTest REQUIRED)
 qt_add_executable(nashville
     app.cpp
     app.hpp
+    measures.cpp
+    measures.hpp
     model/bar.cpp
     model/bar.hpp
     model/chord.cpp

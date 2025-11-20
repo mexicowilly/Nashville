@@ -1,6 +1,5 @@
 #include "bar_placeholder.hpp"
-#include <QGuiApplication>
-#include <QScreen>
+#include "../measures.hpp"
 
 namespace nashville::widgets
 {
@@ -8,8 +7,8 @@ namespace nashville::widgets
 bar_placeholder::bar_placeholder(QWidget* parent)
     : QFrame(parent)
 {
-    setFixedWidth(QGuiApplication::primaryScreen()->logicalDotsPerInchX() * bar::DEFAULT_MINIMUM_WIDTH);
-    setMinimumHeight(QGuiApplication::primaryScreen()->logicalDotsPerInchY() * bar::DEFAULT_MINIMUM_HEIGHT);
+    setFixedWidth(measures::inches_wide(bar::DEFAULT_MINIMUM_WIDTH));
+    setMinimumHeight(measures::inches_tall(bar::DEFAULT_MINIMUM_HEIGHT));
     setFrameShape(QFrame::Box);
 }
 

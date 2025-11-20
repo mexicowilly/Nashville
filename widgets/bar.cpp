@@ -1,9 +1,8 @@
 #include "bar.hpp"
 #include "chord.hpp"
+#include "../measures.hpp"
 #include <QHBoxLayout>
 #include <QMouseEvent>
-#include <QGuiApplication>
-#include <QScreen>
 
 namespace
 {
@@ -25,8 +24,8 @@ bar::bar(QWidget* parent, const model::bar& mdl)
     : QFrame(parent),
       model_(mdl)
 {
-    setFixedWidth(QGuiApplication::primaryScreen()->logicalDotsPerInchX() * DEFAULT_MINIMUM_WIDTH);
-    setMinimumHeight(QGuiApplication::primaryScreen()->logicalDotsPerInchY() * DEFAULT_MINIMUM_HEIGHT);
+    setFixedWidth(measures::inches_wide(DEFAULT_MINIMUM_WIDTH));
+    setMinimumHeight(measures::inches_tall(DEFAULT_MINIMUM_HEIGHT));
     setLayout(new QHBoxLayout);
     setFocusPolicy(Qt::StrongFocus);
     setLineWidth(1);
