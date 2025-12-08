@@ -10,9 +10,9 @@ class time_signature
 public:
     enum class beat_type
     {
-        EIGHTH,
-        QUARTER,
-        HALF
+        EIGHTH = 8,
+        QUARTER = 4,
+        HALF = 2
     };
 
     bool operator== (const time_signature& other) const;

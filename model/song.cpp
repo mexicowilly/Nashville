@@ -15,15 +15,15 @@ song& song::key(const std::string& k)
     return *this;
 }
 
-song& song::tempo(const std::tuple<unsigned, chord::time>& t)
+song& song::name(const std::string& n)
 {
-    tempo_ = t;
+    name_ = n;
     return *this;
 }
 
-song& song::title(const std::string& t)
+song& song::tempo(const std::tuple<unsigned, chord::time>& t)
 {
-    title_ = t;
+    tempo_ = t;
     return *this;
 }
 

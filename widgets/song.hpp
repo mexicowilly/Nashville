@@ -17,9 +17,9 @@ public:
 
 private slots:
     void key_changed(const QString& key);
+    void name_changed(const QString& n);
     void tempo_changed(const QString& temp);
     void time_signature_changed(const QString& ts);
-    void title_changed(const QString& t);
 
 private:
     model::song model_;

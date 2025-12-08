@@ -31,7 +31,7 @@ song::song(QWidget* parent, const model::song& mdl)
     auto grid = new QGridLayout();
     setLayout(grid);
     auto tit = new title_text();
-    connect(tit, &title_text::title_changed, this, &song::title_changed);
+    connect(tit, &title_text::title_changed, this, &song::name_changed);
     grid->addWidget(tit, 0, 0, 1, -1, Qt::AlignCenter);
     auto kc = new key_column();
     connect(kc, &key_column::key_changed, this, &song::key_changed);
@@ -55,17 +55,17 @@ void song::key_changed(const QString& key)
     model_.key(key.toStdString());
 }
 
+void song::name_changed(const QString& t)
+{
+    model_.name(t.toStdString());
+}
+
 void song::tempo_changed(const QString& temp)
 {
 }
 
 void song::time_signature_changed(const QString& ts)
 {
-}
-
-void song::title_changed(const QString& t)
-{
-    model_.title(t.toStdString());
 }
 
 }

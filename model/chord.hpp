@@ -28,14 +28,14 @@ public:
 
     enum class time
     {
-        SIXTEENTH,
-        EIGHTH,
-        DOTTED_EIGHTH,
-        QUARTER,
-        DOTTED_QUARTER,
-        HALF,
-        DOTTED_HALF,
-        WHOLE
+        SIXTEENTH = 16,
+        EIGHTH = 8,
+        DOTTED_EIGHTH = 12,
+        QUARTER = 4,
+        DOTTED_QUARTER = 6,
+        HALF = 2,
+        DOTTED_HALF = 3,
+        WHOLE = 1
     };
 
     chord();
