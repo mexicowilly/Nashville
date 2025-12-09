@@ -27,7 +27,7 @@ void configure_chucho()
       chucho::rolling_file_writer:
           file_name: DATA_DIR/Nashville.log
           chucho::pattern_formatter:
-              pattern: '%-5p %c{1}: %m%n'
+              pattern: '%D{%Y-%m-%d %H:%M:%S.%Q} %-5p %c{1}: %m%n'
           chucho::numbered_file_roller:
               max_index: 10
           chucho::size_file_roll_trigger:

@@ -20,7 +20,9 @@ private:
         INSERT_CHORD,
         SELECT_BAR,
         INSERT_BAR,
+        SELECT_BAR_CHORD,
         INSERT_BAR_CHORD,
+        SELECT_TIME_SIGNATURE,
         INSERT_TIME_SIGNATURE,
         INSERT_SONG,
         INSERT_SONG_BAR,
@@ -42,7 +44,7 @@ private:
     };
 
     sqlite3* db_;
-    std::map<statement, prepared> prepared_statements_;
+    std::map<statement, std::shared_ptr<prepared>> prepared_statements_;
 };
 
 }

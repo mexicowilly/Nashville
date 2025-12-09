@@ -38,16 +38,16 @@ CREATE TABLE IF NOT EXISTS bar
 CREATE TABLE IF NOT EXISTS time_signature
 (
     id INTEGER PRIMARY KEY NOT NULL,
-    beat_type INTEGER CHECK(beat_type = 8 OR beat_type = 4 OR beat_type = 2),
-    count INTEGER
+    beat_type INTEGER CHECK(beat_type = 8 OR beat_type = 4 OR beat_type = 2) UNIQUE,
+    count INTEGER UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS bar_chords
 (
     id INTEGER PRIMARY KEY NOT NULL,
-    chord_id INTEGER NOT NULL,
-    bar_id INTEGER NOT NULL,
-    chord_number INTEGER NOT NULL,
+    chord_id INTEGER UNIQUE,
+    bar_id INTEGER UNIQUE,
+    chord_number INTEGER UNIQUE,
     FOREIGN KEY(chord_id) REFERENCES chord(id),
     FOREIGN KEY(bar_id) REFERENCES bar(id)
 );
@@ -132,6 +132,28 @@ VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
 
+const char* SELECT_TIME_SIGNATURE_SQL = R"(
+SELECT * FROM time_signature WHERE (beat_type = ?1 AND count = ?2);
+)";
+
+const char* INSERT_TIME_SIGNATURE_SQL = R"(
+INSERT INTO time_signature (beat_type, count)
+VALUES (?1, ?2)
+RETURNING id;
+)";
+
+const char* SELECT_BAR_CHORD_SQL = R"(
+SELECT * FROM bar_chords WHERE (chord_id = ?1 AND
+                                bar_id = ?2 AND
+                                chord_number = ?3);
+)";
+
+const char* INSERT_BAR_CHORD_SQL = R"(
+INSERT INTO bar_chords (chord_id, bar_id, chord_number)
+VALUES (?1, ?2, ?3)
+RETURNING id;
+)";
+
 }
 
 namespace nashville
@@ -172,6 +194,7 @@ database::database(const std::string& file_name)
     if (rc != SQLITE_OK)
     {
     }
+    CHUCHO_DEBUG_L("Opened the database '" << file_name << "'");
     char* err;
     rc = sqlite3_exec(db_,
                       schema,
@@ -186,21 +209,27 @@ database::database(const std::string& file_name)
         sqlite3_free(err);
         std::abort();
     }
+    CHUCHO_DEBUG_L_STR("Successfully loaded the schema");
     try
     {
         prepared_statements_ =
         {
-            { statement::SELECT_CHORD, prepared(db_, SELECT_CHORD_SQL) },
-            { statement::INSERT_CHORD, prepared(db_, INSERT_CHORD_SQL) },
-            { statement::SELECT_BAR, prepared(db_, SELECT_BAR_SQL) },
-            { statement::INSERT_BAR, prepared(db_, INSERT_BAR_SQL) }
+            { statement::SELECT_CHORD, std::make_shared<prepared>(db_, SELECT_CHORD_SQL) },
+            { statement::INSERT_CHORD, std::make_shared<prepared>(db_, INSERT_CHORD_SQL) },
+            { statement::SELECT_BAR, std::make_shared<prepared>(db_, SELECT_BAR_SQL) },
+            { statement::INSERT_BAR, std::make_shared<prepared>(db_, INSERT_BAR_SQL) },
+            { statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
+            { statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
+            { statement::SELECT_BAR_CHORD, std::make_shared<prepared>(db_, SELECT_BAR_CHORD_SQL) },
+            { statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) }
         };
     }
     catch (std::invalid_argument& e)
     {
-        CHUCHO_FATAL_L(e.what());
+        CHUCHO_FATAL_L_STR(e.what());
         std::abort();
     }
+    CHUCHO_DEBUG_L_STR("Successfully created the prepared statements");
 }
 
 database::~database()
