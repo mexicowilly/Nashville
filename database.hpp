@@ -34,7 +34,7 @@ private:
         prepared(sqlite3* db, const char* const sql);
         ~prepared();
 
-        sqlite3_stmt* operator& () const { return stmt_; }
+        sqlite3_stmt* ptr() const { return stmt_; }
         void reset();
 
     private:

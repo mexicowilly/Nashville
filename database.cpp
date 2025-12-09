@@ -1,5 +1,7 @@
 #include "database.hpp"
 #include <cassert>
+#include <cstdlib>
+#include <chucho/log.hpp>
 
 namespace
 {
@@ -180,15 +182,25 @@ database::database(const std::string& file_name)
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
+        CHUCHO_FATAL_L("The database schema contains errors: " << err);
         sqlite3_free(err);
+        std::abort();
     }
-    prepared_statements_ =
+    try
     {
-        { statement::SELECT_CHORD, prepared(db_, SELECT_CHORD_SQL) },
-        { statement::INSERT_CHORD, prepared(db_, INSERT_CHORD_SQL) },
-        { statement::SELECT_BAR, prepared(db_, SELECT_BAR_SQL) },
-        { statement::INSERT_BAR, prepared(db_, INSERT_BAR_SQL) }
-    };
+        prepared_statements_ =
+        {
+            { statement::SELECT_CHORD, prepared(db_, SELECT_CHORD_SQL) },
+            { statement::INSERT_CHORD, prepared(db_, INSERT_CHORD_SQL) },
+            { statement::SELECT_BAR, prepared(db_, SELECT_BAR_SQL) },
+            { statement::INSERT_BAR, prepared(db_, INSERT_BAR_SQL) }
+        };
+    }
+    catch (std::invalid_argument& e)
+    {
+        CHUCHO_FATAL_L(e.what());
+        std::abort();
+    }
 }
 
 database::~database()
