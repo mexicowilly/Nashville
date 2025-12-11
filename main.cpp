@@ -4,7 +4,7 @@
 #include <fstream>
 #include <filesystem>
 #include <chucho/configuration.hpp>
-#include <iostream>
+#include <chucho/log.hpp>
 
 namespace
 {
@@ -15,8 +15,6 @@ void configure_chucho()
     std::filesystem::create_directories(cfg_dir);
     std::filesystem::path data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdString();
     std::filesystem::create_directories(data_dir);
-    std::cout << "Using config path: " << cfg_dir << std::endl;
-    std::cout << "Using data path: " << data_dir << std::endl;
     std::filesystem::path cfg_file = cfg_dir / "chucho.yaml";
     if (!std::filesystem::exists(cfg_file))
     {
@@ -41,6 +39,9 @@ void configure_chucho()
         cfg_out.close();
     }
     chucho::configuration::set_file_name(cfg_file.string());
+    auto lgr = chucho::logger::get("global");
+    CHUCHO_INFO(lgr, "Using config path '" << cfg_dir << "'");
+    CHUCHO_INFO(lgr, "Using data path '" << data_dir << "'");
 }
 
 }
