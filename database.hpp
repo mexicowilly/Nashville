@@ -14,22 +14,26 @@ public:
     database(const std::string& file_name);
     ~database();
 
-    void insert_song(const model::song& s);
+    void insert_songs(const std::vector<model::song>& songs);
+    std::vector<model::song> select_songs();
 
 private:
     enum class statement
     {
         SELECT_CHORD,
+        SELECT_CHORD_BY_ID,
         INSERT_CHORD,
         SELECT_BAR,
         INSERT_BAR,
         SELECT_BAR_CHORD,
         INSERT_BAR_CHORD,
+        SELECT_CHORDS_BY_BAR,
         SELECT_TIME_SIGNATURE,
+        SELECT_TIME_SIGNATURE_BY_ID,
         INSERT_TIME_SIGNATURE,
-        SELECT_SONG,
+        SELECT_SONGS,
         INSERT_SONG,
-        SELECT_SONG_BAR,
+        SELECT_SONG_BARS,
         INSERT_SONG_BAR,
         SELECT_PLAYLIST,
         INSERT_PLAYLIST,
@@ -51,7 +55,12 @@ private:
     };
 
     std::uint64_t insert_bar(const model::bar& b);
+    std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);
+    void insert_song(const model::song& s, unsigned idx);
+    std::uint64_t insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index);
+    std::vector<model::bar> select_bars(std::uint64_t song_id);
+    std::vector<model::chord> select_chords(std::uint64_t bar_id);
     std::uint64_t time_signature_id(const model::time_signature& ts);
 
     sqlite3* db_;

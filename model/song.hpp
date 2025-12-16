@@ -12,6 +12,7 @@ class song : chucho::loggable<song>
 public:
     bar& add_bar();
     const std::vector<bar>& bars() const;
+    song& bars(const std::vector<bar>& bs);
     unsigned bars_per_line() const;
     song& bars_per_line(unsigned num);
     bool empty() const;
@@ -56,6 +57,12 @@ inline const std::string& song::key() const
 inline const std::vector<bar>& song::bars() const
 {
     return bars_;
+}
+
+inline song& song::bars(const std::vector<bar>& bs)
+{
+    bars_ = bs;
+    return *this;
 }
 
 inline const std::string& song::name() const
