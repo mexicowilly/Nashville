@@ -497,8 +497,11 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
           .count(sqlite3_column_int(sel_ts->ptr(), 2));
         bar.time_sig(ts);
         bar.is_eol(sqlite3_column_int(sel_b->ptr(), 1));
-        if (sqlite3_column_type(sel_b->ptr(), 3
-
+        if (sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_TEXT)
+            bar.section(reinterpret_cast<const char*>(sqlite3_column_text(sel_b->ptr(), 3)));
+        else
+            assert(sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_NULL);
+        bars.push_back(bar);
         rc = sqlite3_step(raw);
     }
     if (rc != SQLITE_DONE)
@@ -529,15 +532,23 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
           .mode(static_cast<model::chord::type>(sqlite3_column_int(raw, 2)));
         if (sqlite3_column_type(raw, 3) == SQLITE_INTEGER)
             ch.step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(raw, 3)));
+        else
+            assert(sqlite3_column_type(raw, 3) == SQLITE_NULL);
         if (sqlite3_column_type(raw, 4) == SQLITE_INTEGER)
             ch.bass_note(sqlite3_column_int(raw, 4));
+        else
+            assert(sqlite3_column_type(raw, 4) == SQLITE_NULL);
         if (sqlite3_column_type(raw, 5) == SQLITE_INTEGER)
             ch.bass_note_step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(raw, 5)));
+        else
+            assert(sqlite3_column_type(raw, 5) == SQLITE_NULL);
         ch.extensions(reinterpret_cast<const char*>(sqlite3_column_text(raw, 6)))
           .is_staccato(sqlite3_column_int(raw, 7))
           .is_diamond(sqlite3_column_int(raw, 8));
         if (sqlite3_column_type(raw, 9) == SQLITE_INTEGER)
             ch.duration(static_cast<model::chord::time>(sqlite3_column_int(raw, 9)));
+        else
+            assert(sqlite3_column_type(raw, 9) == SQLITE_NULL);
         ch.is_tied(sqlite3_column_int(raw, 10))
           .is_pushed(sqlite3_column_int(raw, 11));
         chords.push_back(ch);
