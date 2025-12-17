@@ -14,6 +14,7 @@ class bar : chucho::loggable<bar>
 public:
     chord& add_chord();
     const std::vector<chord>& chords() const;
+    bar& chords(const std::vector<chord>& cs);
     bool empty() const;
     bool is_eol() const;
     bar& is_eol(bool state);
@@ -34,6 +35,12 @@ private:
 inline const std::vector<chord>& bar::chords() const
 {
     return chords_;
+}
+
+inline bar& bar::chords(const std::vector<chord>& cs)
+{
+    chords_ = cs;
+    return *this;
 }
 
 inline bool bar::empty() const

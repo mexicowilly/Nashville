@@ -155,12 +155,6 @@ VALUES (?1, ?2)
 RETURNING id;
 )";
 
-const char* SELECT_BAR_CHORD_SQL = R"(
-SELECT * FROM bar_chords WHERE (chord_id = ?1 AND
-                                bar_id = ?2 AND
-                                chord_index = ?3);
-)";
-
 const char* INSERT_BAR_CHORD_SQL = R"(
 INSERT INTO bar_chords (chord_id, bar_id, chord_index)
 VALUES (?1, ?2, ?3)
@@ -282,7 +276,6 @@ database::database(const std::string& file_name)
             { statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
             { statement::SELECT_TIME_SIGNATURE_BY_ID, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_BY_ID_SQL) },
             { statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
-            { statement::SELECT_BAR_CHORD, std::make_shared<prepared>(db_, SELECT_BAR_CHORD_SQL) },
             { statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) },
             { statement::SELECT_SONGS, std::make_shared<prepared>(db_, SELECT_SONGS_SQL) },
             { statement::INSERT_SONG, std::make_shared<prepared>(db_, INSERT_SONG_SQL) },
@@ -483,7 +476,8 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
     {
         model::bar bar;
         sel_b->reset();
-        sqlite3_bind_int64(sel_b->ptr(), 1, sqlite3_column_int64(raw, 0));
+        auto bar_id = sqlite3_column_int64(raw, 0);
+        sqlite3_bind_int64(sel_b->ptr(), 1, bar_id);
         auto rc2 = sqlite3_step(sel_b->ptr());
         if (rc2 != SQLITE_ROW)
             throw std::runtime_error(std::string("Could not look up bar by ID: ") + sqlite3_errstr(rc2));
@@ -501,6 +495,7 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
             bar.section(reinterpret_cast<const char*>(sqlite3_column_text(sel_b->ptr(), 3)));
         else
             assert(sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_NULL);
+        bar.chords(select_chords(bar_id));
         bars.push_back(bar);
         rc = sqlite3_step(raw);
     }
@@ -572,6 +567,7 @@ std::vector<model::song> database::select_songs()
     unsigned cur_index = 0;
     while (rc == SQLITE_ROW)
     {
+        auto song_id = sqlite3_column_int64(raw, 0);
         model::song cur;
         cur.name(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
         cur.key(reinterpret_cast<const char*>(sqlite3_column_text(raw, 2)));
@@ -587,6 +583,7 @@ std::vector<model::song> database::select_songs()
         cur.bars_per_line(sqlite3_column_int(raw, 4));
         cur.tempo(std::make_tuple(sqlite3_column_int(raw, 5), static_cast<model::chord::time>(sqlite3_column_int(raw, 6))));
         assert(sqlite3_column_int(raw, 7) == cur_index++);
+        cur.bars(select_bars(song_id));
         songs.push_back(cur);
         rc = sqlite3_step(raw);
     }

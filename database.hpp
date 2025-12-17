@@ -25,7 +25,6 @@ private:
         INSERT_CHORD,
         SELECT_BAR,
         INSERT_BAR,
-        SELECT_BAR_CHORD,
         INSERT_BAR_CHORD,
         SELECT_CHORDS_BY_BAR,
         SELECT_TIME_SIGNATURE,
