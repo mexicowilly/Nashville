@@ -4,6 +4,7 @@
 #include "sqlite3.h"
 #include <map>
 #include "model/song.hpp"
+#include "model/playlist.hpp"
 
 namespace nashville
 {
@@ -14,7 +15,9 @@ public:
     database(const std::string& file_name);
     ~database();
 
+    void insert_playlists(const std::vector<model::playlist>& lists);
     void insert_songs(const std::vector<model::song>& songs);
+    std::vector<model::playlist> select_playlists(const std::vector<model::song>& songs);
     std::vector<model::song> select_songs();
 
 private:
@@ -31,12 +34,13 @@ private:
         SELECT_TIME_SIGNATURE_BY_ID,
         INSERT_TIME_SIGNATURE,
         SELECT_SONGS,
+        SELECT_SONG_ID,
         INSERT_SONG,
         SELECT_SONG_BARS,
         INSERT_SONG_BAR,
-        SELECT_PLAYLIST,
+        SELECT_PLAYLISTS,
         INSERT_PLAYLIST,
-        SELECT_PLAYLIST_SONG,
+        SELECT_PLAYLIST_SONGS,
         INSERT_PLAYLIST_SONG
     };
 
@@ -56,6 +60,7 @@ private:
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);
+    std::uint64_t insert_playlist(const model::playlist& p);
     void insert_song(const model::song& s, unsigned idx);
     std::uint64_t insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index);
     std::vector<model::bar> select_bars(std::uint64_t song_id);
