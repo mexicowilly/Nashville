@@ -11,7 +11,7 @@ app::app(int argc, char* argv[])
     auto vl = new QVBoxLayout;
     central_widget()->setLayout(vl);
     vl->setAlignment(Qt::AlignTop);
-    vl->addWidget(new widgets::song);
+//    vl->addWidget(new widgets::song);
     main_win_.setFocus();
     main_win_.show();
 }

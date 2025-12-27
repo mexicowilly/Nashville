@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS song
     bars_per_line INTEGER,
     beats_per_minute INTEGER,
     beats_unit INTEGER,
-    index INTEGER, -- This is the index of the song in the global song list
+    song_index INTEGER, -- This is the index of the song in the global song list
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS song_bars
     id INTEGER PRIMARY KEY NOT NULL,
     bar_id INTEGER UNIQUE,
     song_id INTEGER UNIQUE,
-    index INTEGER UNIQUE,
+    bar_index INTEGER UNIQUE,
     FOREIGN KEY(bar_id) REFERENCES bar(id),
     FOREIGN KEY(song_id) REFERENCES song(id)
 );
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS playlist_songs
     id INTEGER PRIMARY KEY NOT NULL,
     song_id INTEGER UNIQUE,
     playlist_id INTEGER UNIQUE,
-    index INTEGER UNIQUE,
+    song_index INTEGER UNIQUE,
     FOREIGN KEY(song_id) REFERENCES song(id),
     FOREIGN KEY(playlist_id) REFERENCES playlist(id)
 );
@@ -109,7 +109,7 @@ SELECT * FROM chord WHERE
 )";
 
 const char* SELECT_CHORDS_BY_BAR_SQL = R"(
-SELECT chord_id FROM bar_chords WHERE bar_id = ?1 ORDER BY index;
+SELECT chord_id FROM bar_chords WHERE bar_id = ?1 ORDER BY chord_index;
 )";
 
 const char* SELECT_CHORD_BY_ID_SQL = R"(
@@ -134,11 +134,12 @@ RETURNING id;
 
 const char* SELECT_BAR_SQL = R"(
 SELECT bar.is_eol,
-       bar.section
+       bar.section,
        time_signature.beat_type,
        time_signature.count
-FROM bar WHERE id = ?1
-JOIN time_signature ON bar.time_sig_id = time_signature.id;
+FROM bar
+LEFT JOIN time_signature ON bar.time_sig_id = time_signature.id;
+WHERE bar.id = ?1;
 )";
 
 const char* INSERT_BAR_SQL = R"(
@@ -149,10 +150,6 @@ RETURNING id;
 
 const char* SELECT_TIME_SIGNATURE_SQL = R"(
 SELECT * FROM time_signature WHERE (beat_type = ?1 AND count = ?2);
-)";
-
-const char* SELECT_TIME_SIGNATURE_BY_ID_SQL = R"(
-SELECT (beat_type, count) FROM time_signature WHERE (id = ?1);
 )";
 
 const char* INSERT_TIME_SIGNATURE_SQL = R"(
@@ -168,17 +165,17 @@ RETURNING id;
 )";
 
 const char* SELECT_SONGS_SQL = R"(
-SELECT (song.id,
-        song.name,
-        song.key,
-        song.bars_per_line,
-        song.beats_per_minute,
-        song.beats_unit,
-        time_signature.beat_type,
-        time_signature.count)
+SELECT song.id,
+       song.name,
+       song.key,
+       song.bars_per_line,
+       song.beats_per_minute,
+       song.beats_unit,
+       time_signature.beat_type,
+       time_signature.count
 FROM song
 JOIN time_signature ON time_signature.id = song.time_sig_id
-ORDER BY song.index;
+ORDER BY song.song_index;
 )";
 
 const char* SELECT_SONG_ID_SQL = R"(
@@ -192,17 +189,17 @@ INSERT INTO song (name,
                   bars_per_line,
                   beats_per_minute,
                   beats_unit,
-                  index)
+                  song_index)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 RETURNING id;
 )";
 
 const char* SELECT_SONG_BARS_SQL = R"(
-SELECT bar_id FROM song_bars WHERE song_id = ?1 ORDER BY index;
+SELECT bar_id FROM song_bars WHERE song_id = ?1 ORDER BY bar_index;
 )";
 
 const char* INSERT_SONG_BAR_SQL = R"(
-INSERT INTO song_bars (bar_id, song_id, index)
+INSERT INTO song_bars (bar_id, song_id, bar_index)
 VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
@@ -217,13 +214,14 @@ INSERT INTO playlist (name) VALUES (?1) RETURNING id;
 
 const char* SELECT_PLAYLIST_SONGS_SQL = R"(
 SELECT song.name
-FROM playlist_songs WHERE playlist_songs.playlist_id = ?1
+FROM playlist_songs
 JOIN song ON playlist_songs.song_id = song.id
-ORDER BY playlist_songs.index;
+WHERE playlist_songs.playlist_id = ?1
+ORDER BY playlist_songs.song_index;
 )";
 
 const char* INSERT_PLAYLIST_SONG_SQL = R"(
-INSERT INTO playlist_songs (song_id, playlist_id, index)
+INSERT INTO playlist_songs (song_id, playlist_id, song_index)
 VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
@@ -240,7 +238,6 @@ database::prepared::prepared(sqlite3* db, const char* const sql)
                                  -1,
                                  &stmt_,
                                  NULL);
-    assert(rc == SQLITE_OK);
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
@@ -266,8 +263,7 @@ database::database(const std::string& file_name)
                              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXRESCODE,
                              nullptr);
     if (rc != SQLITE_OK)
-    {
-    }
+        throw std::runtime_error(std::string("Unable to open the database '") + file_name + "' " + sqlite3_errstr(rc));
     CHUCHO_DEBUG_L("Opened the database '" << file_name << "'");
     char* err;
     rc = sqlite3_exec(db_,
@@ -275,7 +271,6 @@ database::database(const std::string& file_name)
                       nullptr,
                       nullptr,
                       &err);
-    assert(rc == SQLITE_OK);
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
@@ -295,7 +290,6 @@ database::database(const std::string& file_name)
             { statement::INSERT_BAR, std::make_shared<prepared>(db_, INSERT_BAR_SQL) },
             { statement::SELECT_CHORDS_BY_BAR, std::make_shared<prepared>(db_, SELECT_CHORDS_BY_BAR_SQL) },
             { statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
-            { statement::SELECT_TIME_SIGNATURE_BY_ID, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_BY_ID_SQL) },
             { statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
             { statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) },
             { statement::SELECT_SONGS, std::make_shared<prepared>(db_, SELECT_SONGS_SQL) },
@@ -548,10 +542,19 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
             bar.section(reinterpret_cast<const char*>(sqlite3_column_text(sel_b->ptr(), 2)));
         else
             assert(sqlite3_column_type(sel_b->ptr(), 2) == SQLITE_NULL);
-        model::time_signature ts;
-        ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(sel_b->ptr(), 3)))
-          .count(sqlite3_column_int(sel_b->ptr(), 4));
-        bar.time_sig(ts);
+        if (sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_INTEGER &&
+            sqlite3_column_type(sel_b->ptr(), 4) == SQLITE_INTEGER)
+        {
+            model::time_signature ts;
+            ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(sel_b->ptr(), 3)))
+              .count(sqlite3_column_int(sel_b->ptr(), 4));
+            bar.time_sig(ts);
+        }
+        else
+        {
+            assert(sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_NULL &&
+                   sqlite3_column_type(sel_b->ptr(), 4) == SQLITE_NULL);
+        }
         bar.chords(select_chords(bar_id));
         bars.push_back(bar);
         rc = sqlite3_step(raw);
@@ -580,29 +583,29 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
         if (rc2 != SQLITE_ROW)
             throw std::runtime_error(std::string("Could not look up chord by ID: ") + sqlite3_errstr(rc2));
         model::chord ch;
-        ch.number(sqlite3_column_int(raw, 1))
-          .mode(static_cast<model::chord::type>(sqlite3_column_int(raw, 2)));
-        if (sqlite3_column_type(raw, 3) == SQLITE_INTEGER)
-            ch.step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(raw, 3)));
+        ch.number(sqlite3_column_int(sel_c->ptr(), 1))
+          .mode(static_cast<model::chord::type>(sqlite3_column_int(sel_c->ptr(), 2)));
+        if (sqlite3_column_type(sel_c->ptr(), 3) == SQLITE_INTEGER)
+            ch.step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(sel_c->ptr(), 3)));
         else
-            assert(sqlite3_column_type(raw, 3) == SQLITE_NULL);
-        if (sqlite3_column_type(raw, 4) == SQLITE_INTEGER)
-            ch.bass_note(sqlite3_column_int(raw, 4));
+            assert(sqlite3_column_type(sel_c->ptr(), 3) == SQLITE_NULL);
+        if (sqlite3_column_type(sel_c->ptr(), 4) == SQLITE_INTEGER)
+            ch.bass_note(sqlite3_column_int(sel_c->ptr(), 4));
         else
-            assert(sqlite3_column_type(raw, 4) == SQLITE_NULL);
-        if (sqlite3_column_type(raw, 5) == SQLITE_INTEGER)
-            ch.bass_note_step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(raw, 5)));
+            assert(sqlite3_column_type(sel_c->ptr(), 4) == SQLITE_NULL);
+        if (sqlite3_column_type(sel_c->ptr(), 5) == SQLITE_INTEGER)
+            ch.bass_note_step(static_cast<model::chord::flat_sharp>(sqlite3_column_int(sel_c->ptr(), 5)));
         else
-            assert(sqlite3_column_type(raw, 5) == SQLITE_NULL);
-        ch.extensions(reinterpret_cast<const char*>(sqlite3_column_text(raw, 6)))
-          .is_staccato(sqlite3_column_int(raw, 7))
-          .is_diamond(sqlite3_column_int(raw, 8));
-        if (sqlite3_column_type(raw, 9) == SQLITE_INTEGER)
-            ch.duration(static_cast<model::chord::time>(sqlite3_column_int(raw, 9)));
+            assert(sqlite3_column_type(sel_c->ptr(), 5) == SQLITE_NULL);
+        ch.extensions(reinterpret_cast<const char*>(sqlite3_column_text(sel_c->ptr(), 6)))
+          .is_staccato(sqlite3_column_int(sel_c->ptr(), 7))
+          .is_diamond(sqlite3_column_int(sel_c->ptr(), 8));
+        if (sqlite3_column_type(sel_c->ptr(), 9) == SQLITE_INTEGER)
+            ch.duration(static_cast<model::chord::time>(sqlite3_column_int(sel_c->ptr(), 9)));
         else
-            assert(sqlite3_column_type(raw, 9) == SQLITE_NULL);
-        ch.is_tied(sqlite3_column_int(raw, 10))
-          .is_pushed(sqlite3_column_int(raw, 11));
+            assert(sqlite3_column_type(sel_c->ptr(), 9) == SQLITE_NULL);
+        ch.is_tied(sqlite3_column_int(sel_c->ptr(), 10))
+          .is_pushed(sqlite3_column_int(sel_c->ptr(), 11));
         chords.push_back(ch);
         rc = sqlite3_step(raw);
     }
@@ -656,8 +659,7 @@ std::vector<model::song> database::select_songs()
     auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
-        model::song cur;
-        cur.name(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
+        model::song cur(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
         cur.key(reinterpret_cast<const char*>(sqlite3_column_text(raw, 2)));
         cur.bars_per_line(sqlite3_column_int(raw, 3));
         cur.tempo(std::make_tuple(sqlite3_column_int(raw, 4), static_cast<model::chord::time>(sqlite3_column_int(raw, 5))));

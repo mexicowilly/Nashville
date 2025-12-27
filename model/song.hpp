@@ -10,6 +10,8 @@ namespace nashville::model
 class song : chucho::loggable<song>
 {
 public:
+    song(const std::string& nm);
+
     bar& add_bar();
     const std::vector<bar>& bars() const;
     song& bars(const std::vector<bar>& bs);
@@ -33,6 +35,11 @@ private:
     std::tuple<unsigned, chord::time> tempo_;
     unsigned bars_per_line_ = 4;
 };
+
+inline song::song(const std::string& nm)
+    : name_(nm)
+{
+}
 
 inline bar& song::add_bar()
 {

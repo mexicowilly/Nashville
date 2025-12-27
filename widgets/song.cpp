@@ -7,11 +7,6 @@
 namespace nashville::widgets
 {
 
-song::song(QWidget* parent)
-    : song(parent, model::song())
-{
-}
-
 song::song(QWidget* parent, const model::song& mdl)
     : QWidget(parent),
       model_(mdl),

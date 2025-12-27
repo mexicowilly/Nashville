@@ -12,7 +12,6 @@ class song : public QWidget
     Q_OBJECT
 
 public:
-    song(QWidget* parent = nullptr);
     song(QWidget* parent, const model::song& mdl);
 
 private slots:
