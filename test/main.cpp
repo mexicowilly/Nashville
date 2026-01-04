@@ -4,6 +4,7 @@
 
 int main(int argc, char* argv[])
 {
+    //std::srand(std::time(nullptr));
     std::string cnf =
 R"(
 - chucho::logger:
@@ -11,7 +12,7 @@ R"(
     level: debug
     chucho::cout_writer:
         chucho::pattern_formatter:
-            pattern: '%-5p %c{1}: %m%n'
+            pattern: '%-5p %c{1}.%L: %m%n'
 )";
     auto lvl = std::getenv("CHUCHO_LEVEL");
     if (lvl != nullptr)

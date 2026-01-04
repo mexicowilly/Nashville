@@ -37,7 +37,8 @@ private:
 };
 
 inline song::song(const std::string& nm)
-    : name_(nm)
+    : name_(nm),
+      tempo_({ 88, chord::time::QUARTER })
 {
 }
 

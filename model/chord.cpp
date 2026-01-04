@@ -13,7 +13,8 @@ chord::chord()
       mode_(type::UNDEFINED),
       is_staccato_(false),
       is_diamond_(false),
-      is_tied_(false)
+      is_tied_(false),
+      is_pushed_(false)
 {
 }
 
