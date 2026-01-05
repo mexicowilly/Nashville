@@ -97,13 +97,13 @@ const char* SELECT_CHORD_SQL = R"(
 SELECT id FROM chord WHERE
     number = ?1 AND
     mode = ?2 AND
-    (flat_sharp IS NULL OR flat_sharp = ?3) AND
-    (bass_note IS NULL OR bass_note = ?4) AND
-    (bass_note_step IS NULL OR bass_note_step = ?5) AND
+    flat_sharp IS ?3 AND
+    bass_note IS ?4 AND
+    bass_note_step IS ?5 AND
     extensions = ?6 AND
     is_staccato = ?7 AND
     is_diamond = ?8 AND
-    (duration IS NULL OR duration = ?9) AND
+    duration IS ?9 AND
     is_tied = ?10 AND
     is_pushed = ?11;
 )";
@@ -374,7 +374,10 @@ std::uint64_t database::insert_chord(const model::chord& c)
     sqlite3_bind_int(raw, 11, c.is_pushed());
     auto rc = sqlite3_step(raw);
     if (rc == SQLITE_ROW)
+    {
+        assert(sqlite3_column_count(raw) == 1);
         return sqlite3_column_int64(raw, 0);
+    }
     assert(prepared_statements_.count(statement::INSERT_CHORD) == 1);
     auto ins_c = prepared_statements_[statement::INSERT_CHORD];
     ins_c->reset();

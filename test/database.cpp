@@ -184,3 +184,72 @@ TEST_F(db_test, lots_of_bars)
     CHUCHO_INFO_L("About to compare lots of bars");
     expect_song(s, found[0]);
 }
+
+TEST_F(db_test, lots_of_chords)
+{
+    model::song s("lots of chords");
+    s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     .key("D minor");
+    auto& b = s.add_bar();
+    for (int i = 0; i < 10000; i++)
+    {
+        for (int j = 1; j <= 7; j++)
+        {
+            for (int k = 0; k <= 7; k++)
+            {
+                auto& ch = b.add_chord();
+                ch.number(j);
+                if (k > 0)
+                    ch.bass_note(k);
+                switch (k % 3)
+                {
+                case 1:
+                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    break;
+                case 2:
+                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    break;
+                }
+                switch (i % 9)
+                {
+                case 1:
+                    ch.duration(model::chord::time::SIXTEENTH);
+                    break;
+                case 2:
+                    ch.duration(model::chord::time::EIGHTH);
+                    break;
+                case 3:
+                    ch.duration(model::chord::time::DOTTED_EIGHTH);
+                    break;
+                case 4:
+                    ch.duration(model::chord::time::QUARTER);
+                    break;
+                case 5:
+                    ch.duration(model::chord::time::DOTTED_QUARTER);
+                    break;
+                case 6:
+                    ch.duration(model::chord::time::HALF);
+                    break;
+                case 7:
+                    ch.duration(model::chord::time::DOTTED_HALF);
+                    break;
+                case 8:
+                    ch.duration(model::chord::time::WHOLE);
+                    break;
+                }
+                ch.extensions(std::string("ext ") + std::to_string(i & 1));
+                ch.is_diamond(i & 1);
+                ch.is_pushed(i & 1);
+                ch.is_staccato(i & 1);
+                ch.is_tied(i % 1);
+                ch.mode(static_cast<model::chord::type>(i % 5));
+            }
+        }
+    }
+    EXPECT_NO_THROW(db_->insert_songs({ s }));
+    std::vector<model::song> found;
+    EXPECT_NO_THROW(found = db_->select_songs());
+    ASSERT_EQ(1, found.size());
+    CHUCHO_INFO_L("About to compare lots of chords");
+    expect_song(s, found[0]);
+}
