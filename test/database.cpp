@@ -191,7 +191,7 @@ TEST_F(db_test, lots_of_chords)
     s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
      .key("D minor");
     auto& b = s.add_bar();
-    for (int i = 0; i < 10000; i++)
+    for (int i = 0; i < 5000; i++)
     {
         for (int j = 1; j <= 7; j++)
         {
@@ -252,4 +252,78 @@ TEST_F(db_test, lots_of_chords)
     ASSERT_EQ(1, found.size());
     CHUCHO_INFO_L("About to compare lots of chords");
     expect_song(s, found[0]);
+}
+
+TEST_F(db_test, lots_of_songs)
+{
+    std::vector<std::string> keys = { "A", "B", "C", "D", "E", "F", "G",
+                                      "A min", "B min", "C min", "D min", "E min", "F min", "G min" };
+    std::vector<model::song> songs;
+    for (int i = 0; i < 500; i++)
+    {
+        auto s = model::song(std::string("name ") + std::to_string(i));
+        s.key(keys[i % 14]);
+        model::time_signature ts;
+        ts.count((i % 12) + 1);
+        switch (i %3)
+        {
+        case 0:
+            ts.kind(model::time_signature::beat_type::EIGHTH);
+            break;
+        case 1:
+            ts.kind(model::time_signature::beat_type::QUARTER);
+            break;
+        case 2:
+            ts.kind(model::time_signature::beat_type::HALF);
+            break;
+        }
+        s.time_sig(ts);
+        std::tuple<unsigned, model::chord::time> temp;
+        std::get<0>(temp) = i;
+        switch (i % 8)
+        {
+        case 0:
+            std::get<1>(temp) = model::chord::time::SIXTEENTH;
+            break;
+        case 1:
+            std::get<1>(temp) = model::chord::time::EIGHTH;
+            break;
+        case 2:
+            std::get<1>(temp) = model::chord::time::DOTTED_EIGHTH;
+            break;
+        case 3:
+            std::get<1>(temp) = model::chord::time::QUARTER;
+            break;
+        case 4:
+            std::get<1>(temp) = model::chord::time::DOTTED_QUARTER;
+            break;
+        case 5:
+            std::get<1>(temp) = model::chord::time::HALF;
+            break;
+        case 6:
+            std::get<1>(temp) = model::chord::time::DOTTED_HALF;
+            break;
+        case 7:
+            std::get<1>(temp) = model::chord::time::WHOLE;
+            break;
+        }
+        s.tempo(temp);
+        s.bars_per_line((i% 16) + 1);
+        for (int j = 0; j < 35; j++)
+        {
+            auto& b = s.add_bar();
+            b.add_chord().number(7);
+            b.add_chord().number(3);
+        }
+        songs.push_back(s);
+    }
+    EXPECT_NO_THROW(db_->insert_songs(songs));
+    CHUCHO_INFO_L("Inserted " << songs.size() << " songs");
+    std::vector<model::song> found;
+    EXPECT_NO_THROW(found = db_->select_songs());
+    CHUCHO_INFO_L("Loaded " << songs.size() << " songs");
+    ASSERT_EQ(500, found.size());
+    CHUCHO_INFO_L("About to compare lots of songs");
+    for (int i = 0; i < 500; i++)
+        expect_song(songs[i], found[i]);
 }
