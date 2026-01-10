@@ -12,7 +12,7 @@ R"(
     level: debug
     chucho::cout_writer:
         chucho::pattern_formatter:
-            pattern: '%-5p %c{1}.%L: %m%n'
+            pattern: '%D{%H:%M:%S.%q} %-5p %c{1}.%L: %m%n'
 )";
     auto lvl = std::getenv("CHUCHO_LEVEL");
     if (lvl != nullptr)
