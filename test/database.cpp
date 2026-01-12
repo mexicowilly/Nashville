@@ -259,7 +259,7 @@ TEST_F(db_test, lots_of_songs)
     std::vector<std::string> keys = { "A", "B", "C", "D", "E", "F", "G",
                                       "A min", "B min", "C min", "D min", "E min", "F min", "G min" };
     std::vector<model::song> songs;
-    for (int i = 0; i < 500; i++)
+    for (int i = 0; i < 1000; i++)
     {
         auto s = model::song(std::string("name ") + std::to_string(i));
         s.key(keys[i % 14]);
@@ -322,8 +322,8 @@ TEST_F(db_test, lots_of_songs)
     std::vector<model::song> found;
     EXPECT_NO_THROW(found = db_->select_songs());
     CHUCHO_INFO_L("Loaded " << songs.size() << " songs");
-    ASSERT_EQ(500, found.size());
+    ASSERT_EQ(1000, found.size());
     CHUCHO_INFO_L("About to compare lots of songs");
-    for (int i = 0; i < 500; i++)
+    for (int i = 0; i < 1000; i++)
         expect_song(songs[i], found[i]);
 }

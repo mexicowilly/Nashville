@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS bar_chords
     FOREIGN KEY(bar_id) REFERENCES bar(id)
 );
 
+CREATE INDEX IF NOT EXISTS bar_id_index ON bar_chords(bar_id, chord_index);
+
 CREATE TABLE IF NOT EXISTS song
 (
     id INTEGER PRIMARY KEY,
@@ -75,6 +77,8 @@ CREATE TABLE IF NOT EXISTS song_bars
     FOREIGN KEY(bar_id) REFERENCES bar(id),
     FOREIGN KEY(song_id) REFERENCES song(id)
 );
+
+CREATE INDEX IF NOT EXISTS song_id_index ON song_bars(song_id, bar_index);
 
 CREATE TABLE IF NOT EXISTS playlist
 (
@@ -560,12 +564,12 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
     auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
+        model::chord ch;
         sel_c->reset();
         sqlite3_bind_int64(sel_c->ptr(), 1, sqlite3_column_int64(raw, 0));
         auto rc2 = sqlite3_step(sel_c->ptr());
         if (rc2 != SQLITE_ROW)
             throw std::runtime_error(std::string("Could not look up chord by ID: ") + sqlite3_errstr(rc2));
-        model::chord ch;
         ch.number(sqlite3_column_int(sel_c->ptr(), 1))
           .mode(static_cast<model::chord::type>(sqlite3_column_int(sel_c->ptr(), 2)));
         if (sqlite3_column_type(sel_c->ptr(), 3) == SQLITE_INTEGER)
