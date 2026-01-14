@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS playlist_songs
     FOREIGN KEY(song_id) REFERENCES song(id),
     FOREIGN KEY(playlist_id) REFERENCES playlist(id)
 );
+
+CREATE INDEX IF NOT EXISTS playlist_id_index ON playlist_songs(playlist_id, song_index);
 )";
 
 const char* SELECT_CHORD_SQL = R"(
