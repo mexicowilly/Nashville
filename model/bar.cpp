@@ -16,7 +16,7 @@ bar& bar::is_eol(bool state)
     return *this;
 }
 
-void bar::parse_user_input(const std::string& str)
+bar& bar::parse_user_input(const std::string& str)
 {
     CHUCHO_DEBUG_L("Parsing bar input: '" << str << "'");
     std::string src(str);
@@ -29,6 +29,7 @@ void bar::parse_user_input(const std::string& str)
     }
     chords_ = new_chords;
     CHUCHO_DEBUG_L("Done");
+    return *this;
 }
 
 bar& bar::section(const std::string& sec)

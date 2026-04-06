@@ -182,7 +182,7 @@ chord& chord::number(unsigned num)
     return *this;
 }
 
-void chord::parse_user_input(const std::string& usr)
+chord& chord::parse_user_input(const std::string& usr)
 {
     CHUCHO_DEBUG_L("Parsing chord input: '" << usr << "'");
     if (usr.empty())
@@ -265,6 +265,7 @@ void chord::parse_user_input(const std::string& usr)
         throw std::invalid_argument("'" + usr + "' is not a valid chord description");
     }
     CHUCHO_DEBUG_L("Found " << *this);
+    return *this;
 }
 
 chord& chord::step(flat_sharp fs)

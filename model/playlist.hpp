@@ -11,14 +11,14 @@ class playlist : chucho::loggable<playlist>
 public:
     playlist(const std::string& name);
 
-    playlist& add_song(const song& s);
+    playlist& add_song(const std::string& s);
     const std::string& name() const;
     playlist& name(const std::string& name);
-    const std::vector<std::reference_wrapper<const song>> songs() const;
+    const std::vector<std::string>& songs() const;
 
 private:
     std::string name_;
-    std::vector<std::reference_wrapper<const song>> songs_;
+    std::vector<std::string> songs_;
 };
 
 inline playlist::playlist(const std::string& name)
@@ -26,9 +26,9 @@ inline playlist::playlist(const std::string& name)
 {
 }
 
-inline playlist& playlist::add_song(const song& s)
+inline playlist& playlist::add_song(const std::string& s)
 {
-    songs_.emplace_back(std::cref(s));
+    songs_.push_back(s);
     return *this;
 }
 
@@ -43,7 +43,7 @@ inline playlist& playlist::name(const std::string& name)
     return *this;
 }
 
-inline const std::vector<std::reference_wrapper<const song>> playlist::songs() const
+inline const std::vector<std::string>& playlist::songs() const
 {
     return songs_;
 }

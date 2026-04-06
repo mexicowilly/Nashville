@@ -4,6 +4,8 @@
 #include <chucho/log.hpp>
 #include <algorithm>
 
+using namespace std::string_literals;
+
 namespace
 {
 
@@ -58,13 +60,12 @@ CREATE INDEX IF NOT EXISTS bar_id_index ON bar_chords(bar_id, chord_index);
 CREATE TABLE IF NOT EXISTS song
 (
     id INTEGER PRIMARY KEY,
-    name TEXT,
+    name TEXT UNIQUE,
     key TEXT,
     time_sig_id INTEGER,
     bars_per_line INTEGER,
     beats_per_minute INTEGER,
     beats_unit INTEGER,
-    song_index INTEGER, -- This is the index of the song in the global song list
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -83,7 +84,7 @@ CREATE INDEX IF NOT EXISTS song_id_index ON song_bars(song_id, bar_index);
 CREATE TABLE IF NOT EXISTS playlist
 (
     id INTEGER PRIMARY KEY,
-    name TEXT
+    name TEXT UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS playlist_songs
@@ -180,12 +181,28 @@ SELECT song.id,
        time_signature.beat_type,
        time_signature.count
 FROM song
+LEFT JOIN time_signature ON time_signature.id = song.time_sig_id;
+)";
+
+const char* SELECT_SONG_SQL = R"(
+SELECT song.id,
+       song.key,
+       song.bars_per_line,
+       song.beats_per_minute,
+       song.beats_unit,
+       time_signature.beat_type,
+       time_signature.count
+FROM song
 LEFT JOIN time_signature ON time_signature.id = song.time_sig_id
-ORDER BY song.song_index;
+WHERE song.name = ?1;
 )";
 
 const char* SELECT_SONG_ID_SQL = R"(
 SELECT id FROM song WHERE name = ?1;
+)";
+
+const char* SELECT_SONG_NAMES_SQL = R"(
+SELECT name FROM song;
 )";
 
 const char* INSERT_SONG_SQL = R"(
@@ -194,9 +211,8 @@ INSERT INTO song (name,
                   time_sig_id,
                   bars_per_line,
                   beats_per_minute,
-                  beats_unit,
-                  song_index)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                  beats_unit)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 RETURNING id;
 )";
 
@@ -210,8 +226,8 @@ VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
 
-const char* SELECT_PLAYLISTS_SQL = R"(
-SELECT * FROM playlist;
+const char* SELECT_PLAYLIST_NAMES_SQL = R"(
+SELECT name FROM playlist;
 )";
 
 const char* INSERT_PLAYLIST_SQL = R"(
@@ -232,6 +248,34 @@ VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
 
+const char* SELECT_PLAYLIST_ID_SQL = R"(
+SELECT id FROM playlist WHERE name = ?1;
+)";
+
+const char* SELECT_CHORD_NOT_IN_BAR_SQL = R"(
+SELECT id FROM bar_chords WHERE (chord_id = ?1 AND bar_id != ?2);
+)";
+
+const char* REMOVE_CHORD_SQL = R"(
+DELETE FROM chord WHERE id = ?1;
+)";
+
+const char* REMOVE_BAR_CHORDS_SQL = R"(
+DELETE FROM bar_chords WHERE bar_id = ?1;
+)";
+
+const char* REMOVE_SONG_SQL = R"(
+DELETE FROM song WHERE id = ?1;
+)";
+
+const char* REMOVE_BAR_SQL = R"(
+DELETE FROM bar WHERE id = ?1;
+)";
+
+const char* REMOVE_PLAYLIST_SONGS_SQL = R"(
+DELETE FROM playlist_songs WHERE song_id = ?1;
+)";
+
 }
 
 namespace nashville
@@ -247,7 +291,7 @@ database::prepared::prepared(sqlite3* db, const char* const sql)
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
-        throw std::invalid_argument(std::string("Error preparing statement: ") + sql + " : " + sqlite3_errstr(rc));
+        throw std::invalid_argument("Error preparing statement: '"s + sql + "': " + sqlite3_errstr(rc));
     }
 }
 
@@ -262,14 +306,19 @@ void database::prepared::reset()
     sqlite3_reset(stmt_);
 }
 
-database::database(const std::string& file_name)
+database::database()
+    : database(":memory:")
+{
+}
+
+database::database(const std::filesystem::path& file_name)
 {
     int rc = sqlite3_open_v2(file_name.c_str(),
                              &db_,
                              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXRESCODE,
                              nullptr);
     if (rc != SQLITE_OK)
-        throw std::runtime_error(std::string("Unable to open the database '") + file_name + "' " + sqlite3_errstr(rc));
+        throw std::runtime_error("Unable to open the database '"s + file_name.c_str() + "' " + sqlite3_errstr(rc));
     CHUCHO_DEBUG_L("Opened the database '" << file_name << "'");
     char* err;
     rc = sqlite3_exec(db_,
@@ -303,10 +352,20 @@ database::database(const std::string& file_name)
             { statement::INSERT_SONG, std::make_shared<prepared>(db_, INSERT_SONG_SQL) },
             { statement::SELECT_SONG_BARS, std::make_shared<prepared>(db_, SELECT_SONG_BARS_SQL) },
             { statement::INSERT_SONG_BAR, std::make_shared<prepared>(db_, INSERT_SONG_BAR_SQL) },
-            { statement::SELECT_PLAYLISTS, std::make_shared<prepared>(db_, SELECT_PLAYLISTS_SQL) },
+            //{ statement::SELECT_PLAYLISTS, std::make_shared<prepared>(db_, SELECT_PLAYLISTS_SQL) },
             { statement::INSERT_PLAYLIST, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SQL) },
             { statement::SELECT_PLAYLIST_SONGS, std::make_shared<prepared>(db_, SELECT_PLAYLIST_SONGS_SQL) },
-            { statement::INSERT_PLAYLIST_SONG, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SONG_SQL) }
+            { statement::INSERT_PLAYLIST_SONG, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SONG_SQL) },
+            { statement::SELECT_SONG_NAMES, std::make_shared<prepared>(db_, SELECT_SONG_NAMES_SQL) },
+            { statement::SELECT_SONG, std::make_shared<prepared>(db_, SELECT_SONG_SQL) },
+            { statement::SELECT_PLAYLIST_NAMES, std::make_shared<prepared>(db_, SELECT_PLAYLIST_NAMES_SQL) },
+            { statement::SELECT_PLAYLIST_ID, std::make_shared<prepared>(db_, SELECT_PLAYLIST_ID_SQL) },
+            { statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
+            { statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
+            { statement::REMOVE_BAR_CHORDS, std::make_shared<prepared>(db_, REMOVE_BAR_CHORDS_SQL) },
+            { statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
+            { statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) },
+            { statement::REMOVE_PLAYLIST_SONGS, std::make_shared<prepared>(db_, REMOVE_PLAYLIST_SONGS_SQL) }
         };
     }
     catch (std::invalid_argument& e)
@@ -336,7 +395,7 @@ std::uint64_t database::insert_bar(const model::bar& b)
         sqlite3_bind_text(raw, 3, b.section()->c_str(), b.section()->length(), SQLITE_STATIC);
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a bar: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not insert a bar: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -352,7 +411,7 @@ std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t cho
     sqlite3_bind_int(raw, 3, index);
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a bar chord: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not insert a bar chord: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -405,69 +464,81 @@ std::uint64_t database::insert_chord(const model::chord& c)
     sqlite3_bind_int(raw, 11, c.is_pushed());
     rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a chord: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not insert a chord: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
 
-std::uint64_t database::insert_playlist(const model::playlist& p)
-{
-    assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
-    assert(prepared_statements_.count(statement::INSERT_PLAYLIST) == 1);
-    assert(prepared_statements_.count(statement::INSERT_PLAYLIST_SONG) == 1);
-    auto ins_p = prepared_statements_[statement::INSERT_PLAYLIST];
-    ins_p->reset();
-    auto raw = ins_p->ptr();
-    sqlite3_bind_text(raw, 1, p.name().c_str(), p.name().length(), SQLITE_STATIC);
-    auto rc = sqlite3_step(raw);
-    if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a playlist: ") + sqlite3_errstr(rc));
-    auto p_id = sqlite3_column_int64(raw, 0);
-    auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
-    auto ins_ps = prepared_statements_[statement::INSERT_PLAYLIST_SONG];
-    for (unsigned i = 0; i < p.songs().size(); i++)
-    {
-        const auto& s = p.songs()[i].get().name();
-        sel_s->reset();
-        sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
-        rc = sqlite3_step(sel_s->ptr());
-        if (rc != SQLITE_ROW)
-            throw std::runtime_error(std::string("Could not find a song ID: ") + sqlite3_errstr(rc));
-        ins_ps->reset();
-        assert(sqlite3_column_count(sel_s->ptr()) == 1);
-        sqlite3_bind_int64(ins_ps->ptr(), 1, sqlite3_column_int64(sel_s->ptr(), 0));
-        sqlite3_bind_int64(ins_ps->ptr(), 2, p_id);
-        sqlite3_bind_int(ins_ps->ptr(), 3, i);
-        rc = sqlite3_step(ins_ps->ptr());
-        if (rc != SQLITE_ROW)
-            throw std::runtime_error(std::string("Could not insert a playlist song: ") + sqlite3_errstr(rc));
+//std::uint64_t database::insert_playlist(const model::playlist& p)
+//{
+    //assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
+    //assert(prepared_statements_.count(statement::INSERT_PLAYLIST) == 1);
+    //assert(prepared_statements_.count(statement::INSERT_PLAYLIST_SONG) == 1);
+    //auto ins_p = prepared_statements_[statement::INSERT_PLAYLIST];
+    //ins_p->reset();
+    //auto raw = ins_p->ptr();
+    //sqlite3_bind_text(raw, 1, p.name().c_str(), p.name().length(), SQLITE_STATIC);
+    //auto rc = sqlite3_step(raw);
+    //if (rc != SQLITE_ROW)
+        //throw std::runtime_error(std::string("Could not insert a playlist: ") + sqlite3_errstr(rc));
+    //auto p_id = sqlite3_column_int64(raw, 0);
+    //auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
+    //auto ins_ps = prepared_statements_[statement::INSERT_PLAYLIST_SONG];
+    //for (unsigned i = 0; i < p.songs().size(); i++)
+    //{
+        //const auto& s = p.songs()[i].get().name();
+        //sel_s->reset();
+        //sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
+        //rc = sqlite3_step(sel_s->ptr());
+        //if (rc != SQLITE_ROW)
+            //throw std::runtime_error(std::string("Could not find a song ID: ") + sqlite3_errstr(rc));
+        //ins_ps->reset();
+        //assert(sqlite3_column_count(sel_s->ptr()) == 1);
+        //sqlite3_bind_int64(ins_ps->ptr(), 1, sqlite3_column_int64(sel_s->ptr(), 0));
+        //sqlite3_bind_int64(ins_ps->ptr(), 2, p_id);
+        //sqlite3_bind_int(ins_ps->ptr(), 3, i);
+        //rc = sqlite3_step(ins_ps->ptr());
+        //if (rc != SQLITE_ROW)
+            //throw std::runtime_error(std::string("Could not insert a playlist song: ") + sqlite3_errstr(rc));
 
-    }
-    return p_id;
-}
+    //}
+    //return p_id;
+//}
 
 void database::insert_playlists(const std::vector<model::playlist>& lists)
 {
-    for (auto& p : lists)
-        insert_playlist(p);
+    //for (auto& p : lists)
+        //insert_playlist(p);
 }
 
-void database::insert_song(const model::song& s, unsigned idx)
+void database::insert_song(const model::song& s)
 {
     assert(prepared_statements_.count(statement::INSERT_SONG) == 1);
     auto ins_s = prepared_statements_[statement::INSERT_SONG];
-    ins_s->reset();
     auto raw = ins_s->ptr();
-    sqlite3_bind_text(raw, 1, s.name().c_str(), s.name().length(), SQLITE_STATIC);
-    sqlite3_bind_text(raw, 2, s.key().c_str(), s.key().length(), SQLITE_STATIC);
-    sqlite3_bind_int64(raw, 3, time_signature_id(s.time_sig()));
-    sqlite3_bind_int(raw, 4, s.bars_per_line());
-    sqlite3_bind_int(raw, 5, std::get<0>(s.tempo()));
-    sqlite3_bind_int(raw, 6, static_cast<int>(std::get<1>(s.tempo())));
-    sqlite3_bind_int(raw, 7, idx);
-    auto rc = sqlite3_step(raw);
+    int rc;
+    for (auto i = 0; i < 2; i++)
+    {
+        ins_s->reset();
+        sqlite3_bind_text(raw, 1, s.name().c_str(), s.name().length(), SQLITE_STATIC);
+        sqlite3_bind_text(raw, 2, s.key().c_str(), s.key().length(), SQLITE_STATIC);
+        sqlite3_bind_int64(raw, 3, time_signature_id(s.time_sig()));
+        sqlite3_bind_int(raw, 4, s.bars_per_line());
+        sqlite3_bind_int(raw, 5, std::get<0>(s.tempo()));
+        sqlite3_bind_int(raw, 6, static_cast<int>(std::get<1>(s.tempo())));
+        rc = sqlite3_step(raw);
+        if (rc == SQLITE_CONSTRAINT_UNIQUE)
+        {
+            CHUCHO_DEBUG_L("Replacing the song '" << s.name() << "'");
+            remove_song(s.name());
+        }
+        else
+        {
+            break;
+        }
+    }
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Unable to insert song '") + s.name() + "': " + sqlite3_errstr(rc));
+        throw std::runtime_error("Unable to insert song '"s + s.name() + "': " + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     auto song_id = sqlite3_column_int64(raw, 0);
     for (unsigned i = 0; i < s.bars().size(); i++)
@@ -484,11 +555,11 @@ void database::insert_song(const model::song& s, unsigned idx)
     }
 }
 
-void database::insert_songs(const std::vector<model::song>& songs)
-{
-    for (unsigned i = 0; i < songs.size(); i++)
-        insert_song(songs[i], i);
-}
+//void database::insert_songs(const std::vector<model::song>& songs)
+//{
+    //for (unsigned i = 0; i < songs.size(); i++)
+        //insert_song(songs[i], i);
+//}
 
 std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index)
 {
@@ -501,9 +572,120 @@ std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar
     sqlite3_bind_int(raw, 3, index);
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a song bar: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not insert a song bar: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
+}
+
+void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
+{
+    assert(prepared_statements_.count(statement::SELECT_CHORD_NOT_IN_BAR) == 1);
+    auto sel_c = prepared_statements_[statement::SELECT_CHORD_NOT_IN_BAR];
+    sel_c->reset();
+    sqlite3_bind_int64(sel_c->ptr(), 1, chord_id);
+    sqlite3_bind_int64(sel_c->ptr(), 2, bar_id);
+    auto rc = sqlite3_step(sel_c->ptr());
+    if (rc == SQLITE_ROW)
+        return;
+    assert(prepared_statements_.count(statement::REMOVE_CHORD) == 1);
+    auto rem_c = prepared_statements_[statement::REMOVE_CHORD];
+    rem_c->reset();
+    sqlite3_bind_int64(rem_c->ptr(), 1, chord_id);
+    rc = sqlite3_step(rem_c->ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could remove a chord: "s + sqlite3_errstr(rc));
+}
+
+void database::move_to_file(const std::filesystem::path& file_name)
+{
+    database other(file_name);
+    auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
+    if (back == nullptr)
+    {
+        throw std::runtime_error("Could not move database to file '"s +
+                                 file_name.string() + "': " +
+                                 sqlite3_errstr(sqlite3_errcode(other.db_)));
+    }
+    auto rc = sqlite3_backup_step(back, -1);
+    sqlite3_backup_finish(back);
+    if (rc != SQLITE_DONE)
+    {
+        throw std::runtime_error("Could not move database to file '"s +
+                                 file_name.string() + "': " + sqlite3_errstr(rc));
+    }
+    *this = other;
+    // Prevent the closing of the database in other
+    other.db_ = nullptr;
+}
+
+void database::remove_song(const std::string& s)
+{
+    assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
+    assert(prepared_statements_.count(statement::SELECT_CHORDS_BY_BAR) == 1);
+    assert(prepared_statements_.count(statement::REMOVE_BAR_CHORDS) == 1);
+    assert(prepared_statements_.count(statement::REMOVE_BAR) == 1);
+    assert(prepared_statements_.count(statement::REMOVE_SONG) == 1);
+    assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
+    auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
+    auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
+    auto rem_bcs = prepared_statements_[statement::REMOVE_BAR_CHORDS];
+    auto rem_b = prepared_statements_[statement::REMOVE_BAR];
+    sel_s->reset();
+    sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
+    auto rc = sqlite3_step(sel_s->ptr());
+    auto song_id = sqlite3_column_int64(sel_s->ptr(), 0);
+    if (rc == SQLITE_ROW)
+    {
+        assert(prepared_statements_.count(statement::SELECT_SONG_BARS) == 1);
+        auto sel_bids = prepared_statements_[statement::SELECT_SONG_BARS];
+        sel_bids->reset();
+        sqlite3_bind_int64(sel_bids->ptr(), 1, song_id);
+        auto rc2 = sqlite3_step(sel_bids->ptr());
+        while (rc2 == SQLITE_ROW)
+        {
+            auto bar_id = sqlite3_column_int64(sel_bids->ptr(), 0);
+            // Now maybe_remove_chord on the bar
+            sel_cs->reset();
+            sqlite3_bind_int64(sel_cs->ptr(), 1, bar_id);
+            auto rc3 = sqlite3_step(sel_cs->ptr());
+            while (rc3 == SQLITE_ROW)
+            {
+                maybe_remove_chord(bar_id, sqlite3_column_int64(sel_cs->ptr(), 0));
+                rc3 = sqlite3_step(sel_cs->ptr());
+            }
+            if (rc3 != SQLITE_DONE)
+                throw std::runtime_error("Could not remove chords:"s + sqlite3_errstr(rc3));
+            // Then remove all bar_chords for this bar
+            rem_bcs->reset();
+            sqlite3_bind_int64(rem_bcs->ptr(), 1, bar_id);
+            rc3 = sqlite3_step(rem_bcs->ptr());
+            if (rc3 != SQLITE_DONE)
+                throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
+            // Then remove the bar itself
+            rem_b->reset();
+            sqlite3_bind_int64(rem_b->ptr(), 1, bar_id);
+            rc3 = sqlite3_step(rem_b->ptr());
+            if (rc3 != SQLITE_DONE)
+                throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
+            rc2 = sqlite3_step(sel_bids->ptr());
+        }
+        if (rc2 != SQLITE_DONE)
+            throw std::runtime_error("Could not remove song '"s + s + "': " + sqlite3_errstr(rc2));
+        // Remove the song
+        auto rem_s = prepared_statements_[statement::REMOVE_SONG];
+        rem_s->reset();
+        sqlite3_bind_int64(rem_s->ptr(), 1, song_id);
+        rc = sqlite3_step(rem_s->ptr());
+    }
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could not remove song '"s + s + "': " + sqlite3_errstr(rc));
+    // Remove the song from any playlists that have it
+    auto rem_ps = prepared_statements_[statement::REMOVE_PLAYLIST_SONGS];
+    rem_ps->reset();
+    sqlite3_bind_int64(rem_ps->ptr(), 1, song_id);
+    rc = sqlite3_step(rem_ps->ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could not remove song '"s + s + "' from playlists: " + sqlite3_errstr(rc));
 }
 
 std::vector<model::bar> database::select_bars(std::uint64_t song_id)
@@ -516,7 +698,7 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
     auto raw = sel_bs->ptr();
     auto sel_b = prepared_statements_[statement::SELECT_BAR];
     sqlite3_bind_int64(raw, 1, song_id);
-    auto rc = sqlite3_step(raw);
+   auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
         sel_b->reset();
@@ -524,7 +706,7 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
         sqlite3_bind_int64(sel_b->ptr(), 1, bar_id);
         auto rc2 = sqlite3_step(sel_b->ptr());
         if (rc2 != SQLITE_ROW)
-            throw std::runtime_error(std::string("Could not look up bar by ID: ") + sqlite3_errstr(rc2));
+            throw std::runtime_error("Could not look up bar by ID: "s + sqlite3_errstr(rc2));
         model::bar bar;
         bar.is_eol(sqlite3_column_int(sel_b->ptr(), 0));
         if (sqlite3_column_type(sel_b->ptr(), 1) == SQLITE_TEXT)
@@ -549,7 +731,7 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
         rc = sqlite3_step(raw);
     }
     if (rc != SQLITE_DONE)
-        throw std::runtime_error(std::string("Could not retrieve bars: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not retrieve bars: "s + sqlite3_errstr(rc));
     return bars;
 }
 
@@ -571,7 +753,7 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
         sqlite3_bind_int64(sel_c->ptr(), 1, sqlite3_column_int64(raw, 0));
         auto rc2 = sqlite3_step(sel_c->ptr());
         if (rc2 != SQLITE_ROW)
-            throw std::runtime_error(std::string("Could not look up chord by ID: ") + sqlite3_errstr(rc2));
+            throw std::runtime_error("Could not look up chord by ID: "s + sqlite3_errstr(rc2));
         ch.number(sqlite3_column_int(sel_c->ptr(), 1))
           .mode(static_cast<model::chord::type>(sqlite3_column_int(sel_c->ptr(), 2)));
         if (sqlite3_column_type(sel_c->ptr(), 3) == SQLITE_INTEGER)
@@ -602,43 +784,139 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
         rc = sqlite3_step(raw);
     }
     if (rc != SQLITE_DONE)
-        throw std::runtime_error(std::string("Could not retrieve chords: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not retrieve chords: "s + sqlite3_errstr(rc));
     return chords;
 }
 
-std::vector<model::playlist> database::select_playlists(const std::vector<model::song>& songs)
+//std::vector<model::playlist> database::select_playlists(const std::vector<model::song>& songs)
+//{
+    //std::vector<model::playlist> playlists;
+    //assert(prepared_statements_.count(statement::SELECT_PLAYLISTS) == 1);
+    //assert(prepared_statements_.count(statement::SELECT_PLAYLIST_SONGS) == 1);
+    //auto sel_p = prepared_statements_[statement::SELECT_PLAYLISTS];
+    //auto sel_ps = prepared_statements_[statement::SELECT_PLAYLIST_SONGS];
+    //sel_p->reset();
+    //auto raw = sel_p->ptr();
+    //auto rc = sqlite3_step(raw);
+    //while (rc == SQLITE_ROW)
+    //{
+        //model::playlist cur(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
+        //sel_ps->reset();
+        //sqlite3_bind_int64(sel_ps->ptr(), 1, sqlite3_column_int64(raw, 0));
+        //auto rc2 = sqlite3_step(sel_ps->ptr());
+        //while (rc2 == SQLITE_ROW)
+        //{
+            //const char* s_name = reinterpret_cast<const char*>(sqlite3_column_text(sel_ps->ptr(), 0));
+            //const auto& found = std::find_if(songs.begin(), songs.end(), [&s_name](const auto& it) { return it.name() == s_name; });
+            //if (found == songs.end())
+                //throw std::runtime_error(std::string("The song '") + s_name + "' is required for playlist '" + cur.name() + "' but it is not found");
+            //cur.add_song(*found);
+            //rc2 = sqlite3_step(sel_ps->ptr());
+        //}
+        //if (rc2 != SQLITE_DONE)
+            //throw std::runtime_error(std::string("Error finding playlist songs: ") + sqlite3_errstr(rc2));
+        //playlists.push_back(cur);
+        //rc = sqlite3_step(raw);
+    //}
+    //if (rc != SQLITE_DONE)
+        //throw std::runtime_error(std::string("Error finding playlists") + sqlite3_errstr(rc));
+    //return playlists;
+//}
+
+model::playlist database::select_playlist(const std::string& name)
 {
-    std::vector<model::playlist> playlists;
-    assert(prepared_statements_.count(statement::SELECT_PLAYLISTS) == 1);
-    assert(prepared_statements_.count(statement::SELECT_PLAYLIST_SONGS) == 1);
-    auto sel_p = prepared_statements_[statement::SELECT_PLAYLISTS];
-    auto sel_ps = prepared_statements_[statement::SELECT_PLAYLIST_SONGS];
+    model::playlist p(name);
+    assert(prepared_statements_.count(statement::SELECT_PLAYLIST_ID) == 1);
+    auto sel_p = prepared_statements_[statement::SELECT_PLAYLIST_ID];
+    sel_p->reset();
+    sqlite3_bind_text(sel_p->ptr(), 1, name.c_str(), name.length(), SQLITE_STATIC);
+    auto rc = sqlite3_step(sel_p->ptr());
+    if (rc == SQLITE_ROW)
+    {
+        assert(prepared_statements_.count(statement::SELECT_PLAYLIST_SONGS) == 1);
+        auto sel_ps = prepared_statements_[statement::SELECT_PLAYLIST_SONGS];
+        sel_ps->reset();
+        auto raw = sel_ps->ptr();
+        sqlite3_bind_int64(raw, 1, sqlite3_column_int64(sel_p->ptr(), 0));
+        auto rc2 = sqlite3_step(raw);
+        while (rc2 == SQLITE_ROW)
+        {
+            p.add_song(reinterpret_cast<const char*>(sqlite3_column_text(raw, 0)));
+            rc2 = sqlite3_step(raw);
+        }
+        if (rc2 != SQLITE_DONE)
+            throw std::runtime_error("Error retrieving playlist songs: "s + sqlite3_errstr(rc));
+    }
+    else if (rc != SQLITE_DONE)
+    {
+        throw std::runtime_error("Error retrieving playlist: "s + sqlite3_errstr(rc));
+    }
+    return p;
+}
+
+std::vector<std::string> database::select_playlist_names()
+{
+    std::vector<std::string> names;
+    assert(prepared_statements_.count(statement::SELECT_PLAYLIST_NAMES) == 1);
+    auto sel_p = prepared_statements_[statement::SELECT_PLAYLIST_NAMES];
     sel_p->reset();
     auto raw = sel_p->ptr();
     auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
-        model::playlist cur(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
-        sel_ps->reset();
-        sqlite3_bind_int64(sel_ps->ptr(), 1, sqlite3_column_int64(raw, 0));
-        auto rc2 = sqlite3_step(sel_ps->ptr());
-        while (rc2 == SQLITE_ROW)
-        {
-            const char* s_name = reinterpret_cast<const char*>(sqlite3_column_text(sel_ps->ptr(), 0));
-            const auto& found = std::find_if(songs.begin(), songs.end(), [&s_name](const auto& it) { return it.name() == s_name; });
-            if (found == songs.end())
-                throw std::runtime_error(std::string("The song '") + s_name + "' is required for playlist '" + cur.name() + "' but it is not found");
-            cur.add_song(*found);
-            rc2 = sqlite3_step(sel_ps->ptr());
-        }
-        if (rc2 != SQLITE_DONE)
-            throw std::runtime_error(std::string("Error finding playlist songs: ") + sqlite3_errstr(rc2));
-        playlists.push_back(cur);
+        names.push_back(reinterpret_cast<const char*>(sqlite3_column_text(raw, 0)));
         rc = sqlite3_step(raw);
     }
     if (rc != SQLITE_DONE)
-        throw std::runtime_error(std::string("Error finding playlists") + sqlite3_errstr(rc));
-    return playlists;
+        throw std::runtime_error("Could not retrieve playlist names: "s + sqlite3_errstr(rc));
+    return names;
+}
+
+std::vector<std::string> database::select_song_names()
+{
+    std::vector<std::string> names;
+    assert(prepared_statements_.count(statement::SELECT_SONG_NAMES) == 1);
+    auto sel_s = prepared_statements_[statement::SELECT_SONG_NAMES];
+    sel_s->reset();
+    auto raw = sel_s->ptr();
+    auto rc = sqlite3_step(raw);
+    while (rc == SQLITE_ROW)
+    {
+        names.push_back(reinterpret_cast<const char*>(sqlite3_column_text(raw, 0)));
+        rc = sqlite3_step(raw);
+    }
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could not retrieve song names: "s + sqlite3_errstr(rc));
+    return names;
+}
+
+model::song database::select_song(const std::string& name)
+{
+    model::song found(name);
+    assert(prepared_statements_.count(statement::SELECT_SONG) == 1);
+    auto sel_s = prepared_statements_[statement::SELECT_SONG];
+    sel_s->reset();
+    auto raw = sel_s->ptr();
+    sqlite3_bind_text(raw, 1, name.c_str(), name.length(), SQLITE_STATIC);
+    auto rc = sqlite3_step(raw);
+    if (rc == SQLITE_ROW)
+    {
+        found.key(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
+        found.bars_per_line(sqlite3_column_int(raw, 2));
+        found.tempo(std::make_tuple(sqlite3_column_int(raw, 3), static_cast<model::chord::time>(sqlite3_column_int(raw, 4))));
+        found.bars(select_bars(sqlite3_column_int64(raw, 0)));
+        model::time_signature ts;
+        ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(raw, 5)))
+          .count(sqlite3_column_int(raw, 6));
+        found.time_sig(ts);
+    }
+    else
+    {
+        throw std::runtime_error("Song '"s + name + "' not found: " + sqlite3_errstr(rc));
+    }
+    if (sqlite3_step(raw) != SQLITE_DONE)
+        throw std::runtime_error("More than one song is named '"s + name + "'");
+    return found;
 }
 
 std::vector<model::song> database::select_songs()
@@ -664,7 +942,7 @@ std::vector<model::song> database::select_songs()
         rc = sqlite3_step(raw);
     }
     if (rc != SQLITE_DONE)
-        throw std::runtime_error(std::string("Could not retrieve songs: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not retrieve songs: "s + sqlite3_errstr(rc));
     return songs;
 }
 
@@ -687,7 +965,7 @@ std::uint64_t database::time_signature_id(const model::time_signature& ts)
     sqlite3_bind_int(raw, 2, ts.count());
     rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
-        throw std::runtime_error(std::string("Could not insert a time signature: ") + sqlite3_errstr(rc));
+        throw std::runtime_error("Could not insert a time signature: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }

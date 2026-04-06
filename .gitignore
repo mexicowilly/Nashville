@@ -2,3 +2,4 @@ build
 tags
 .*.sw?
 .cache
+claude

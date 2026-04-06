@@ -64,7 +64,7 @@ public:
     chord& mode(type m);
     unsigned number() const;
     chord& number(unsigned num);
-    void parse_user_input(const std::string& usr);
+    chord& parse_user_input(const std::string& usr);
     std::optional<flat_sharp> step() const;
     chord& step(flat_sharp fs);
     std::string to_user_input() const;

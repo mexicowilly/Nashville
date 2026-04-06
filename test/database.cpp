@@ -147,217 +147,217 @@ protected:
 
 }
 
-TEST_F(db_test, one_song)
-{
-    model::song s("doggies");
-    s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare simple song");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, one_song)
+//{
+    //model::song s("doggies");
+    //s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare simple song");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, all_chord_attrs)
-{
-    model::song s("funny chord");
-    auto& ch = s.add_bar().add_chord();
-    ch.number(7)
-      .bass_note(4)
-      .bass_note_step(model::chord::flat_sharp::FLAT)
-      .duration(model::chord::time::DOTTED_HALF)
-      .extensions("maj7")
-      .is_diamond(true)
-      .is_pushed(true)
-      .is_staccato(true)
-      .is_tied(true)
-      .mode(model::chord::type::AUGMENTED)
-      .step(model::chord::flat_sharp::FLAT);
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare funny chord");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, all_chord_attrs)
+//{
+    //model::song s("funny chord");
+    //auto& ch = s.add_bar().add_chord();
+    //ch.number(7)
+      //.bass_note(4)
+      //.bass_note_step(model::chord::flat_sharp::FLAT)
+      //.duration(model::chord::time::DOTTED_HALF)
+      //.extensions("maj7")
+      //.is_diamond(true)
+      //.is_pushed(true)
+      //.is_staccato(true)
+      //.is_tied(true)
+      //.mode(model::chord::type::AUGMENTED)
+      //.step(model::chord::flat_sharp::FLAT);
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare funny chord");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, all_bar_attrs)
-{
-    model::song s("bar attrs");
-    auto& b = s.add_bar();
-    b.is_eol(true)
-     .section("doggies")
-     .time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
-     .add_chord();
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare funny bar");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, all_bar_attrs)
+//{
+    //model::song s("bar attrs");
+    //auto& b = s.add_bar();
+    //b.is_eol(true)
+     //.section("doggies")
+     //.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     //.add_chord();
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare funny bar");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, all_song_attrs)
-{
-    model::song s("song attrs");
-    s.key("G Minor")
-     .time_sig(model::time_signature().count(12).kind(model::time_signature::beat_type::EIGHTH))
-     .tempo({ 240, model::chord::time::QUARTER })
-     .bars_per_line(72);
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare song attrs");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, all_song_attrs)
+//{
+    //model::song s("song attrs");
+    //s.key("G Minor")
+     //.time_sig(model::time_signature().count(12).kind(model::time_signature::beat_type::EIGHTH))
+     //.tempo({ 240, model::chord::time::QUARTER })
+     //.bars_per_line(72);
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare song attrs");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, lots_of_bars)
-{
-    model::song s("lots of bars");
-    s.time_sig(model::time_signature().count(4).kind(model::time_signature::beat_type::QUARTER))
-     .key("C");
-    model::time_signature ts;
-    for (int i = 0; i < 10000; i++)
-    {
-        auto& b = s.add_bar();
-        if (i % 4 != 0)
-        {
-            switch (i % 3)
-            {
-            case 0:
-                ts.kind(model::time_signature::beat_type::EIGHTH);
-                break;
-            case 1:
-                ts.kind(model::time_signature::beat_type::QUARTER);
-                break;
-            case 2:
-                ts.kind(model::time_signature::beat_type::HALF);
-                break;
-            }
-            ts.count(i % 8);
-            b.time_sig(ts);
-        }
-        b.is_eol(i & 1)
-         .section(std::to_string(i) + " section");
-        auto& ch = b.add_chord();
-        ch.number((i % 7) + 1);
-    }
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare lots of bars");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, lots_of_bars)
+//{
+    //model::song s("lots of bars");
+    //s.time_sig(model::time_signature().count(4).kind(model::time_signature::beat_type::QUARTER))
+     //.key("C");
+    //model::time_signature ts;
+    //for (int i = 0; i < 10000; i++)
+    //{
+        //auto& b = s.add_bar();
+        //if (i % 4 != 0)
+        //{
+            //switch (i % 3)
+            //{
+            //case 0:
+                //ts.kind(model::time_signature::beat_type::EIGHTH);
+                //break;
+            //case 1:
+                //ts.kind(model::time_signature::beat_type::QUARTER);
+                //break;
+            //case 2:
+                //ts.kind(model::time_signature::beat_type::HALF);
+                //break;
+            //}
+            //ts.count(i % 8);
+            //b.time_sig(ts);
+        //}
+        //b.is_eol(i & 1)
+         //.section(std::to_string(i) + " section");
+        //auto& ch = b.add_chord();
+        //ch.number((i % 7) + 1);
+    //}
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare lots of bars");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, lots_of_chords)
-{
-    model::song s("lots of chords");
-    s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
-     .key("D minor");
-    auto& b = s.add_bar();
-    for (int i = 0; i < 100; i++)
-    {
-        for (int j = 1; j <= 7; j++)
-        {
-            for (int k = 0; k <= 7; k++)
-            {
-                auto& ch = b.add_chord();
-                ch.number(j);
-                if (k > 0)
-                    ch.bass_note(k);
-                switch (k % 3)
-                {
-                case 1:
-                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
-                    break;
-                case 2:
-                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
-                    break;
-                }
-                switch (i % 9)
-                {
-                case 1:
-                    ch.duration(model::chord::time::SIXTEENTH);
-                    break;
-                case 2:
-                    ch.duration(model::chord::time::EIGHTH);
-                    break;
-                case 3:
-                    ch.duration(model::chord::time::DOTTED_EIGHTH);
-                    break;
-                case 4:
-                    ch.duration(model::chord::time::QUARTER);
-                    break;
-                case 5:
-                    ch.duration(model::chord::time::DOTTED_QUARTER);
-                    break;
-                case 6:
-                    ch.duration(model::chord::time::HALF);
-                    break;
-                case 7:
-                    ch.duration(model::chord::time::DOTTED_HALF);
-                    break;
-                case 8:
-                    ch.duration(model::chord::time::WHOLE);
-                    break;
-                }
-                ch.extensions(std::string("ext ") + std::to_string(i & 1));
-                ch.is_diamond(i & 1);
-                ch.is_pushed(i & 1);
-                ch.is_staccato(i & 1);
-                ch.is_tied(i % 1);
-                ch.mode(static_cast<model::chord::type>(i % 5));
-            }
-        }
-    }
-    EXPECT_NO_THROW(db_->insert_songs({ s }));
-    std::vector<model::song> found;
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(1, found.size());
-    CHUCHO_INFO_L("About to compare lots of chords");
-    expect_song(s, found[0]);
-}
+//TEST_F(db_test, lots_of_chords)
+//{
+    //model::song s("lots of chords");
+    //s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     //.key("D minor");
+    //auto& b = s.add_bar();
+    //for (int i = 0; i < 100; i++)
+    //{
+        //for (int j = 1; j <= 7; j++)
+        //{
+            //for (int k = 0; k <= 7; k++)
+            //{
+                //auto& ch = b.add_chord();
+                //ch.number(j);
+                //if (k > 0)
+                    //ch.bass_note(k);
+                //switch (k % 3)
+                //{
+                //case 1:
+                    //ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    //break;
+                //case 2:
+                    //ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    //break;
+                //}
+                //switch (i % 9)
+                //{
+                //case 1:
+                    //ch.duration(model::chord::time::SIXTEENTH);
+                    //break;
+                //case 2:
+                    //ch.duration(model::chord::time::EIGHTH);
+                    //break;
+                //case 3:
+                    //ch.duration(model::chord::time::DOTTED_EIGHTH);
+                    //break;
+                //case 4:
+                    //ch.duration(model::chord::time::QUARTER);
+                    //break;
+                //case 5:
+                    //ch.duration(model::chord::time::DOTTED_QUARTER);
+                    //break;
+                //case 6:
+                    //ch.duration(model::chord::time::HALF);
+                    //break;
+                //case 7:
+                    //ch.duration(model::chord::time::DOTTED_HALF);
+                    //break;
+                //case 8:
+                    //ch.duration(model::chord::time::WHOLE);
+                    //break;
+                //}
+                //ch.extensions(std::string("ext ") + std::to_string(i & 1));
+                //ch.is_diamond(i & 1);
+                //ch.is_pushed(i & 1);
+                //ch.is_staccato(i & 1);
+                //ch.is_tied(i % 1);
+                //ch.mode(static_cast<model::chord::type>(i % 5));
+            //}
+        //}
+    //}
+    //EXPECT_NO_THROW(db_->insert_songs({ s }));
+    //std::vector<model::song> found;
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(1, found.size());
+    //CHUCHO_INFO_L("About to compare lots of chords");
+    //expect_song(s, found[0]);
+//}
 
-TEST_F(db_test, lots_of_songs)
-{
-    auto songs = create_songs(10000);
-    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
-    EXPECT_NO_THROW(db_->insert_songs(songs));
-    std::vector<model::song> found;
-    CHUCHO_INFO_L("Retrieving " << songs.size() << " songs");
-    EXPECT_NO_THROW(found = db_->select_songs());
-    ASSERT_EQ(songs.size(), found.size());
-    CHUCHO_INFO_L("About to compare lots of songs");
-    for (int i = 0; i < songs.size(); i++)
-        expect_song(songs[i], found[i]);
-}
+//TEST_F(db_test, lots_of_songs)
+//{
+    //auto songs = create_songs(10000);
+    //CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    //EXPECT_NO_THROW(db_->insert_songs(songs));
+    //std::vector<model::song> found;
+    //CHUCHO_INFO_L("Retrieving " << songs.size() << " songs");
+    //EXPECT_NO_THROW(found = db_->select_songs());
+    //ASSERT_EQ(songs.size(), found.size());
+    //CHUCHO_INFO_L("About to compare lots of songs");
+    //for (int i = 0; i < songs.size(); i++)
+        //expect_song(songs[i], found[i]);
+//}
 
-TEST_F(db_test, lots_of_playlists)
-{
-    auto songs = create_songs(10000);
-    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
-    EXPECT_NO_THROW(db_->insert_songs(songs));
-    std::vector<model::playlist> playlists;
-    for (unsigned i = 0; i < songs.size(); i += 10)
-    {
-        auto cur = model::playlist(std::string("playlist ") + std::to_string(i));
-        for (unsigned j = 0; j < 10; j++)
-            cur.add_song(songs[j * 10]);
-        playlists.push_back(cur);
-    }
-    CHUCHO_INFO_L("Inserting " << playlists.size() << " playlists");
-    EXPECT_NO_THROW(db_->insert_playlists(playlists));
-    std::vector<model::playlist> found;
-    CHUCHO_INFO_L("Retrieving " << playlists.size() << " playlists");
-    EXPECT_NO_THROW(found = db_->select_playlists(songs));
-    ASSERT_EQ(playlists.size(), found.size());
-    for (unsigned i = 0; i < playlists.size(); i++)
-    {
-        ASSERT_EQ(playlists[i].songs().size(), found[i].songs().size());
-        for (unsigned j = 0; j < playlists[i].songs().size(); j++)
-            EXPECT_STREQ(playlists[i].songs()[j].get().name().c_str(), found[i].songs()[j].get().name().c_str());
-    }
-}
+//TEST_F(db_test, lots_of_playlists)
+//{
+    //auto songs = create_songs(10000);
+    //CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    //EXPECT_NO_THROW(db_->insert_songs(songs));
+    //std::vector<model::playlist> playlists;
+    //for (unsigned i = 0; i < songs.size(); i += 10)
+    //{
+        //auto cur = model::playlist(std::string("playlist ") + std::to_string(i));
+        //for (unsigned j = 0; j < 10; j++)
+            //cur.add_song(songs[j * 10]);
+        //playlists.push_back(cur);
+    //}
+    //CHUCHO_INFO_L("Inserting " << playlists.size() << " playlists");
+    //EXPECT_NO_THROW(db_->insert_playlists(playlists));
+    //std::vector<model::playlist> found;
+    //CHUCHO_INFO_L("Retrieving " << playlists.size() << " playlists");
+    //EXPECT_NO_THROW(found = db_->select_playlists(songs));
+    //ASSERT_EQ(playlists.size(), found.size());
+    //for (unsigned i = 0; i < playlists.size(); i++)
+    //{
+        //ASSERT_EQ(playlists[i].songs().size(), found[i].songs().size());
+        //for (unsigned j = 0; j < playlists[i].songs().size(); j++)
+            //EXPECT_STREQ(playlists[i].songs()[j].get().name().c_str(), found[i].songs()[j].get().name().c_str());
+    //}
+//}

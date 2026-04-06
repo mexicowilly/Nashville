@@ -3,6 +3,7 @@
 #include <chucho/loggable.hpp>
 #include "sqlite3.h"
 #include <map>
+#include <filesystem>
 #include "model/song.hpp"
 #include "model/playlist.hpp"
 
@@ -12,12 +13,21 @@ namespace nashville
 class database : chucho::loggable<database>
 {
 public:
-    database(const std::string& file_name);
+    database();
+    database(const std::filesystem::path& file_name);
     ~database();
 
     void insert_playlists(const std::vector<model::playlist>& lists);
-    void insert_songs(const std::vector<model::song>& songs);
-    std::vector<model::playlist> select_playlists(const std::vector<model::song>& songs);
+    void insert_song(const model::song& s);
+    //void insert_songs(const std::vector<model::song>& songs);
+    bool in_memory() const;
+    void move_to_file(const std::filesystem::path& file_name);
+    //std::vector<model::playlist> select_playlists(const std::vector<model::song>& songs);
+    void remove_song(const std::string& s);
+    model::playlist select_playlist(const std::string& name);
+    std::vector<std::string> select_playlist_names();
+    std::vector<std::string> select_song_names();
+    model::song select_song(const std::string& name);
     std::vector<model::song> select_songs();
 
 private:
@@ -40,7 +50,17 @@ private:
         SELECT_PLAYLISTS,
         INSERT_PLAYLIST,
         SELECT_PLAYLIST_SONGS,
-        INSERT_PLAYLIST_SONG
+        INSERT_PLAYLIST_SONG,
+        SELECT_SONG_NAMES,
+        SELECT_SONG,
+        SELECT_PLAYLIST_NAMES,
+        SELECT_PLAYLIST_ID,
+        REMOVE_SONG,
+        REMOVE_BAR,
+        REMOVE_CHORD,
+        SELECT_CHORD_NOT_IN_BAR,
+        REMOVE_BAR_CHORDS,
+        REMOVE_PLAYLIST_SONGS
     };
 
     class prepared
@@ -59,9 +79,9 @@ private:
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);
-    std::uint64_t insert_playlist(const model::playlist& p);
-    void insert_song(const model::song& s, unsigned idx);
+    //std::uint64_t insert_playlist(const model::playlist& p);
     std::uint64_t insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index);
+    void maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id);
     std::vector<model::bar> select_bars(std::uint64_t song_id);
     std::vector<model::chord> select_chords(std::uint64_t bar_id);
     std::uint64_t time_signature_id(const model::time_signature& ts);
@@ -72,5 +92,10 @@ private:
     // list.
     std::map<statement, std::shared_ptr<prepared>> prepared_statements_;
 };
+
+inline bool database::in_memory() const
+{
+    return sqlite3_db_filename(db_, "main") == nullptr;
+}
 
 }
