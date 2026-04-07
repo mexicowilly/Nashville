@@ -233,4 +233,6 @@ TEST(chord, to_user_input)
     EXPECT_EQ("dt:1"s, c.to_user_input());
     c.is_pushed(true);
     EXPECT_EQ("dpt:1"s, c.to_user_input());
+    c.is_staccato(true);
+    EXPECT_EQ("ps:1"s, c.to_user_input());
 }
