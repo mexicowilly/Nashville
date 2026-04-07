@@ -2,6 +2,7 @@
 #include "../model/chord.hpp"
 
 using namespace nashville;
+using namespace std::string_literals;
 
 TEST(chord, user_input)
 {
@@ -129,6 +130,27 @@ TEST(chord, user_input)
     EXPECT_EQ(c, ref);
     EXPECT_THROW(c.parse_user_input("mydoghasfleas"), std::invalid_argument);
     EXPECT_THROW(c.parse_user_input("7dim:blah"), std::invalid_argument);
+    // Check the pushed, tied, diamond and staccato settings
+    ref.clear().number(1).is_staccato(true);
+    EXPECT_NO_THROW(c.parse_user_input("s:1"));
+    EXPECT_EQ(c, ref);
+    ref.is_diamond(true);
+    EXPECT_NO_THROW(c.parse_user_input("d:1"));
+    EXPECT_EQ(c, ref);
+    ref.is_pushed(true).is_diamond(false);
+    EXPECT_NO_THROW(c.parse_user_input("p:1"));
+    EXPECT_EQ(c, ref);
+    ref.is_tied(true).is_pushed(false);
+    EXPECT_NO_THROW(c.parse_user_input("t:1"));
+    EXPECT_EQ(c, ref);
+    ref.is_diamond(true).is_pushed(true).is_tied(true);
+    EXPECT_NO_THROW(c.parse_user_input("dpt:1"));
+    EXPECT_EQ(c, ref);
+    ref.is_diamond(false).is_pushed(true).is_tied(false).is_staccato(true);
+    EXPECT_NO_THROW(c.parse_user_input("sdpt:1"));
+    EXPECT_EQ(c, ref);
+    EXPECT_THROW(c.parse_user_input("q:1"), std::invalid_argument);
+    EXPECT_THROW(c.parse_user_input(":1"), std::invalid_argument);
 }
 
 TEST(chord, to_user_input)
@@ -142,53 +164,73 @@ TEST(chord, to_user_input)
     c.clear()
      .step(model::chord::flat_sharp::FLAT)
      .number(5);
-    EXPECT_EQ(std::string("b5"), c.to_user_input());
+    EXPECT_EQ("b5"s, c.to_user_input());
     c.step(model::chord::flat_sharp::SHARP);
-    EXPECT_EQ(std::string("#5"), c.to_user_input());
+    EXPECT_EQ("#5"s, c.to_user_input());
     c.clear()
      .number(6)
      .mode(model::chord::type::MINOR);
-    EXPECT_EQ(std::string("6-"), c.to_user_input());
+    EXPECT_EQ("6-"s, c.to_user_input());
     c.mode(model::chord::type::DIMINISHED);
-    EXPECT_EQ(std::string("6dim"), c.to_user_input());
+    EXPECT_EQ("6dim"s, c.to_user_input());
     c.mode(model::chord::type::AUGMENTED);
-    EXPECT_EQ(std::string("6+"), c.to_user_input());
+    EXPECT_EQ("6+"s, c.to_user_input());
     c.clear()
      .step(model::chord::flat_sharp::FLAT)
      .number(2)
      .mode(model::chord::type::MINOR)
      .extensions("7");
-    EXPECT_EQ(std::string("b2-7"), c.to_user_input());
+    EXPECT_EQ("b2-7"s, c.to_user_input());
     c.clear()
      .step(model::chord::flat_sharp::SHARP)
      .number(3)
      .extensions("7");
-    EXPECT_EQ(std::string("#37"), c.to_user_input());
+    EXPECT_EQ("#37"s, c.to_user_input());
     c.clear()
      .number(6)
      .mode(model::chord::type::MINOR)
      .bass_note(1);
-    EXPECT_EQ(std::string("6-/1"), c.to_user_input());
+    EXPECT_EQ("6-/1"s, c.to_user_input());
     c.bass_note_step(model::chord::flat_sharp::FLAT);
-    EXPECT_EQ(std::string("6-/b1"), c.to_user_input());
+    EXPECT_EQ("6-/b1"s, c.to_user_input());
     c.number(6).bass_note_step(model::chord::flat_sharp::SHARP);
-    EXPECT_EQ(std::string("6-/#1"), c.to_user_input());
+    EXPECT_EQ("6-/#1"s, c.to_user_input());
     c.clear()
      .number(1)
      .duration(model::chord::time::SIXTEENTH);
-    EXPECT_EQ(std::string("1:s"), c.to_user_input());
+    EXPECT_EQ("1:s"s, c.to_user_input());
     c.duration(model::chord::time::EIGHTH);
-    EXPECT_EQ(std::string("1:e"), c.to_user_input());
+    EXPECT_EQ("1:e"s, c.to_user_input());
     c.duration(model::chord::time::DOTTED_EIGHTH);
-    EXPECT_EQ(std::string("1:e."), c.to_user_input());
+    EXPECT_EQ("1:e."s, c.to_user_input());
     c.duration(model::chord::time::QUARTER);
-    EXPECT_EQ(std::string("1:q"), c.to_user_input());
+    EXPECT_EQ("1:q"s, c.to_user_input());
     c.duration(model::chord::time::DOTTED_QUARTER);
-    EXPECT_EQ(std::string("1:q."), c.to_user_input());
+    EXPECT_EQ("1:q."s, c.to_user_input());
     c.duration(model::chord::time::HALF);
-    EXPECT_EQ(std::string("1:h"), c.to_user_input());
+    EXPECT_EQ("1:h"s, c.to_user_input());
     c.duration(model::chord::time::DOTTED_HALF);
-    EXPECT_EQ(std::string("1:h."), c.to_user_input());
+    EXPECT_EQ("1:h."s, c.to_user_input());
     c.duration(model::chord::time::WHOLE);
-    EXPECT_EQ(std::string("1:w"), c.to_user_input());
+    EXPECT_EQ("1:w"s, c.to_user_input());
+    c.clear()
+     .number(1)
+     .is_diamond(true);
+    EXPECT_EQ("d:1"s, c.to_user_input());
+    c.is_diamond(false).is_pushed(true);
+    EXPECT_EQ("p:1"s, c.to_user_input());
+    c.is_pushed(false).is_staccato(true);
+    EXPECT_EQ("s:1"s, c.to_user_input());
+    c.is_staccato(false).is_tied(true);
+    EXPECT_EQ("t:1"s, c.to_user_input());
+    c.is_staccato(true);
+    EXPECT_EQ("s:1"s, c.to_user_input());
+    c.is_pushed(true);
+    EXPECT_EQ("ps:1"s, c.to_user_input());
+    c.is_tied(true);
+    EXPECT_EQ("pt:1"s, c.to_user_input());
+    c.is_pushed(false).is_diamond(true);
+    EXPECT_EQ("dt:1"s, c.to_user_input());
+    c.is_pushed(true);
+    EXPECT_EQ("dpt:1"s, c.to_user_input());
 }

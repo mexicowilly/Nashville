@@ -145,6 +145,11 @@ chord& chord::extensions(const std::string& ext)
 chord& chord::is_diamond(bool state)
 {
     is_diamond_ = state;
+    if (is_diamond_ && is_staccato_)
+    {
+        is_staccato_ = false;
+        CHUCHO_INFO_L("Removing staccato flag due to diamond being set");
+    }
     return *this;
 }
 
@@ -157,12 +162,30 @@ chord& chord::is_pushed(bool state)
 chord& chord::is_staccato(bool state)
 {
     is_staccato_ = state;
+    if (is_staccato_)
+    {
+        if (is_diamond_)
+        {
+            is_diamond_ = false;
+            CHUCHO_INFO_L("Removing diamond flag due to staccato being set");
+        }
+        if (is_tied_)
+        {
+            is_tied_ = false;
+            CHUCHO_INFO_L("Removing tied flag due to staccato being set");
+        }
+    }
     return *this;
 }
 
 chord& chord::is_tied(bool state)
 {
     is_tied_ = state;
+    if (is_tied_ && is_staccato_)
+    {
+        is_staccato_ = false;
+        CHUCHO_INFO_L("Removing staccato flag due to tied being set");
+    }
     return *this;
 }
 
@@ -189,17 +212,44 @@ chord& chord::parse_user_input(const std::string& usr)
         throw std::invalid_argument("The chord description cannot be empty");
     chord saved(*this);
     *this = chord();
-    auto re = std::regex("([b#])?([1-7])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
+    auto re = std::regex("([tdsp]+:)?([b#])?([1-7])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
     std::smatch result;
     if (std::regex_match(usr, result, re))
     {
         if (result[1].length() > 0)
-            step_ = result[1].str()[0] == 'b' ? flat_sharp::FLAT : flat_sharp::SHARP;
-        assert(result[2].length() == 1);
-        number_ = result[2].str()[0] - '0';
-        if (result[3].length() > 0)
         {
-            auto mode = result[3].str();
+            for (auto c : result[1].str())
+            {
+                switch (c)
+                {
+                case 't':
+                    is_tied_ = true;
+                    break;
+                case 'd':
+                    is_diamond_ = true;
+                    break;
+                case 's':
+                    is_staccato_ = true;
+                    break;
+                case 'p':
+                    is_pushed_ = true;
+                    break;
+                default:;
+                }
+            }
+            if (is_staccato_)
+            {
+                is_tied_ = false;
+                is_diamond_ = false;
+            }
+        }
+        if (result[2].length() > 0)
+            step_ = result[2].str()[0] == 'b' ? flat_sharp::FLAT : flat_sharp::SHARP;
+        assert(result[3].length() == 1);
+        number_ = result[3].str()[0] - '0';
+        if (result[4].length() > 0)
+        {
+            auto mode = result[4].str();
             if (mode == "-")
             {
                 mode_ = type::MINOR;
@@ -218,23 +268,23 @@ chord& chord::parse_user_input(const std::string& usr)
         {
             mode_ = type::MAJOR;
         }
-        if (result[4].length() > 0)
-        {
-            extensions_ = result[4].str();
-        }
         if (result[5].length() > 0)
         {
-            if (result[6].length() > 0)
-                bass_note_step_ = result[6].str()[0] == 'b' ? flat_sharp::FLAT : flat_sharp::SHARP;
-            assert(result[7].length() == 1);
-            bass_note_ = result[7].str()[0] - '0';
+            extensions_ = result[5].str();
         }
-        if (result[8].length() > 0)
+        if (result[6].length() > 0)
         {
-            assert(result[9].length() == 1 || result[9].length() == 2);
-            bool dot = result[9].length() == 2;
-            assert((dot && result[9].str()[1] == '.') || !dot);
-            switch (result[9].str()[0])
+            if (result[7].length() > 0)
+                bass_note_step_ = result[7].str()[0] == 'b' ? flat_sharp::FLAT : flat_sharp::SHARP;
+            assert(result[8].length() == 1);
+            bass_note_ = result[8].str()[0] - '0';
+        }
+        if (result[9].length() > 0)
+        {
+            assert(result[10].length() == 1 || result[10].length() == 2);
+            bool dot = result[10].length() == 2;
+            assert((dot && result[10].str()[1] == '.') || !dot);
+            switch (result[10].str()[0])
             {
                 case 's':
                 case 'S':
@@ -279,6 +329,18 @@ std::string chord::to_user_input() const
     if (mode_ == type::UNDEFINED)
         return std::string();
     std::ostringstream out;
+    if (is_diamond_ || is_pushed_ || is_staccato_ || is_tied_)
+    {
+        if (is_diamond_)
+            out << 'd';
+        if (is_pushed_)
+            out << 'p';
+        if (is_staccato_)
+            out << 's';
+        if (is_tied_)
+            out << 't';
+        out << ':';
+    }
     if (step_)
         out << (*step_ == flat_sharp::FLAT ? 'b' : '#');
     out << number_;
