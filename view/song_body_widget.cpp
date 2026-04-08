@@ -12,44 +12,44 @@ namespace nashville::view
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
-SongBodyWidget::SongBodyWidget(const model::song& song, QWidget* parent)
+song_body_widget::song_body_widget(const model::song& song, QWidget* parent)
     : QWidget(parent), song_(song)
 {
     setMouseTracking(true);
-    initFonts();
+    init_fonts();
     rebuild();
 }
 
-void SongBodyWidget::initFonts()
+void song_body_widget::init_fonts()
 {
-    int bravuraId = QFontDatabase::addApplicationFont(":/fonts/Bravura.otf");
-    QString musicFamily = (bravuraId != -1)
-                          ? QFontDatabase::applicationFontFamilies(bravuraId).first()
+    int bravura_id = QFontDatabase::addApplicationFont(":/fonts/Bravura.otf");
+    QString music_family = (bravura_id != -1)
+                          ? QFontDatabase::applicationFontFamilies(bravura_id).first()
                           : QApplication::font().family();
 
     fonts_.number = QFont("Georgia", 18, QFont::Normal);
     fonts_.modifier     = QFont("Georgia", 11);
     fonts_.articulation = QFont("Georgia", 12);
-    fonts_.music        = QFont(musicFamily, 14);
+    fonts_.music        = QFont(music_family, 14);
 }
 
 // ---------------------------------------------------------------------------
 // rebuild
 // ---------------------------------------------------------------------------
-void SongBodyWidget::rebuild()
+void song_body_widget::rebuild()
 {
-    QRectF contentRect(marginWidth_ + kContentPadding,
-                       kContentPadding,
-                       std::max(0.0, width()  - marginWidth_ - kContentPadding * 2),
-                       std::max(0.0, height() - kContentPadding * 2));
-    computeLayout(contentRect);
+    QRectF content_rect(margin_width_ + k_content_padding,
+                       k_content_padding,
+                       std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
+                       std::max(0.0, height() - k_content_padding * 2));
+    compute_layout(content_rect);
     update();
 }
 
 // ---------------------------------------------------------------------------
-// computeLayout
+// compute_layout
 // ---------------------------------------------------------------------------
-void SongBodyWidget::computeLayout(const QRectF& contentRect)
+void song_body_widget::compute_layout(const QRectF& content_rect)
 {
     lines_.clear();
 
@@ -57,134 +57,142 @@ void SongBodyWidget::computeLayout(const QRectF& contentRect)
         return;
 
     const auto& bars       = song_.bars();
-    const unsigned bplPref = song_.bars_per_line();
+    const unsigned bpl_pref = song_.bars_per_line();
 
     // --- Pass 1: group bars into lines ---
     // Rules:
     //   - is_eol_ forces a break after this bar
     //   - extends_line_ suppresses the count-break for this bar
-    //   - otherwise break when countInLine reaches bplPref
+    //   - otherwise break when count_in_line reaches bpl_pref
 
-    struct RawLine { std::vector<const model::bar*> bars; };
-    std::vector<RawLine> rawLines;
-    RawLine current;
-    unsigned countInLine = 0;
+    struct raw_line { std::vector<const model::bar*> bars; };
+    std::vector<raw_line> raw_lines;
+    raw_line current;
+    unsigned count_in_line = 0;
 
     for (const auto& b : bars)
     {
         current.bars.push_back(&b);
-        countInLine++;
+        count_in_line++;
 
-        bool forceBreak = b.is_eol();
-        bool countBreak = (countInLine >= bplPref) && !b.extends_line();
+        bool force_break = b.is_eol();
+        bool count_break = (count_in_line >= bpl_pref) && !b.extends_line();
 
-        if (forceBreak || countBreak)
+        if (force_break || count_break)
         {
-            rawLines.push_back(std::move(current));
+            raw_lines.push_back(std::move(current));
             current.bars.clear();
-            countInLine = 0;
+            count_in_line = 0;
         }
     }
     if (!current.bars.empty())
-        rawLines.push_back(std::move(current));
+        raw_lines.push_back(std::move(current));
 
-    qreal plainH    = plainBarHeight();
-    qreal durationH = durationBarHeight();
-    qreal secLabelH = sectionLabelHeight();
+    qreal plain_h     = plain_bar_height();
+    qreal duration_h  = duration_bar_height();
+    qreal sec_label_h = section_label_height();
 
     // --- Pass 2: compute per-column widths ---
     // Column index = bar position within its line (0-based).
     // Every bar in the same column gets the same width = max natural width in that column.
-    constexpr qreal kBarPadding = 16.0;
-    std::vector<qreal> colWidths;  // indexed by column (position within line)
-    for (const auto& raw : rawLines)
+    constexpr qreal k_bar_padding = 16.0;
+    std::vector<qreal> col_widths;  // indexed by column (position within line)
+    for (const auto& raw : raw_lines)
     {
-        bool lineIsDur = false;
+        bool line_is_dur = false;
         for (const auto* b : raw.bars)
             if (!b->empty() && b->chords().front().duration().has_value())
-                { lineIsDur = true; break; }
-        qreal barH = lineIsDur ? durationH : plainH;
+                { line_is_dur = true; break; }
+        qreal bar_h = line_is_dur ? duration_h : plain_h;
 
         for (std::size_t j = 0; j < raw.bars.size(); ++j)
         {
-            qreal w = BarRenderer::widthHint(*raw.bars[j], barH, fonts_) + kBarPadding;
-            if (j >= colWidths.size())
-                colWidths.push_back(w);
+            qreal w = bar_renderer::width_hint(*raw.bars[j], bar_h, fonts_) + k_bar_padding;
+            if (j >= col_widths.size())
+                col_widths.push_back(w);
             else
-                colWidths[j] = std::max(colWidths[j], w);
+                col_widths[j] = std::max(col_widths[j], w);
         }
     }
 
     // --- Pass 3: compute geometry ---
-    qreal y = contentRect.top();
+    qreal y = content_rect.top();
 
-    for (const auto& raw : rawLines)
+    // Use the larger bar height for spacing calculations to ensure consistent
+    // vertical spacing between lines, even when duration mode varies within a line.
+    qreal uniform_bar_h = std::max(plain_h, duration_h);
+
+    for (std::size_t line_idx = 0; line_idx < raw_lines.size(); ++line_idx)
     {
-        LineLayout line;
+        const auto& raw = raw_lines[line_idx];
+        line_layout line;
 
         // Determine line-level flags
-        for (const auto* b : raw.bars)
+        for (const auto* b : raw_lines[line_idx].bars)
         {
             if (!b->empty() && b->chords().front().duration().has_value())
-                line.isDurationMode = true;
-            if (b->section() && !line.sectionLabel)
-                line.sectionLabel = QString::fromStdString(*b->section());
+                line.is_duration_mode = true;
+            if (b->section() && !line.section_label)
+                line.section_label = QString::fromStdString(*b->section());
         }
 
-        qreal barH    = line.isDurationMode ? durationH : plainH;
-        qreal lineTop = y + (line.sectionLabel ? secLabelH : 0.0);
+        qreal actual_bar_h = line.is_duration_mode ? duration_h : plain_h;
+        qreal line_top = y + (line.section_label ? sec_label_h : 0.0);
 
-        qreal x = contentRect.left();
-        for (std::size_t j = 0; j < raw.bars.size(); ++j)
+        qreal x = content_rect.left();
+        for (std::size_t j = 0; j < raw_lines[line_idx].bars.size(); ++j)
         {
-            const model::bar* b = raw.bars[j];
-            qreal barW = colWidths[j];
+            const model::bar* b = raw_lines[line_idx].bars[j];
+            qreal bar_w = col_widths[j];
 
-            BarLayout bl;
+            bar_layout bl;
             bl.bar           = b;
-            bl.rect          = QRectF(x, lineTop, barW, barH);
-            bl.isDurationMode = !b->empty()
+            bl.rect          = QRectF(x, line_top, bar_w, actual_bar_h);
+            bl.is_duration_mode = !b->empty()
                                 && b->chords().front().duration().has_value();
 
             // Continuation dot: appears after the last "normal count" bar,
-            // i.e. bar at index (bplPref - 1) when the next bar extends the line.
-            if (j == bplPref - 1
-                && (j + 1) < raw.bars.size()
-                && raw.bars[j + 1]->extends_line())
+            // i.e. bar at index (bpl_pref - 1) when the next bar extends the line.
+            if (j == bpl_pref - 1
+                && (j + 1) < raw_lines[line_idx].bars.size()
+                && raw_lines[line_idx].bars[j + 1]->extends_line())
             {
-                bl.showContinuationDot = true;
+                bl.show_continuation_dot = true;
             }
 
             line.bars.push_back(bl);
-            x += barW + kInterBarSpacing;
+            x += bar_w + k_inter_bar_spacing;
         }
 
-        qreal lineH = barH + (line.sectionLabel ? secLabelH : 0.0);
-        line.rect   = QRectF(contentRect.left(), y, contentRect.width(), lineH);
+        qreal line_h = actual_bar_h + (line.section_label ? sec_label_h : 0.0);
+        line.rect   = QRectF(content_rect.left(), y, content_rect.width(), line_h);
         lines_.push_back(std::move(line));
 
-        y += lineH + kLineSpacing;
+        y = line_top + actual_bar_h + k_line_spacing;
     }
 
-    setMinimumHeight(static_cast<int>(y + kContentPadding));
+    setMinimumHeight(static_cast<int>(y + k_content_padding));
 }
 
 // ---------------------------------------------------------------------------
 // Height helpers
 // ---------------------------------------------------------------------------
-qreal SongBodyWidget::plainBarHeight() const
+qreal song_body_widget::plain_bar_height() const
 {
     QFontMetricsF fm(fonts_.number);
-    return fm.height() / ChordRenderer::kNumberZoneRatio;
+    return fm.height() / chord_renderer::k_number_zone_ratio;
 }
 
-qreal SongBodyWidget::durationBarHeight() const
+qreal song_body_widget::duration_bar_height() const
 {
-    QFontMetricsF musicFm(fonts_.music);
-    return plainBarHeight() + musicFm.height() + 4.0 + 8.0;
+    QFontMetricsF music_fm(fonts_.music);
+    // Add a compact fixed rhythm row on top of plain bar height.
+    // Avoids inflated music font metrics (Bravura fm.height() is ~76px at 14pt).
+    constexpr qreal k_rhythm_row_px = 16.0;
+    return plain_bar_height() + k_rhythm_row_px + bar_renderer::k_rule_thickness;
 }
 
-qreal SongBodyWidget::sectionLabelHeight() const
+qreal song_body_widget::section_label_height() const
 {
     QFontMetricsF fm(fonts_.modifier);
     return fm.height() + 6.0;
@@ -193,101 +201,101 @@ qreal SongBodyWidget::sectionLabelHeight() const
 // ---------------------------------------------------------------------------
 // paintEvent
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintEvent(QPaintEvent*)
+void song_body_widget::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), Qt::white);
 
-    paintMargin(painter, QRectF(0, 0, marginWidth_, height()));
-    paintDivider(painter);
+    paint_margin(painter, QRectF(0, 0, margin_width_, height()));
+    paint_divider(painter);
 
     for (const auto& line : lines_)
-        paintLine(painter, line);
+        paint_line(painter, line);
 }
 
 // ---------------------------------------------------------------------------
-// paintMargin
+// paint_margin
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintMargin(QPainter& painter, const QRectF& marginRect) const
+void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect) const
 {
-    MarginRenderer::paint(painter, marginRect, song_);
+    margin_renderer::paint(painter, margin_rect, song_);
 }
 
 // ---------------------------------------------------------------------------
-// paintDivider
+// paint_divider
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintDivider(QPainter& painter) const
+void song_body_widget::paint_divider(QPainter& painter) const
 {
     painter.save();
     painter.setPen(QPen(QColor(180, 180, 180), 1));
-    painter.drawLine(marginWidth_, 0, marginWidth_, height());
+    painter.drawLine(margin_width_, 0, margin_width_, height());
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// paintLine
+// paint_line
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintLine(QPainter& painter, const LineLayout& line) const
+void song_body_widget::paint_line(QPainter& painter, const line_layout& line) const
 {
-    if (line.sectionLabel)
-        paintSectionLabel(painter, *line.sectionLabel, line.rect);
+    if (line.section_label)
+        paint_section_label(painter, *line.section_label, line.rect);
 
     for (const auto& bl : line.bars)
     {
-        BarRenderer::paint(painter, bl.rect, *bl.bar, fonts_, line.isDurationMode);
+        bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode);
 
-        if (bl.showContinuationDot)
-            paintContinuationDot(painter, bl.rect);
+        if (bl.show_continuation_dot)
+            paint_continuation_dot(painter, bl.rect);
     }
 }
 
 // ---------------------------------------------------------------------------
-// paintSectionLabel
+// paint_section_label
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintSectionLabel(QPainter& painter,
+void song_body_widget::paint_section_label(QPainter& painter,
                                         const QString& label,
-                                        const QRectF& lineRect) const
+                                        const QRectF& line_rect) const
 {
     painter.save();
 
-    QFont labelFont = fonts_.modifier;
-    labelFont.setBold(true);
-    labelFont.setItalic(true);
-    painter.setFont(labelFont);
-    QFontMetricsF fm(labelFont);
+    QFont label_font = fonts_.modifier;
+    label_font.setBold(true);
+    label_font.setItalic(true);
+    painter.setFont(label_font);
+    QFontMetricsF fm(label_font);
 
-    qreal labelY = lineRect.top() + fm.ascent();
-    painter.drawText(QPointF(lineRect.left(), labelY), label);
+    qreal label_y = line_rect.top() + fm.ascent();
+    painter.drawText(QPointF(line_rect.left(), label_y), label);
 
-    qreal ruleY = lineRect.top() + fm.height() + 2.0;
+    qreal rule_y = line_rect.top() + fm.height() + 2.0;
     painter.setPen(QPen(QColor(180, 180, 180), 0.75));
-    painter.drawLine(QPointF(lineRect.left(),  ruleY),
-                     QPointF(lineRect.right(), ruleY));
+    painter.drawLine(QPointF(line_rect.left(),  rule_y),
+                     QPointF(line_rect.right(), rule_y));
 
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// paintContinuationDot
+// paint_continuation_dot
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintContinuationDot(QPainter& painter,
-                                           const QRectF& precedingBarRect) const
+void song_body_widget::paint_continuation_dot(QPainter& painter,
+                                           const QRectF& preceding_bar_rect) const
 {
     painter.save();
-    constexpr qreal dotR = 3.0;
-    qreal cx = precedingBarRect.right() + kInterBarSpacing / 2.0;
-    qreal cy = precedingBarRect.center().y();
+    constexpr qreal dot_r = 3.0;
+    qreal cx = preceding_bar_rect.right() + k_inter_bar_spacing / 2.0;
+    qreal cy = preceding_bar_rect.center().y();
     painter.setBrush(Qt::black);
     painter.setPen(Qt::NoPen);
-    painter.drawEllipse(QPointF(cx, cy), dotR, dotR);
+    painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
 // resizeEvent
 // ---------------------------------------------------------------------------
-void SongBodyWidget::resizeEvent(QResizeEvent*)
+void song_body_widget::resizeEvent(QResizeEvent*)
 {
     rebuild();
 }
@@ -295,73 +303,73 @@ void SongBodyWidget::resizeEvent(QResizeEvent*)
 // ---------------------------------------------------------------------------
 // Draggable divider
 // ---------------------------------------------------------------------------
-bool SongBodyWidget::nearDivider(int x) const
+bool song_body_widget::near_divider(int x) const
 {
-    return std::abs(x - marginWidth_) <= kDividerHitWidth;
+    return std::abs(x - margin_width_) <= k_divider_hit_width;
 }
 
-void SongBodyWidget::mousePressEvent(QMouseEvent* event)
+void song_body_widget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && nearDivider(event->pos().x()))
+    if (event->button() == Qt::LeftButton && near_divider(event->pos().x()))
     {
-        draggingDivider_ = true;
-        dragStartX_      = event->pos().x();
-        dragStartMargin_ = marginWidth_;
+        dragging_divider_ = true;
+        drag_start_x_      = event->pos().x();
+        drag_start_margin_ = margin_width_;
         setCursor(Qt::SplitHCursor);
     }
 }
 
-void SongBodyWidget::mouseMoveEvent(QMouseEvent* event)
+void song_body_widget::mouseMoveEvent(QMouseEvent* event)
 {
-    if (draggingDivider_)
+    if (dragging_divider_)
     {
-        int delta     = event->pos().x() - dragStartX_;
-        int newMargin = qBound(kMinMarginWidth,
-                               dragStartMargin_ + delta,
-                               kMaxMarginWidth);
-        if (newMargin != marginWidth_)
+        int delta     = event->pos().x() - drag_start_x_;
+        int new_margin = qBound(k_min_margin_width,
+                               drag_start_margin_ + delta,
+                               k_max_margin_width);
+        if (new_margin != margin_width_)
         {
-            marginWidth_ = newMargin;
+            margin_width_ = new_margin;
             rebuild();
         }
     }
     else
     {
-        setCursor(nearDivider(event->pos().x()) ? Qt::SplitHCursor
+        setCursor(near_divider(event->pos().x()) ? Qt::SplitHCursor
                                                 : Qt::ArrowCursor);
     }
 }
 
-void SongBodyWidget::mouseReleaseEvent(QMouseEvent* event)
+void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && draggingDivider_)
+    if (event->button() == Qt::LeftButton && dragging_divider_)
     {
-        draggingDivider_ = false;
-        setCursor(nearDivider(event->pos().x()) ? Qt::SplitHCursor
+        dragging_divider_ = false;
+        setCursor(near_divider(event->pos().x()) ? Qt::SplitHCursor
                                                 : Qt::ArrowCursor);
     }
 }
 
 // ---------------------------------------------------------------------------
-// paintToRect — for printing
+// paint_to_rect — for printing
 // ---------------------------------------------------------------------------
-void SongBodyWidget::paintToRect(QPainter& painter, const QRectF& pageRect) const
+void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect) const
 {
     painter.save();
 
-    qreal scaleX = pageRect.width()  / static_cast<qreal>(width());
-    qreal scaleY = pageRect.height() / static_cast<qreal>(height());
-    qreal scale  = std::min(scaleX, scaleY);
+    qreal scale_x = page_rect.width()  / static_cast<qreal>(width());
+    qreal scale_y = page_rect.height() / static_cast<qreal>(height());
+    qreal scale  = std::min(scale_x, scale_y);
 
-    painter.translate(pageRect.left(), pageRect.top());
+    painter.translate(page_rect.left(), page_rect.top());
     painter.scale(scale, scale);
 
-    QRectF myRect(0, 0, width(), height());
-    painter.fillRect(myRect, Qt::white);
-    MarginRenderer::paint(painter, QRectF(0, 0, marginWidth_, height()), song_);
-    paintDivider(painter);
+    QRectF my_rect(0, 0, width(), height());
+    painter.fillRect(my_rect, Qt::white);
+    margin_renderer::paint(painter, QRectF(0, 0, margin_width_, height()), song_);
+    paint_divider(painter);
     for (const auto& line : lines_)
-        paintLine(painter, line);
+        paint_line(painter, line);
 
     painter.restore();
 }

@@ -5,45 +5,45 @@ namespace nashville::view
 {
 
 // ---------------------------------------------------------------------------
-// Public: widthHint
+// Public: width_hint
 // ---------------------------------------------------------------------------
-qreal BarRenderer::widthHint(const model::bar& bar,
+qreal bar_renderer::width_hint(const model::bar& bar,
                               qreal /*height*/,
-                              const ChordRenderer::Fonts& fonts)
+                              const chord_renderer::Fonts& fonts)
 {
     if (bar.empty())
         return 0.0;
 
-    qreal totalWidth = 0.0;
+    qreal total_width = 0.0;
     for (const auto& ch : bar.chords())
-        totalWidth += ChordRenderer::sizeHint(ch, fonts).width();
+        total_width += chord_renderer::size_hint(ch, fonts).width();
 
-    totalWidth += kInterChordSpacing * (bar.chords().size() - 1);
-    totalWidth += kTimeSigSlotW;
-    return totalWidth;
+    total_width += k_inter_chord_spacing * (bar.chords().size() - 1);
+    total_width += k_time_sig_slot_w;
+    return total_width;
 }
 
 // ---------------------------------------------------------------------------
 // Public: paint
 // ---------------------------------------------------------------------------
-void BarRenderer::paint(QPainter& painter,
+void bar_renderer::paint(QPainter& painter,
                          const QRectF& rect,
                          const model::bar& bar,
-                         const ChordRenderer::Fonts& fonts,
-                         bool lineDurationMode)
+                         const chord_renderer::Fonts& fonts,
+                         bool line_duration_mode)
 {
     if (bar.empty())
         return;
 
-    bool durationMode = isDurationMode(bar);
+    bool duration_mode = is_duration_mode(bar);
 
-    qreal topPad     = rect.height() * 0.05;
-    qreal chordSlotH = rect.height() * kChordSlotRatio;
-    qreal rhythmRowH = rect.height() * kRhythmRowRatio;
+    qreal top_pad      = rect.height() * 0.05;
+    qreal chord_slot_h  = rect.height() * k_chord_slot_ratio;
+    qreal rhythm_row_h = rect.height() * k_rhythm_row_ratio;
 
-    // --- Time signature: always reserve kTimeSigSlotW so chord columns align ---
+    // --- Time signature: always reserve k_time_sig_slot_w so chord columns align ---
     // Paint glyphs only when this bar actually has a time sig change.
-    qreal chordsLeft = rect.left() + kTimeSigSlotW;
+    qreal chords_left = rect.left() + k_time_sig_slot_w;
 
     if (bar.time_sig())
     {
@@ -53,102 +53,102 @@ void BarRenderer::paint(QPainter& painter,
 
         QString countStr = QString::number(ts.count());
         QString kindStr  = QString::number(static_cast<int>(ts.kind()));
-        qreal maxAdv = std::max(fm.horizontalAdvance(countStr),
+        qreal max_adv = std::max(fm.horizontalAdvance(countStr),
                                 fm.horizontalAdvance(kindStr));
-        qreal tsX    = rect.left() + (kTimeSigSlotW - maxAdv) / 2.0;  // centred in slot
-        qreal tsY    = rect.top() + topPad;
-        qreal sep    = 3.0;
+        qreal ts_x    = rect.left() + (k_time_sig_slot_w - max_adv) / 2.0;  // centred in slot
+        qreal ts_y    = rect.top() + top_pad;
+        qreal sep     = 3.0;
 
-        // Numerator baseline = tsY + ascent
+        // Numerator baseline = ts_y + ascent
         painter.save();
         painter.setFont(tsFont);
         painter.setPen(QPen(Qt::black, 1.0));
-        painter.drawText(QPointF(tsX + (maxAdv - fm.horizontalAdvance(countStr)) / 2.0,
-                                 tsY + fm.ascent()),
+        painter.drawText(QPointF(ts_x + (max_adv - fm.horizontalAdvance(countStr)) / 2.0,
+                                 ts_y + fm.ascent()),
                          countStr);
         painter.restore();
 
         // Separator: sits sep px below the bottom of the numerator glyph
-        qreal lineY = std::round(tsY + fm.ascent() + fm.descent() + sep);
-        painter.fillRect(QRectF(tsX, lineY, maxAdv, 1.0), Qt::black);
+        qreal line_y = std::round(ts_y + fm.ascent() + fm.descent() + sep);
+        painter.fillRect(QRectF(ts_x, line_y, max_adv, 1.0), Qt::black);
 
-        // Denominator baseline = lineY + sep + ascent
+        // Denominator baseline = line_y + sep + ascent
         painter.save();
         painter.setFont(tsFont);
         painter.setPen(QPen(Qt::black, 1.0));
-        painter.drawText(QPointF(tsX + (maxAdv - fm.horizontalAdvance(kindStr)) / 2.0,
-                                 lineY + sep + fm.ascent()),
+        painter.drawText(QPointF(ts_x + (max_adv - fm.horizontalAdvance(kindStr)) / 2.0,
+                                 line_y + sep + fm.ascent()),
                          kindStr);
         painter.restore();
     }
 
-    QRectF chordSlotRect(chordsLeft,
-                          rect.top() + topPad,
-                          rect.width() - kTimeSigSlotW,
-                          chordSlotH);
+    QRectF chord_slot_rect(chords_left,
+                          rect.top() + top_pad,
+                          rect.width() - k_time_sig_slot_w,
+                          chord_slot_h);
 
     // Compute per-chord widths
-    std::vector<qreal> chordWidths;
-    qreal totalChordWidth = 0.0;
+    std::vector<qreal> chord_widths;
+    qreal total_chord_width = 0.0;
     for (const auto& ch : bar.chords())
     {
-        qreal w = ChordRenderer::sizeHint(ch, fonts).width();
-        chordWidths.push_back(w);
-        totalChordWidth += w;
+        qreal w = chord_renderer::size_hint(ch, fonts).width();
+        chord_widths.push_back(w);
+        total_chord_width += w;
     }
 
-    qreal availableWidth = chordSlotRect.width()
-                           - kInterChordSpacing * (bar.chords().size() - 1);
-    qreal scale = (totalChordWidth > 0.0) ? availableWidth / totalChordWidth : 1.0;
+    qreal available_width = chord_slot_rect.width()
+                           - k_inter_chord_spacing * (bar.chords().size() - 1);
+    qreal scale = (total_chord_width > 0.0) ? available_width / total_chord_width : 1.0;
 
-    qreal x = chordsLeft;
-    qreal lastChordRight = chordsLeft;
+    qreal x = chords_left;
+    qreal last_chord_right = chords_left;
     for (std::size_t i = 0; i < bar.chords().size(); ++i)
     {
-        qreal slotWidth = chordWidths[i] * scale;
-        QRectF slotRect(x, chordSlotRect.top(), slotWidth, chordSlotH);
+        qreal slot_width = chord_widths[i] * scale;
+        QRectF slot_rect(x, chord_slot_rect.top(), slot_width, chord_slot_h);
 
-        ChordRenderer::paint(painter, slotRect, bar.chords()[i], fonts, durationMode);
-        lastChordRight = x + chordWidths[i];  // actual glyph right edge
+        chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode);
+        last_chord_right = x + chord_widths[i];  // actual glyph right edge
 
-        if (durationMode && lineDurationMode)
+        if (duration_mode && line_duration_mode)
         {
-            qreal ruleY = rect.top() + topPad + chordSlotH + kRuleThickness / 2.0;
-            QRectF rhythmRect(x, ruleY + kRuleThickness, slotWidth, rhythmRowH);
-            ChordRenderer::paintRhythm(painter, rhythmRect, bar.chords()[i], fonts);
+            qreal rule_y = rect.top() + top_pad + chord_slot_h + k_rule_thickness / 2.0;
+            QRectF rhythm_rect(x, rule_y + k_rule_thickness, slot_width, rhythm_row_h);
+            chord_renderer::paint_rhythm(painter, rhythm_rect, bar.chords()[i], fonts);
         }
 
-        x += slotWidth + kInterChordSpacing;
+        x += slot_width + k_inter_chord_spacing;
     }
 
     // Single underline from chords-left to just past the last chord glyph
     if (bar.chords().size() > 1)
     {
-        constexpr qreal kUnderlineOverhang = 4.0;
-        qreal underlineY = chordSlotRect.top() + chordSlotH + 1.5;
+        constexpr qreal k_underline_overhang = 4.0;
+        qreal underline_y = chord_slot_rect.top() + chord_slot_h + 1.5;
         painter.save();
         painter.setPen(QPen(Qt::black, 0.75));
-        painter.drawLine(QPointF(chordsLeft,                         underlineY),
-                         QPointF(lastChordRight + kUnderlineOverhang, underlineY));
+        painter.drawLine(QPointF(chords_left,                         underline_y),
+                         QPointF(last_chord_right + k_underline_overhang, underline_y));
         painter.restore();
     }
 
-    // Bar-wide horizontal rule for duration-mode bars
-    if (durationMode && lineDurationMode)
+    // Bar-wide horizontal rule for duration-mode bars — spans only the chord columns
+    if (duration_mode && line_duration_mode)
     {
-        qreal ruleY = rect.top() + topPad + chordSlotH + kRuleThickness / 2.0;
+        qreal rule_y = rect.top() + top_pad + chord_slot_h + k_rule_thickness / 2.0;
         painter.save();
-        painter.setPen(QPen(painter.pen().color(), kRuleThickness));
-        painter.drawLine(QPointF(rect.left(),  ruleY),
-                         QPointF(rect.right(), ruleY));
+        painter.setPen(QPen(painter.pen().color(), k_rule_thickness));
+        painter.drawLine(QPointF(chords_left, rule_y),
+                         QPointF(chords_left + chord_slot_rect.width(), rule_y));
         painter.restore();
     }
 }
 
 // ---------------------------------------------------------------------------
-// Private: isDurationMode
+// Private: is_duration_mode
 // ---------------------------------------------------------------------------
-bool BarRenderer::isDurationMode(const model::bar& bar)
+bool bar_renderer::is_duration_mode(const model::bar& bar)
 {
     if (bar.empty())
         return false;

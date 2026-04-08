@@ -21,15 +21,20 @@ app::app(int argc, char* argv[])
     s->time_sig(ts);
     s->add_bar().parse_user_input("1 4");
     s->add_bar().parse_user_input("57");
-    s->add_bar().parse_user_input("1");
-    s->add_bar().parse_user_input("1");
+    s->add_bar().parse_user_input("dt:1");
+    s->add_bar().parse_user_input("s:1");
     s->add_bar().parse_user_input("5 7dim7");
-    ts.parse_user_input("6/8");
-    s->add_bar().parse_user_input("4").time_sig(ts);
+    //ts.parse_user_input("6/8");
+    s->add_bar().parse_user_input("4");
     s->add_bar().parse_user_input("1+");
     s->add_bar().parse_user_input("6-7");
     s->add_bar().parse_user_input("1");
-    vl->addWidget(new view::SongWidget(*s));
+    s->add_bar().parse_user_input("1:q 2:h.");
+    s->add_bar().parse_user_input("4");
+    s->add_bar().parse_user_input("5");
+    s->add_bar().parse_user_input("6-");
+    s->add_bar().parse_user_input("77");
+    vl->addWidget(new view::song_widget(*s));
     main_win_.setFocus();
     main_win_.show();
 }

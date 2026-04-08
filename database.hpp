@@ -17,18 +17,15 @@ public:
     database(const std::filesystem::path& file_name);
     ~database();
 
-    void insert_playlists(const std::vector<model::playlist>& lists);
     void insert_song(const model::song& s);
-    //void insert_songs(const std::vector<model::song>& songs);
     bool in_memory() const;
     void move_to_file(const std::filesystem::path& file_name);
-    //std::vector<model::playlist> select_playlists(const std::vector<model::song>& songs);
+    void remove_playlist(const std::string& pl);
     void remove_song(const std::string& s);
     model::playlist select_playlist(const std::string& name);
     std::vector<std::string> select_playlist_names();
     std::vector<std::string> select_song_names();
     model::song select_song(const std::string& name);
-    std::vector<model::song> select_songs();
 
 private:
     enum class statement

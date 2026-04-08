@@ -1,4 +1,4 @@
-#include "song_widget.hpp"
+#include "song_header_widget.hpp"
 #include <QVBoxLayout>
 #include <QPainter>
 #include <QFontMetricsF>
@@ -24,9 +24,9 @@ void song_header_widget::paintEvent(QPaintEvent*)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QFont title_font("Georgia", 22, QFont::Bold);
-    painter.setFont(title_font);
-    QFontMetricsF fm(title_font);
+    QFont titleFont("Georgia", 22, QFont::Bold);
+    painter.setFont(titleFont);
+    QFontMetricsF fm(titleFont);
 
     QString title = QString::fromStdString(song_.name());
     qreal x = (width()  - fm.horizontalAdvance(title)) / 2.0;
@@ -78,21 +78,21 @@ void song_widget::print(QPrinter* printer)
     QPainter painter(printer);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QRectF page_rect = printer->pageRect(QPrinter::DevicePixel);
+    QRectF pageRect = printer->pageRect(QPrinter::DevicePixel);
 
     // Header
-    QFont title_font("Georgia", 22, QFont::Bold);
-    painter.setFont(title_font);
-    QFontMetricsF fm(title_font);
-    QString title   = QString::fromStdString(song_.name());
-    qreal header_h   = fm.height() + 24.0;
-    qreal title_x    = (page_rect.width() - fm.horizontalAdvance(title)) / 2.0;
-    painter.drawText(QPointF(page_rect.left() + title_x,
-                             page_rect.top() + fm.ascent() + 8.0), title);
+    QFont titleFont("Georgia", 22, QFont::Bold);
+    painter.setFont(titleFont);
+    QFontMetricsF fm(titleFont);
+    QString title  = QString::fromStdString(song_.name());
+    qreal headerH  = fm.height() + 24.0;
+    qreal titleX   = (pageRect.width() - fm.horizontalAdvance(title)) / 2.0;
+    painter.drawText(QPointF(pageRect.left() + titleX,
+                             pageRect.top() + fm.ascent() + 8.0), title);
 
     // Body
-    QRectF body_rect = page_rect.adjusted(0, header_h, 0, 0);
-    body_->paint_to_rect(painter, body_rect);
+    QRectF bodyRect = pageRect.adjusted(0, headerH, 0, 0);
+    body_->paint_to_rect(painter, bodyRect);
 }
 
 } // namespace nashville::view

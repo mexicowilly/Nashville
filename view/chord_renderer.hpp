@@ -10,7 +10,7 @@ namespace nashville::view
 
 // Stateless renderer for a single chord.
 // All methods are static — instantiate only to configure fonts.
-class ChordRenderer
+class chord_renderer
 {
 public:
     // Fonts should be set once by SongBodyWidget and passed in.
@@ -24,12 +24,12 @@ public:
 
     // Vertical zone proportions within the full chord slot rect.
     // Public so SongBodyWidget can use them for height calculations.
-    static constexpr qreal kNumberZoneRatio      = 0.65;
-    static constexpr qreal kArticulationZoneRatio = 0.35;
+    static constexpr qreal k_number_zone_ratio           = 0.65;
+    static constexpr qreal k_articulation_zone_ratio     = 0.35;
 
     // Returns the minimum bounding size needed to render this chord,
     // given the supplied fonts. Used by the layout pass.
-    static QSizeF sizeHint(const model::chord& ch, const Fonts& fonts);
+    static QSizeF size_hint(const model::chord& ch, const Fonts& fonts);
 
     // Paints the chord into rect on painter.
     // rect is the full chord slot (articulation zone + number row).
@@ -43,64 +43,64 @@ public:
 
     // Paints just the rhythmic symbol (note glyph + augmentation dot)
     // into the given rect. Called by BarRenderer for duration-mode bars.
-    static void paintRhythm(QPainter& painter,
-                            const QRectF& rect,
-                            const model::chord& ch,
-                            const Fonts& fonts);
+    static void paint_rhythm(QPainter& painter,
+                             const QRectF& rect,
+                             const model::chord& ch,
+                             const Fonts& fonts);
 
 private:
     // --- Articulation helpers ---
-    static void paintStaccato(QPainter& painter, const QRectF& artRect);
-    static void paintPushed(QPainter& painter, const QRectF& artRect, const Fonts& fonts);
-    static void paintTiedArc(QPainter& painter, const QRectF& artRect);
-    static void paintDiamond(QPainter& painter, const QRectF& numberRect);
+    static void paint_staccato(QPainter& painter, const QRectF& artRect);
+    static void paint_pushed(QPainter& painter, const QRectF& artRect, const Fonts& fonts);
+    static void paint_tied_arc(QPainter& painter, const QRectF& artRect);
+    static void paint_diamond(QPainter& painter, const QRectF& numberRect);
 
     // --- Number row helpers ---
 
     // Returns the rect actually occupied by the number glyph (used for diamond).
-    static QRectF paintNumberRow(QPainter& painter,
+    static QRectF paint_number_row(QPainter& painter,
                                  const QRectF& rowRect,
                                  const model::chord& ch,
                                  const Fonts& fonts);
 
     // Renders ♭ or ♯ as a Unicode glyph, returns width consumed.
-    static qreal paintStep(QPainter& painter,
+    static qreal paint_step(QPainter& painter,
                            const model::chord& ch,
                            const Fonts& fonts,
                            qreal x, qreal baseline);
 
     // Renders mode suffix (-, °, +), returns width consumed.
-    static qreal paintMode(QPainter& painter,
+    static qreal paint_mode(QPainter& painter,
                            const model::chord& ch,
                            const Fonts& fonts,
                            qreal x, qreal baseline);
 
     // Renders extensions string, returns width consumed.
-    static qreal paintExtensions(QPainter& painter,
+    static qreal paint_extensions(QPainter& painter,
                                  const model::chord& ch,
                                  const Fonts& fonts,
                                  qreal x, qreal baseline);
 
     // Renders /[♭/#]bassNote, returns width consumed.
-    static qreal paintBassNote(QPainter& painter,
+    static qreal paint_bass_note(QPainter& painter,
                                const model::chord& ch,
                                const Fonts& fonts,
                                qreal x, qreal baseline);
 
     // --- Rhythm helpers ---
-    static QString noteGlyph(model::chord::time duration);
-    static bool isDotted(model::chord::time duration);
+    static QString note_glyph(model::chord::time duration);
+    static bool is_dotted(model::chord::time duration);
 
     // Articulation vertical offsets within the articulation zone (top = 0).
-    static constexpr qreal kStaccatoTopRatio = 0.05;
-    static constexpr qreal kPushedTopRatio   = 0.35;
-    static constexpr qreal kTiedTopRatio     = 0.62;
+    static constexpr qreal k_staccato_top_ratio = 0.08;
+    static constexpr qreal k_pushed_top_ratio    = 0.35;
+    static constexpr qreal k_tied_top_ratio      = 0.62;
 
-    // Diamond padding around number rect
-    static constexpr qreal kDiamondPadding = 4.0;
+    // Diamond padding around number rect - ensures tie arc doesn't encroach
+    static constexpr qreal k_diamond_padding = 6.0;
 
     // Extra horizontal padding between chord elements
-    static constexpr qreal kElementSpacing = 2.0;
+    static constexpr qreal k_element_spacing = 2.0;
 };
 
 } // namespace nashville::view

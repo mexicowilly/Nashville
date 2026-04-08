@@ -10,20 +10,20 @@
 namespace nashville::view
 {
 
-class SongBodyWidget : public QWidget
+class song_body_widget : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit SongBodyWidget(const model::song& song, QWidget* parent = nullptr);
+    explicit song_body_widget(const model::song& song, QWidget* parent = nullptr);
 
     // Call after font changes or song data changes.
     void rebuild();
 
     // For printing: same layout/paint logic targeting an arbitrary rect.
-    void paintToRect(QPainter& painter, const QRectF& pageRect) const;
+    void paint_to_rect(QPainter& painter, const QRectF& page_rect) const;
 
-    int marginWidth() const { return marginWidth_; }
+    int margin_width() const { return margin_width_; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -34,43 +34,43 @@ protected:
 
 private:
     // --- Layout ---
-    void computeLayout(const QRectF& contentRect);
-    qreal plainBarHeight() const;
-    qreal durationBarHeight() const;
-    qreal sectionLabelHeight() const;
+    void compute_layout(const QRectF& content_rect);
+    qreal plain_bar_height() const;
+    qreal duration_bar_height() const;
+    qreal section_label_height() const;
 
     // --- Painting ---
-    void paintMargin(QPainter& painter, const QRectF& marginRect) const;
-    void paintDivider(QPainter& painter) const;
-    void paintLine(QPainter& painter, const LineLayout& line) const;
-    void paintSectionLabel(QPainter& painter,
+    void paint_margin(QPainter& painter, const QRectF& margin_rect) const;
+    void paint_divider(QPainter& painter) const;
+    void paint_line(QPainter& painter, const line_layout& line) const;
+    void paint_section_label(QPainter& painter,
                            const QString& label,
-                           const QRectF& lineRect) const;
-    void paintContinuationDot(QPainter& painter,
-                               const QRectF& precedingBarRect) const;
+                           const QRectF& line_rect) const;
+    void paint_continuation_dot(QPainter& painter,
+                               const QRectF& preceding_bar_rect) const;
 
     // --- Draggable divider ---
-    bool nearDivider(int x) const;
-    bool draggingDivider_ = false;
-    int  dragStartX_      = 0;
-    int  dragStartMargin_ = 0;
+    bool near_divider(int x) const;
+    bool dragging_divider_ = false;
+    int  drag_start_x_      = 0;
+    int  drag_start_margin_ = 0;
 
     // --- Constants ---
-    static constexpr qreal kLineSpacing      = 16.0;
-    static constexpr qreal kInterBarSpacing  = 6.0;
-    static constexpr qreal kContentPadding   = 12.0;
-    static constexpr int   kDividerHitWidth  = 5;
-    static constexpr int   kMinMarginWidth   = 60;
-    static constexpr int   kMaxMarginWidth   = 200;
-    static constexpr int   kDefaultMarginWidth = 100;
+    static constexpr qreal k_line_spacing       = 16.0;
+    static constexpr qreal k_inter_bar_spacing   = 6.0;
+    static constexpr qreal k_content_padding    = 12.0;
+    static constexpr int   k_divider_hit_width  = 5;
+    static constexpr int   k_min_margin_width   = 60;
+    static constexpr int   k_max_margin_width   = 200;
+    static constexpr int   k_default_margin_width = 100;
 
     // --- Data ---
     const model::song&      song_;
-    std::vector<LineLayout> lines_;
-    ChordRenderer::Fonts    fonts_;
-    int                     marginWidth_ = kDefaultMarginWidth;
+    std::vector<line_layout> lines_;
+    chord_renderer::Fonts    fonts_;
+    int                     margin_width_ = k_default_margin_width;
 
-    void initFonts();
+    void init_fonts();
 };
 
 } // namespace nashville::view

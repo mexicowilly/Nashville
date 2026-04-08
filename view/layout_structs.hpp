@@ -9,20 +9,20 @@
 namespace nashville::view
 {
 
-struct BarLayout
+struct bar_layout
 {
-    const model::bar* bar    = nullptr;
+    const model::bar* bar               = nullptr;
     QRectF rect;
-    bool isDurationMode      = false;  // cached from bar contents
-    bool showContinuationDot = false;  // paint dot in gap after this bar
+    bool is_duration_mode               = false;  // cached from bar contents
+    bool show_continuation_dot         = false;  // paint dot in gap after this bar
 };
 
-struct LineLayout
+struct line_layout
 {
-    std::vector<BarLayout> bars;
-    QRectF rect;                           // full line rect including all bars
-    std::optional<QString> sectionLabel;   // from first bar that has section_
-    bool isDurationMode = false;           // true if ANY bar on this line is duration-mode
+    std::vector<bar_layout> bars;
+    QRectF rect;                            // full line rect including all bars
+    std::optional<QString> section_label;   // from first bar that has section_
+    bool is_duration_mode = false;           // true if ANY bar on this line is duration-mode
 };
 
 } // namespace nashville::view

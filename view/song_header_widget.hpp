@@ -38,7 +38,7 @@ private:
     const model::song& song_;
     song_header_widget* header_ = nullptr;
     song_body_widget*   body_   = nullptr;
-    QScrollArea*        scroll_ = nullptr;
+    QScrollArea*       scroll_ = nullptr;
 };
 
 } // namespace nashville::view

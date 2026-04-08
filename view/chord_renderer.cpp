@@ -17,56 +17,56 @@ static constexpr const char* kEighth   = "\u266A"; // ♪
 static constexpr const char* kBeamed   = "\u266C"; // ♬ (sixteenth fallback)
 
 // ---------------------------------------------------------------------------
-// Public: sizeHint
+// Public: size_hint
 // ---------------------------------------------------------------------------
-QSizeF ChordRenderer::sizeHint(const model::chord& ch, const Fonts& fonts)
+QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
 {
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
 
-    qreal rowWidth = 0;
+    qreal row_width = 0;
 
     if (ch.step())
-        rowWidth += modFm.horizontalAdvance(kFlat) + kElementSpacing;
+        row_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
 
-    rowWidth += nmFm.horizontalAdvance(QString::number(ch.number()));
+    row_width += nmFm.horizontalAdvance(QString::number(ch.number()));
 
     switch (ch.mode())
     {
         case model::chord::type::MINOR:
-            rowWidth += modFm.horizontalAdvance("-") + kElementSpacing;
+            row_width += modFm.horizontalAdvance("-") + k_element_spacing;
             break;
         case model::chord::type::DIMINISHED:
-            rowWidth += modFm.horizontalAdvance(kDiminish) + kElementSpacing;
+            row_width += modFm.horizontalAdvance(kDiminish) + k_element_spacing;
             break;
         case model::chord::type::AUGMENTED:
-            rowWidth += modFm.horizontalAdvance("+") + kElementSpacing;
+            row_width += modFm.horizontalAdvance("+") + k_element_spacing;
             break;
         default: break;
     }
 
     if (!ch.extensions().empty())
-        rowWidth += modFm.horizontalAdvance(
-                        QString::fromStdString(ch.extensions())) + kElementSpacing;
+        row_width += modFm.horizontalAdvance(
+                        QString::fromStdString(ch.extensions())) + k_element_spacing;
 
     if (ch.bass_note())
     {
-        rowWidth += modFm.horizontalAdvance("/") + kElementSpacing;
+        row_width += modFm.horizontalAdvance("/") + k_element_spacing;
         if (ch.bass_note_step())
-            rowWidth += modFm.horizontalAdvance(kFlat) + kElementSpacing;
-        rowWidth += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
+            row_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
+        row_width += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
 
-    qreal numberHeight = nmFm.height();
-    qreal totalHeight  = numberHeight / kNumberZoneRatio;
+    qreal number_height = nmFm.height();
+    qreal total_height  = number_height / k_number_zone_ratio;
 
-    return QSizeF(rowWidth, totalHeight);
+    return QSizeF(row_width, total_height);
 }
 
 // ---------------------------------------------------------------------------
 // Public: paint
 // ---------------------------------------------------------------------------
-void ChordRenderer::paint(QPainter& painter,
+void chord_renderer::paint(QPainter& painter,
                           const QRectF& rect,
                           const model::chord& ch,
                           const Fonts& fonts,
@@ -75,35 +75,35 @@ void ChordRenderer::paint(QPainter& painter,
     if (ch.mode() == model::chord::type::UNDEFINED)
         return;
 
-    qreal artHeight = rect.height() * kArticulationZoneRatio;
-    QRectF artRect(rect.left(), rect.top(), rect.width(), artHeight);
-    QRectF numRect(rect.left(), rect.top() + artHeight,
-                   rect.width(), rect.height() - artHeight);
+    qreal art_height = rect.height() * k_articulation_zone_ratio;
+    QRectF artRect(rect.left(), rect.top(), rect.width(), art_height);
+    QRectF numRect(rect.left(), rect.top() + art_height,
+                   rect.width(), rect.height() - art_height);
 
     // Paint number row; get tight rect around the number glyph for diamond
-    QRectF numberGlyphRect = paintNumberRow(painter, numRect, ch, fonts);
+    QRectF numberGlyphRect = paint_number_row(painter, numRect, ch, fonts);
 
     // Articulations — order: staccato (top), pushed, tied, diamond (around number)
     if (ch.is_staccato())
-        paintStaccato(painter, artRect);
+        paint_staccato(painter, artRect);
 
     if (ch.is_pushed())
-        paintPushed(painter, artRect, fonts);
+        paint_pushed(painter, artRect, fonts);
 
     if (ch.is_tied())
-        paintTiedArc(painter, artRect);
+        paint_tied_arc(painter, artRect);
 
     if (ch.is_diamond())
-        paintDiamond(painter, numberGlyphRect);
+        paint_diamond(painter, numberGlyphRect);
 }
 
 // ---------------------------------------------------------------------------
 // Public: paintRhythm
 // ---------------------------------------------------------------------------
-void ChordRenderer::paintRhythm(QPainter& painter,
-                                 const QRectF& rect,
-                                 const model::chord& ch,
-                                 const Fonts& fonts)
+void chord_renderer::paint_rhythm(QPainter& painter,
+                                  const QRectF& rect,
+                                  const model::chord& ch,
+                                  const Fonts& fonts)
 {
     if (!ch.duration())
         return;
@@ -112,12 +112,12 @@ void ChordRenderer::paintRhythm(QPainter& painter,
     painter.setFont(fonts.music);
     QFontMetricsF fm(fonts.music);
 
-    QString glyph = noteGlyph(*ch.duration());
-    bool dotted   = isDotted(*ch.duration());
+    QString glyph = note_glyph(*ch.duration());
+    bool dotted   = is_dotted(*ch.duration());
 
-    qreal totalWidth = fm.horizontalAdvance(glyph);
+    qreal total_width = fm.horizontalAdvance(glyph);
     if (dotted)
-        totalWidth += kElementSpacing + fm.ascent() * 0.3;
+        total_width += k_element_spacing + fm.ascent() * 0.15;
 
     qreal x        = rect.left();
     qreal baseline = rect.top() + (rect.height() + fm.ascent() - fm.descent()) / 2.0;
@@ -127,21 +127,22 @@ void ChordRenderer::paintRhythm(QPainter& painter,
 
     if (dotted)
     {
-        qreal dotR = fm.ascent() * 0.15;
-        qreal dotX = x + kElementSpacing + dotR;
-        qreal dotY = baseline - fm.ascent() * 0.35;
+        // Smaller, proportional dot for augmentation dot
+        qreal dot_r = fm.ascent() * 0.12;
+        qreal dot_x = x + k_element_spacing + dot_r;
+        qreal dot_y = baseline - fm.ascent() * 0.4;
         painter.setBrush(painter.pen().color());
         painter.setPen(Qt::NoPen);
-        painter.drawEllipse(QPointF(dotX, dotY), dotR, dotR);
+        painter.drawEllipse(QPointF(dot_x, dot_y), dot_r, dot_r);
     }
 
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintNumberRow
+// Private: paint_number_row
 // ---------------------------------------------------------------------------
-QRectF ChordRenderer::paintNumberRow(QPainter& painter,
+QRectF chord_renderer::paint_number_row(QPainter& painter,
                                       const QRectF& rowRect,
                                       const model::chord& ch,
                                       const Fonts& fonts)
@@ -150,25 +151,25 @@ QRectF ChordRenderer::paintNumberRow(QPainter& painter,
     QFontMetricsF modFm(fonts.modifier);
 
     // Compute total row width for centering
-    qreal totalWidth = 0;
+    qreal total_width = 0;
     if (ch.step())
-        totalWidth += modFm.horizontalAdvance(kFlat) + kElementSpacing;
-    totalWidth += nmFm.horizontalAdvance(QString::number(ch.number()));
+        total_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
+    total_width += nmFm.horizontalAdvance(QString::number(ch.number()));
     if (ch.mode() == model::chord::type::MINOR)
-        totalWidth += modFm.horizontalAdvance("-") + kElementSpacing;
+        total_width += modFm.horizontalAdvance("-") + k_element_spacing;
     else if (ch.mode() == model::chord::type::DIMINISHED)
-        totalWidth += modFm.horizontalAdvance(kDiminish) + kElementSpacing;
+        total_width += modFm.horizontalAdvance(kDiminish) + k_element_spacing;
     else if (ch.mode() == model::chord::type::AUGMENTED)
-        totalWidth += modFm.horizontalAdvance("+") + kElementSpacing;
+        total_width += modFm.horizontalAdvance("+") + k_element_spacing;
     if (!ch.extensions().empty())
-        totalWidth += modFm.horizontalAdvance(
-                          QString::fromStdString(ch.extensions())) + kElementSpacing;
+        total_width += modFm.horizontalAdvance(
+                          QString::fromStdString(ch.extensions())) + k_element_spacing;
     if (ch.bass_note())
     {
-        totalWidth += modFm.horizontalAdvance("/") + kElementSpacing;
+        total_width += modFm.horizontalAdvance("/") + k_element_spacing;
         if (ch.bass_note_step())
-            totalWidth += modFm.horizontalAdvance(kFlat) + kElementSpacing;
-        totalWidth += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
+            total_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
+        total_width += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
 
     qreal baseline = rowRect.top()
@@ -178,27 +179,27 @@ QRectF ChordRenderer::paintNumberRow(QPainter& painter,
     painter.save();
 
     // Step — raised slightly, smaller font
-    x += paintStep(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.4);
+    x += paint_step(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.4);
 
     // Number — dominant
     painter.setFont(fonts.number);
-    QString numStr  = QString::number(ch.number());
-    qreal numLeft   = x;
-    painter.drawText(QPointF(x, baseline), numStr);
-    QRectF numberGlyphRect(numLeft,
+    QString num_str   = QString::number(ch.number());
+    qreal num_left    = x;
+    painter.drawText(QPointF(x, baseline), num_str);
+    QRectF numberGlyphRect(num_left,
                            baseline - nmFm.ascent(),
-                           nmFm.horizontalAdvance(numStr),
+                           nmFm.horizontalAdvance(num_str),
                            nmFm.ascent() + nmFm.descent());
-    x += nmFm.horizontalAdvance(numStr);
+    x += nmFm.horizontalAdvance(num_str);
 
     // Mode suffix
-    x += paintMode(painter, ch, fonts, x, baseline);
+    x += paint_mode(painter, ch, fonts, x, baseline);
 
     // Extensions — superscripted
-    x += paintExtensions(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.3);
+    x += paint_extensions(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.3);
 
     // Bass note
-    paintBassNote(painter, ch, fonts, x, baseline);
+    paint_bass_note(painter, ch, fonts, x, baseline);
 
     painter.restore();
 
@@ -206,9 +207,9 @@ QRectF ChordRenderer::paintNumberRow(QPainter& painter,
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintStep
+// Private: paint_step
 // ---------------------------------------------------------------------------
-qreal ChordRenderer::paintStep(QPainter& painter,
+qreal chord_renderer::paint_step(QPainter& painter,
                                 const model::chord& ch,
                                 const Fonts& fonts,
                                 qreal x, qreal baseline)
@@ -221,13 +222,13 @@ qreal ChordRenderer::paintStep(QPainter& painter,
     QString glyph = (ch.step() == model::chord::flat_sharp::FLAT)
                     ? QString(kFlat) : QString(kSharp);
     painter.drawText(QPointF(x, baseline), glyph);
-    return fm.horizontalAdvance(glyph) + kElementSpacing;
+    return fm.horizontalAdvance(glyph) + k_element_spacing;
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintMode
+// Private: paint_mode
 // ---------------------------------------------------------------------------
-qreal ChordRenderer::paintMode(QPainter& painter,
+qreal chord_renderer::paint_mode(QPainter& painter,
                                 const model::chord& ch,
                                 const Fonts& fonts,
                                 qreal x, qreal baseline)
@@ -248,15 +249,15 @@ qreal ChordRenderer::paintMode(QPainter& painter,
     // so -, °, + sit beside the upper portion of the chord number.
     // Caller passes the number baseline; compute number ascent from fonts.number.
     QFontMetricsF nmFm(fonts.number);
-    qreal raisedBaseline = baseline - nmFm.ascent() + fm.ascent();
-    painter.drawText(QPointF(x, raisedBaseline), suffix);
-    return fm.horizontalAdvance(suffix) + kElementSpacing;
+    qreal raised_baseline = baseline - nmFm.ascent() + fm.ascent();
+    painter.drawText(QPointF(x, raised_baseline), suffix);
+    return fm.horizontalAdvance(suffix) + k_element_spacing;
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintExtensions
+// Private: paint_extensions
 // ---------------------------------------------------------------------------
-qreal ChordRenderer::paintExtensions(QPainter& painter,
+qreal chord_renderer::paint_extensions(QPainter& painter,
                                       const model::chord& ch,
                                       const Fonts& fonts,
                                       qreal x, qreal baseline)
@@ -268,13 +269,13 @@ qreal ChordRenderer::paintExtensions(QPainter& painter,
     QFontMetricsF fm(fonts.modifier);
     QString ext = QString::fromStdString(ch.extensions());
     painter.drawText(QPointF(x, baseline), ext);
-    return fm.horizontalAdvance(ext) + kElementSpacing;
+    return fm.horizontalAdvance(ext) + k_element_spacing;
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintBassNote
+// Private: paint_bass_note
 // ---------------------------------------------------------------------------
-qreal ChordRenderer::paintBassNote(QPainter& painter,
+qreal chord_renderer::paint_bass_note(QPainter& painter,
                                     const model::chord& ch,
                                     const Fonts& fonts,
                                     qreal x, qreal baseline)
@@ -287,7 +288,7 @@ qreal ChordRenderer::paintBassNote(QPainter& painter,
     qreal consumed = 0;
 
     painter.drawText(QPointF(x, baseline), "/");
-    consumed += fm.horizontalAdvance("/") + kElementSpacing;
+    consumed += fm.horizontalAdvance("/") + k_element_spacing;
     x += consumed;
 
     if (ch.bass_note_step())
@@ -295,7 +296,7 @@ qreal ChordRenderer::paintBassNote(QPainter& painter,
         QString g = (ch.bass_note_step() == model::chord::flat_sharp::FLAT)
                     ? QString(kFlat) : QString(kSharp);
         painter.drawText(QPointF(x, baseline), g);
-        qreal w = fm.horizontalAdvance(g) + kElementSpacing;
+        qreal w = fm.horizontalAdvance(g) + k_element_spacing;
         consumed += w;
         x += w;
     }
@@ -308,65 +309,81 @@ qreal ChordRenderer::paintBassNote(QPainter& painter,
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintStaccato — filled dot above everything
+// Private: paint_staccato — filled dot above everything (larger, more visible)
 // ---------------------------------------------------------------------------
-void ChordRenderer::paintStaccato(QPainter& painter, const QRectF& artRect)
+void chord_renderer::paint_staccato(QPainter& painter, const QRectF& artRect)
 {
     painter.save();
-    qreal dotR = artRect.height() * 0.08;
-    qreal cx   = artRect.center().x();
-    qreal cy   = artRect.top() + artRect.height() * kStaccatoTopRatio + dotR;
+    // Larger staccato dot for better visibility
+    qreal dot_r = artRect.height() * 0.12;
+    qreal cx    = artRect.center().x();
+    qreal cy    = artRect.top() + artRect.height() * k_staccato_top_ratio + dot_r;
     painter.setBrush(painter.pen().color());
     painter.setPen(Qt::NoPen);
-    painter.drawEllipse(QPointF(cx, cy), dotR, dotR);
+    painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintPushed — '>' below staccato dot
+// Private: paint_pushed — '>' below staccato dot
 // ---------------------------------------------------------------------------
-void ChordRenderer::paintPushed(QPainter& painter,
+void chord_renderer::paint_pushed(QPainter& painter,
                                  const QRectF& artRect,
                                  const Fonts& fonts)
 {
     painter.save();
     painter.setFont(fonts.articulation);
     QFontMetricsF fm(fonts.articulation);
-    qreal y = artRect.top() + artRect.height() * kPushedTopRatio + fm.ascent();
+    qreal y = artRect.top() + artRect.height() * k_pushed_top_ratio + fm.ascent();
     qreal x = artRect.center().x() - fm.horizontalAdvance(">") / 2.0;
     painter.drawText(QPointF(x, y), ">");
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintTiedArc — curved arc below pushed
+// Private: paint_tied_arc — smooth cubic-bezier arc below pushed
+// Uses cubic bezier for a smoother, more even curve like MuseScore
 // ---------------------------------------------------------------------------
-void ChordRenderer::paintTiedArc(QPainter& painter, const QRectF& artRect)
+void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect)
 {
     painter.save();
-    qreal arcTop = artRect.top() + artRect.height() * kTiedTopRatio;
-    qreal arcH   = artRect.height() * 0.25;
-    qreal margin = artRect.width() * 0.1;
 
+    // Arc geometry
+    qreal arc_top  = artRect.top() + artRect.height() * k_tied_top_ratio;
+    qreal arc_span = artRect.height() * 0.22;
+    qreal margin   = artRect.width() * 0.12;
+
+    qreal start_x = artRect.left() + margin;
+    qreal end_x   = artRect.right() - margin;
+    qreal mid_x   = artRect.center().x();
+    qreal base_y  = arc_top + arc_span;
+
+    // Cubic bezier for smoother, more natural arc
+    // Control points lift the curve up in the middle for an even shape
     QPainterPath path;
-    path.moveTo(artRect.left() + margin, arcTop + arcH);
-    path.quadTo(artRect.center().x(), arcTop,
-                artRect.right() - margin, arcTop + arcH);
+    path.moveTo(start_x, base_y);
+    path.cubicTo(start_x + (mid_x - start_x) * 0.5, arc_top + arc_span * 0.2,
+                 mid_x - (mid_x - start_x) * 0.5, arc_top,
+                 mid_x, arc_top);
+    path.cubicTo(mid_x + (end_x - mid_x) * 0.5, arc_top,
+                 mid_x + (end_x - mid_x) * 0.5, arc_top + arc_span * 0.2,
+                 end_x, base_y);
 
-    painter.setPen(QPen(painter.pen().color(), 1.5));
+    // Thin, smooth line
+    painter.setPen(QPen(painter.pen().color(), 1.0));
     painter.setBrush(Qt::NoBrush);
     painter.drawPath(path);
     painter.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Private: paintDiamond — drawn around the number glyph rect
+// Private: paint_diamond — drawn around the number glyph rect
 // ---------------------------------------------------------------------------
-void ChordRenderer::paintDiamond(QPainter& painter, const QRectF& numberRect)
+void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect)
 {
     painter.save();
-    QRectF r = numberRect.adjusted(-kDiamondPadding, -kDiamondPadding,
-                                    kDiamondPadding,  kDiamondPadding);
+    QRectF r = numberRect.adjusted(-k_diamond_padding, -k_diamond_padding,
+                                    k_diamond_padding,  k_diamond_padding);
     QPointF center = r.center();
     QPolygonF diamond;
     diamond << QPointF(center.x(), r.top())
@@ -383,7 +400,7 @@ void ChordRenderer::paintDiamond(QPainter& painter, const QRectF& numberRect)
 // ---------------------------------------------------------------------------
 // Private: rhythm helpers
 // ---------------------------------------------------------------------------
-QString ChordRenderer::noteGlyph(model::chord::time duration)
+QString chord_renderer::note_glyph(model::chord::time duration)
 {
     switch (duration)
     {
@@ -395,19 +412,17 @@ QString ChordRenderer::noteGlyph(model::chord::time duration)
             return QString(kEighth);
         case model::chord::time::SIXTEENTH:
             return QString(kBeamed);
-        // Whole and half have no safe Unicode glyph.
-        // Replace with Bravura U+E1D2 / U+E1D3 if font is available.
-        case model::chord::time::WHOLE:
-            return QString("o");
         case model::chord::time::HALF:
         case model::chord::time::DOTTED_HALF:
-            return QString("d");
+            return "\uE0A3";  // Bravura PUA: noteheadHalf
+        case model::chord::time::WHOLE:
+            return "\uE0A2";  // Bravura PUA: noteheadWhole
         default:
             return QString("?");
     }
 }
 
-bool ChordRenderer::isDotted(model::chord::time duration)
+bool chord_renderer::is_dotted(model::chord::time duration)
 {
     return duration == model::chord::time::DOTTED_EIGHTH  ||
            duration == model::chord::time::DOTTED_QUARTER ||
