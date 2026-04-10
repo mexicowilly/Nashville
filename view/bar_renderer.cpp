@@ -1,5 +1,6 @@
 #include "bar_renderer.hpp"
 #include <QFontMetricsF>
+#include <cmath>
 
 namespace nashville::view
 {
@@ -87,6 +88,22 @@ void bar_renderer::paint(QPainter& painter,
                           rect.width() - k_time_sig_slot_w,
                           chord_slot_h);
 
+    // Compute line_y to sit just below the rendered number glyph.
+    // paint_number_row centres the number vertically in the number zone, so
+    // the actual glyph bottom = num_zone_top + (num_zone_h + ascent + descent) / 2.
+    // Using this exact value keeps the rule flush below the number in both
+    // plain bars and duration-mode bars without overshooting.
+    qreal line_y = 0.0;
+    {
+        QFontMetricsF nmFm(fonts.number);
+        const qreal num_zone_top = chord_slot_rect.top()
+                                   + chord_slot_h * chord_renderer::k_articulation_zone_ratio;
+        const qreal num_zone_h   = chord_slot_h * chord_renderer::k_number_zone_ratio;
+        const qreal glyph_bottom = num_zone_top
+                                   + (num_zone_h + nmFm.ascent() + nmFm.descent()) / 2.0;
+        line_y = std::floor(glyph_bottom) + 1.0;
+    }
+
     // Compute per-chord widths
     std::vector<qreal> chord_widths;
     qreal total_chord_width = 0.0;
@@ -113,8 +130,7 @@ void bar_renderer::paint(QPainter& painter,
 
         if (duration_mode && line_duration_mode)
         {
-            qreal rule_y = rect.top() + top_pad + chord_slot_h + k_rule_thickness / 2.0;
-            QRectF rhythm_rect(x, rule_y + k_rule_thickness, slot_width, rhythm_row_h);
+            QRectF rhythm_rect(x, line_y + 1.0, slot_width, rhythm_row_h);
             chord_renderer::paint_rhythm(painter, rhythm_rect, bar.chords()[i], fonts);
         }
 
@@ -125,23 +141,21 @@ void bar_renderer::paint(QPainter& painter,
     if (bar.chords().size() > 1)
     {
         constexpr qreal k_underline_overhang = 4.0;
-        qreal underline_y = chord_slot_rect.top() + chord_slot_h + 1.5;
-        painter.save();
-        painter.setPen(QPen(Qt::black, 0.75));
-        painter.drawLine(QPointF(chords_left,                         underline_y),
-                         QPointF(last_chord_right + k_underline_overhang, underline_y));
-        painter.restore();
+        painter.fillRect(QRectF(chords_left,
+                                line_y,
+                                last_chord_right + k_underline_overhang - chords_left,
+                                1.0),
+                         Qt::black);
     }
 
-    // Bar-wide horizontal rule for duration-mode bars — spans only the chord columns
+    // Bar-wide horizontal rule for duration-mode bars — same weight as the
+    // multi-chord underline so they appear visually identical.
     if (duration_mode && line_duration_mode)
     {
-        qreal rule_y = rect.top() + top_pad + chord_slot_h + k_rule_thickness / 2.0;
-        painter.save();
-        painter.setPen(QPen(painter.pen().color(), k_rule_thickness));
-        painter.drawLine(QPointF(chords_left, rule_y),
-                         QPointF(chords_left + chord_slot_rect.width(), rule_y));
-        painter.restore();
+        // Identical to the multi-chord underline: crisp 1px black fillRect.
+        painter.fillRect(QRectF(chords_left, line_y,
+                                chord_slot_rect.width(), 1.0),
+                         Qt::black);
     }
 }
 

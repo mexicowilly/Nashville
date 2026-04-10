@@ -50,9 +50,11 @@ public:
 
 private:
     // --- Articulation helpers ---
-    static void paint_staccato(QPainter& painter, const QRectF& artRect);
+    static void paint_staccato(QPainter& painter, const QRectF& artRect,
+                               qreal number_center_x);
     static void paint_pushed(QPainter& painter, const QRectF& artRect, const Fonts& fonts);
-    static void paint_tied_arc(QPainter& painter, const QRectF& artRect);
+    static void paint_tied_arc(QPainter& painter, const QRectF& artRect,
+                               qreal diamond_left = -1.0, qreal diamond_right = -1.0);
     static void paint_diamond(QPainter& painter, const QRectF& numberRect);
 
     // --- Number row helpers ---
@@ -96,8 +98,11 @@ private:
     static constexpr qreal k_pushed_top_ratio    = 0.35;
     static constexpr qreal k_tied_top_ratio      = 0.62;
 
-    // Diamond padding around number rect - ensures tie arc doesn't encroach
-    static constexpr qreal k_diamond_padding = 6.0;
+    // Diamond padding around the number glyph rect.
+    // Horizontal padding is larger than vertical so the diamond looks
+    // proportionally wide rather than pinched.
+    static constexpr qreal k_diamond_padding_h = 10.0;  // left/right
+    static constexpr qreal k_diamond_padding_v =  5.0;  // top/bottom
 
     // Extra horizontal padding between chord elements
     static constexpr qreal k_element_spacing = 2.0;
