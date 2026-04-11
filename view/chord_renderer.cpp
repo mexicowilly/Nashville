@@ -12,9 +12,6 @@ namespace nashville::view
 static constexpr const char* kFlat     = "\u266D"; // ♭
 static constexpr const char* kSharp    = "\u266F"; // ♯
 static constexpr const char* kDiminish = "\u00B0"; // °
-static constexpr const char* kQuarter  = "\u2669"; // ♩
-static constexpr const char* kEighth   = "\u266A"; // ♪
-static constexpr const char* kBeamed   = "\u266C"; // ♬ (sixteenth fallback)
 
 // ---------------------------------------------------------------------------
 // Public: size_hint
@@ -81,7 +78,8 @@ void chord_renderer::paint(QPainter& painter,
                    rect.width(), rect.height() - art_height);
 
     // Paint number row; get tight rect around the number glyph for diamond
-    QRectF numberGlyphRect = paint_number_row(painter, numRect, ch, fonts);
+    qreal row_right = 0.0;
+    QRectF numberGlyphRect = paint_number_row(painter, numRect, ch, fonts, row_right);
 
     // Articulations — order: staccato (top), pushed, tied, diamond (around number)
     if (ch.is_staccato())
@@ -93,8 +91,9 @@ void chord_renderer::paint(QPainter& painter,
     if (ch.is_tied())
     {
         // Pass diamond horizontal bounds so arc endpoints clear the diamond.
+        // For non-diamond ties, start after the full row (number + extensions etc).
         qreal diamond_left  = -1.0;
-        qreal diamond_right = -1.0;
+        qreal diamond_right = row_right;  // start after all rendered elements
         if (ch.is_diamond())
         {
             QRectF dr = numberGlyphRect.adjusted(
@@ -124,90 +123,105 @@ void chord_renderer::paint_rhythm(QPainter& painter,
     const bool dotted  = is_dotted(*ch.duration());
     const bool is_half = (*ch.duration() == model::chord::time::HALF ||
                           *ch.duration() == model::chord::time::DOTTED_HALF);
+    const bool is_whole = (*ch.duration() == model::chord::time::WHOLE);
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     QColor ink = painter.pen().color();
+    constexpr qreal k_stem_gap = 3.0;
 
-    // Convert rect.height() to points so the glyph fills the row.
-    // Bravura's em is very large, so we use a fraction of the pixel height
-    // converted to points (assuming 96 dpi: 1pt = 96/72 px).
-    // Target: notehead occupies ~65% of row height.
-    const qreal px_per_pt = 96.0 / 72.0;
-    const qreal target_px = rect.height() * 0.65;
-    // For Bravura, the notehead is approximately 0.3 × the em height in pixels.
-    // So pt = target_px / (0.3 * px_per_pt).  We refine with one measurement.
-    qreal pt_size = target_px / (0.3 * px_per_pt);
+    // All glyphs drawn from Bravura. Use the notehead glyph to size the font,
+    // then draw the stem and flags as primitives/separate glyphs.
+    // noteheadBlack = U+E0A4, noteheadHalf = U+E0A3, noteheadWhole = U+E0A2
+    QString head_glyph = is_whole ? "\uE0A2" : (is_half ? "\uE0A3" : "\uE0A4");
 
-    QFont scaledFont = fonts.music;
-    scaledFont.setPointSizeF(pt_size);
+    QFont glyphFont = fonts.music;
 
-    // One refinement: measure the actual quarter-note advance width (which
-    // scales linearly with em) and adjust so the notehead fits the row.
+    // Scale so the notehead occupies ~65% of the row height.
     {
-        QFontMetricsF fm0(scaledFont);
-        // ascent() is proportional to em and reliable across fonts.
+        const qreal px_per_pt = 96.0 / 72.0;
+        const qreal target_px = rect.height() * 0.65;
+        qreal pt_size = target_px / (0.3 * px_per_pt);
+        glyphFont.setPointSizeF(pt_size);
+        QFontMetricsF fm0(glyphFont);
         qreal ascent_px = fm0.ascent();
         if (ascent_px > 0.0)
         {
-            // Empirically, Bravura notehead height ≈ 0.28 × ascent.
             qreal head_px = ascent_px * 0.28;
             if (head_px > 0.0)
-                scaledFont.setPointSizeF(pt_size * (target_px / head_px));
+                glyphFont.setPointSizeF(pt_size * (target_px / head_px));
         }
     }
 
-    painter.setFont(scaledFont);
-    QFontMetricsF fm(scaledFont);
+    painter.setFont(glyphFont);
+    QFontMetricsF fm(glyphFont);
 
-    qreal notehead_h = fm.ascent() * 0.28;   // estimated notehead height
-
-    // Gap between stem tip and the rule above rect.top().
-    constexpr qreal k_stem_gap = 3.0;
+    qreal notehead_h = fm.ascent() * 0.28;
 
     // Clip k_stem_gap below rect.top() so stems stop short of the rule.
     painter.setClipRect(rect.adjusted(0, k_stem_gap, 0, 0));
 
     // Baseline: place so the notehead bottom is near rect.bottom().
-    // For Bravura glyphs the notehead sits at approximately 0.3 × ascent
-    // above the baseline, so nudge baseline up by that amount.
     qreal baseline = rect.bottom() - notehead_h * 0.25;
 
-    QString glyph = note_glyph(*ch.duration());
+    // Compensate for any negative left bearing in the Bravura glyph.
+    QRectF head_tbr = fm.tightBoundingRect(head_glyph);
+    qreal draw_x = rect.left() - std::min(0.0, head_tbr.left());
+
     painter.setPen(QPen(ink, 1.0));
-    painter.drawText(QPointF(rect.left(), baseline), glyph);
+    painter.drawText(QPointF(draw_x, baseline), head_glyph);
 
-    // Use the tight bounding rect to find the actual rendered glyph extents.
-    // tbr.top() and tbr.bottom() are relative to the baseline (top is negative = above).
-    QRectF tbr = fm.tightBoundingRect(glyph);
-    qreal glyph_top_y    = baseline + tbr.top();     // topmost rendered pixel
-    qreal glyph_bottom_y = baseline + tbr.bottom();  // bottommost rendered pixel
+    qreal head_top_y    = baseline + head_tbr.top();
+    qreal head_bottom_y = baseline + head_tbr.bottom();
+    qreal head_right_x  = draw_x + head_tbr.right();
 
-    // Half note: stem from right edge of notehead upward.
-    // U+E0A3 is a bare notehead, so the bounding box IS the notehead.
-    // Start the stem at the top of the bounding box so it connects flush.
-    if (is_half)
+    // Stem: all notes except whole get a manual upward stem from the right edge.
+    qreal stem_x  = head_right_x - 1.0;
+    qreal stem_y1 = rect.top() + k_stem_gap;   // top of stem (near rule)
+    if (!is_whole)
     {
-        qreal stem_x  = rect.left() + tbr.right() - 1.0;
-        qreal stem_y0 = glyph_top_y + 1.0;        // sit on top edge of notehead
-        qreal stem_y1 = rect.top() + k_stem_gap;
+        qreal stem_y0 = head_top_y + 1.0;
         painter.setPen(QPen(ink, 1.0));
         painter.drawLine(QPointF(stem_x, stem_y0), QPointF(stem_x, stem_y1));
     }
 
-    // Augmentation dot: right of glyph, centred on the notehead.
-    // For U+E0A3 (bare notehead) the bbox IS the notehead: centre = mid of bbox.
-    // For ♩/♪ glyphs the bbox spans notehead + stem; notehead sits at the bottom,
-    // so its centre = glyph_bottom_y - notehead_h / 2.
+    // Flag glyph drawn at the top of the stem, scaled to fit within the stem length.
+    // flag8thUp = U+E240, flag16thUp = U+E242.
+    QString flag_glyph;
+    switch (*ch.duration())
+    {
+        case model::chord::time::EIGHTH:
+        case model::chord::time::DOTTED_EIGHTH:  flag_glyph = "\uE240"; break;
+        case model::chord::time::SIXTEENTH:      flag_glyph = "\uE242"; break;
+        default: break;
+    }
+    if (!flag_glyph.isEmpty())
+    {
+        // Scale the flag so its height fits the stem length.
+        qreal available_h = head_top_y - stem_y1;
+        QFont flagFont = glyphFont;
+        {
+            QFontMetricsF fm0(flagFont);
+            qreal flag_h = fm0.tightBoundingRect(flag_glyph).height();
+            if (flag_h > 0.0 && available_h > 0.0)
+                flagFont.setPointSizeF(flagFont.pointSizeF() * (available_h / flag_h));
+        }
+        painter.setFont(flagFont);
+        painter.setPen(QPen(ink, 1.0));
+        QFontMetricsF flag_fm(flagFont);
+        QRectF flag_tbr = flag_fm.tightBoundingRect(flag_glyph);
+        // Draw so the top of the flag sits at stem_y1.
+        painter.drawText(QPointF(stem_x, stem_y1 - flag_tbr.top()), flag_glyph);
+        painter.setFont(glyphFont);  // restore for dot advance-width calc
+    }
+
+    // Augmentation dot: right of notehead, centred vertically on the notehead.
     if (dotted)
     {
-        qreal dot_r = notehead_h * 0.10;
-        qreal dot_x = rect.left() + fm.horizontalAdvance(glyph)
-                      + k_element_spacing + dot_r;
-        qreal dot_y = is_half
-                      ? (glyph_top_y + glyph_bottom_y) / 2.0          // bbox IS the notehead
-                      : glyph_bottom_y - notehead_h / 2.0 + 2.0;       // notehead centre, nudged down
+        qreal dot_r = rect.height() * 0.06;
+        qreal dot_x = draw_x + fm.horizontalAdvance(head_glyph) + k_element_spacing + dot_r;
+        qreal dot_y = (head_top_y + head_bottom_y) / 2.0;  // centre of notehead for all types
         painter.setPen(Qt::NoPen);
         painter.setBrush(ink);
         painter.drawEllipse(QPointF(dot_x, dot_y), dot_r, dot_r);
@@ -222,7 +236,8 @@ void chord_renderer::paint_rhythm(QPainter& painter,
 QRectF chord_renderer::paint_number_row(QPainter& painter,
                                       const QRectF& rowRect,
                                       const model::chord& ch,
-                                      const Fonts& fonts)
+                                      const Fonts& fonts,
+                                      qreal& row_right)
 {
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
@@ -276,10 +291,11 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
     x += paint_extensions(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.3);
 
     // Bass note
-    paint_bass_note(painter, ch, fonts, x, baseline);
+    x += paint_bass_note(painter, ch, fonts, x, baseline);
 
     painter.restore();
 
+    row_right = x;
     return numberGlyphRect;
 }
 
@@ -438,8 +454,7 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
     // The tie extends to the right edge of the slot (no right margin) so it
     // visually connects to the next bar.  When a diamond is present the left
     // endpoint starts just to its right; otherwise it starts near the left edge.
-    qreal start_x = (diamond_right >= 0.0) ? diamond_right + margin
-                                            : artRect.left() + margin;
+    qreal start_x = diamond_right + margin;
     qreal end_x   = artRect.right() + artRect.width() * 0.18;  // overhang into inter-bar gap
 
     // Symmetric cubic bezier: endpoints at base_y, control points pushed
@@ -481,22 +496,6 @@ void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect)
 // ---------------------------------------------------------------------------
 // Private: rhythm helpers
 // ---------------------------------------------------------------------------
-QString chord_renderer::note_glyph(model::chord::time duration)
-{
-    switch (duration)
-    {
-        case model::chord::time::QUARTER:
-        case model::chord::time::DOTTED_QUARTER:  return "\u2669";  // ♩
-        case model::chord::time::EIGHTH:
-        case model::chord::time::DOTTED_EIGHTH:   return "\u266A";  // ♪
-        case model::chord::time::SIXTEENTH:       return "\u266C";  // ♬
-        case model::chord::time::HALF:
-        case model::chord::time::DOTTED_HALF:     return "\uE0A3";  // Bravura: noteheadHalf (stem drawn manually)
-        case model::chord::time::WHOLE:           return "\uE0A2";  // Bravura: noteheadWhole
-        default:                                  return "?";
-    }
-}
-
 bool chord_renderer::is_dotted(model::chord::time duration)
 {
     return duration == model::chord::time::DOTTED_EIGHTH  ||

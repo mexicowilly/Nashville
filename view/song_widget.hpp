@@ -9,19 +9,7 @@
 namespace nashville::view
 {
 
-// Displays the song name.
-class song_header_widget : public QWidget
-{
-    Q_OBJECT
-public:
-    explicit song_header_widget(const model::song& song, QWidget* parent = nullptr);
-protected:
-    void paintEvent(QPaintEvent*) override;
-private:
-    const model::song& song_;
-};
-
-// Top-level widget: header + scrollable body.
+// Top-level widget: scrollable page with title + body.
 class song_widget : public QWidget
 {
     Q_OBJECT
@@ -36,9 +24,8 @@ public:
 
 private:
     const model::song& song_;
-    song_header_widget* header_ = nullptr;
-    song_body_widget*   body_   = nullptr;
-    QScrollArea*        scroll_ = nullptr;
+    song_body_widget*  body_   = nullptr;
+    QScrollArea*       scroll_ = nullptr;
 };
 
 } // namespace nashville::view

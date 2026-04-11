@@ -1,6 +1,7 @@
 #include "margin_renderer.hpp"
 #include <QFontMetricsF>
 #include <QFont>
+#include <QFontDatabase>
 #include <cmath>
 
 namespace nashville::view
@@ -19,6 +20,13 @@ void margin_renderer::paint(QPainter& painter,
     QFont key_font("Georgia", 16, QFont::Bold);
     QFontMetricsF base_fm(base_font);
     QFontMetricsF key_fm(key_font);
+
+    // Load Bravura for the tempo note glyph so it matches the rhythm row.
+    int bravura_id = QFontDatabase::addApplicationFont(":/fonts/Bravura.otf");
+    QString music_family = (bravura_id != -1)
+                           ? QFontDatabase::applicationFontFamilies(bravura_id).first()
+                           : base_font.family();
+    QFont music_font(music_family, 13);
 
     qreal cx = margin_rect.center().x();
     qreal y  = margin_rect.top() + k_top_padding;
@@ -63,7 +71,7 @@ void margin_renderer::paint(QPainter& painter,
     qreal kind_x  = cx - base_fm.horizontalAdvance(kind_str)  / 2.0;
 
     qreal row_h    = base_fm.ascent() + base_fm.descent();  // full glyph height
-    qreal sep      = 3.0;                                  // gap below glyph and above denominator
+    qreal sep      = 1.0;                                  // gap below glyph and above denominator
     qreal sep_left = cx - ts_num_w / 2.0;
 
     painter.drawText(QPointF(count_x, y + base_fm.ascent()), count_str);
@@ -77,14 +85,38 @@ void margin_renderer::paint(QPainter& painter,
     y += row_h + sep + 1.0 + sep + row_h + k_element_spacing;
 
     // ----------------------------------------------------------------
-    // 3. Tempo — note glyph + " = " + BPM, centered
+    // 3. Tempo — note glyph (Bravura) + " = " + BPM (Georgia), centered
     // ----------------------------------------------------------------
     auto [bpm, beat_unit] = song.tempo();
-    QString tempo_str = tempo_glyph(beat_unit) + " = " + QString::number(bpm);
+    QString glyph_str = tempo_glyph(beat_unit);
+    QString text_str  = " = " + QString::number(bpm);
+
+    // Scale Bravura so its glyph cap-height matches Georgia's.
+    QFont scaled_music = music_font;
+    {
+        QFontMetricsF mfm(music_font);
+        QRectF gtbr = mfm.tightBoundingRect(glyph_str);
+        qreal target_h = base_fm.ascent();  // match Georgia cap height
+        if (gtbr.height() > 0.0)
+            scaled_music.setPointSizeF(music_font.pointSizeF() * (target_h / gtbr.height()));
+    }
+    QFontMetricsF scaled_mfm(scaled_music);
+
+    qreal glyph_w = scaled_mfm.horizontalAdvance(glyph_str);
+    qreal text_w  = base_fm.horizontalAdvance(text_str);
+    qreal total_w = glyph_w + text_w;
+    qreal start_x = cx - total_w / 2.0;
+    qreal baseline_y = y + base_fm.ascent();
+
+    // Compensate for any negative left bearing in the Bravura glyph.
+    QRectF gtbr = scaled_mfm.tightBoundingRect(glyph_str);
+    qreal glyph_draw_x = start_x - std::min(0.0, gtbr.left());
+
+    painter.setFont(scaled_music);
+    painter.drawText(QPointF(glyph_draw_x, baseline_y), glyph_str);
 
     painter.setFont(base_font);
-    qreal tempo_x = cx - base_fm.horizontalAdvance(tempo_str) / 2.0;
-    painter.drawText(QPointF(tempo_x, y + base_fm.ascent()), tempo_str);
+    painter.drawText(QPointF(start_x + glyph_w, baseline_y), text_str);
 
     painter.restore();
 }
@@ -131,9 +163,9 @@ QString margin_renderer::tempo_glyph(model::chord::time beat_unit)
             return "\u266A"; // ♪
         case model::chord::time::HALF:
         case model::chord::time::DOTTED_HALF:
-            return "\u2609"; // ☉ (half note)
+            return "\uE0A3"; // Bravura: noteheadHalf (stem drawn separately — acceptable here)
         case model::chord::time::WHOLE:
-            return "\u25CB"; // ○ (whole note)
+            return "\uE0A2"; // Bravura: noteheadWhole
         default:
             return "\u2669";
     }

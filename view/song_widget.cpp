@@ -9,36 +9,6 @@ namespace nashville::view
 {
 
 // ---------------------------------------------------------------------------
-// song_header_widget
-// ---------------------------------------------------------------------------
-song_header_widget::song_header_widget(const model::song& song, QWidget* parent)
-    : QWidget(parent), song_(song)
-{
-    QFont f("Georgia", 22, QFont::Bold);
-    QFontMetricsF fm(f);
-    setFixedHeight(static_cast<int>(fm.height() + 24.0));
-}
-
-void song_header_widget::paintEvent(QPaintEvent*)
-{
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-
-    QFont title_font("Georgia", 22, QFont::Bold);
-    painter.setFont(title_font);
-    QFontMetricsF fm(title_font);
-
-    QString title = QString::fromStdString(song_.name());
-    qreal x = (width()  - fm.horizontalAdvance(title)) / 2.0;
-    qreal y = (height() + fm.ascent() - fm.descent())  / 2.0;
-    painter.drawText(QPointF(x, y), title);
-
-    // Subtle bottom rule
-    painter.setPen(QPen(QColor(200, 200, 200), 1));
-    painter.drawLine(0, height() - 1, width(), height() - 1);
-}
-
-// ---------------------------------------------------------------------------
 // song_widget
 // ---------------------------------------------------------------------------
 song_widget::song_widget(const model::song& song, QWidget* parent)
@@ -47,9 +17,6 @@ song_widget::song_widget(const model::song& song, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-
-    header_ = new song_header_widget(song_, this);
-    layout->addWidget(header_);
 
     scroll_ = new QScrollArea(this);
     scroll_->setWidgetResizable(true);
@@ -65,7 +32,6 @@ song_widget::song_widget(const model::song& song, QWidget* parent)
 
 void song_widget::refresh()
 {
-    header_->update();
     body_->rebuild();
 }
 
@@ -79,20 +45,7 @@ void song_widget::print(QPrinter* printer)
     painter.setRenderHint(QPainter::Antialiasing);
 
     QRectF page_rect = printer->pageRect(QPrinter::DevicePixel);
-
-    // Header
-    QFont title_font("Georgia", 22, QFont::Bold);
-    painter.setFont(title_font);
-    QFontMetricsF fm(title_font);
-    QString title   = QString::fromStdString(song_.name());
-    qreal header_h   = fm.height() + 24.0;
-    qreal title_x    = (page_rect.width() - fm.horizontalAdvance(title)) / 2.0;
-    painter.drawText(QPointF(page_rect.left() + title_x,
-                             page_rect.top() + fm.ascent() + 8.0), title);
-
-    // Body
-    QRectF body_rect = page_rect.adjusted(0, header_h, 0, 0);
-    body_->paint_to_rect(painter, body_rect);
+    body_->paint_to_rect(painter, page_rect);
 }
 
 } // namespace nashville::view

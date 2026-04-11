@@ -21,6 +21,7 @@ struct line_layout
 {
     std::vector<bar_layout> bars;
     QRectF rect;                            // full line rect including all bars
+    QRectF section_col_rect;                // column to the left of bars for section label
     std::optional<QString> section_label;   // from first bar that has section_
     bool is_duration_mode = false;           // true if ANY bar on this line is duration-mode
 };

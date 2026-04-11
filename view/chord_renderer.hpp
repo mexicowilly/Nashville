@@ -60,10 +60,12 @@ private:
     // --- Number row helpers ---
 
     // Returns the rect actually occupied by the number glyph (used for diamond).
+    // Also sets row_right to the x coordinate just past the last rendered element.
     static QRectF paint_number_row(QPainter& painter,
                                  const QRectF& rowRect,
                                  const model::chord& ch,
-                                 const Fonts& fonts);
+                                 const Fonts& fonts,
+                                 qreal& row_right);
 
     // Renders ♭ or ♯ as a Unicode glyph, returns width consumed.
     static qreal paint_step(QPainter& painter,
@@ -90,7 +92,6 @@ private:
                                qreal x, qreal baseline);
 
     // --- Rhythm helpers ---
-    static QString note_glyph(model::chord::time duration);
     static bool is_dotted(model::chord::time duration);
 
     // Articulation vertical offsets within the articulation zone (top = 0).

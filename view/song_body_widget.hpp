@@ -37,15 +37,16 @@ private:
     void compute_layout(const QRectF& content_rect);
     qreal plain_bar_height() const;
     qreal duration_bar_height() const;
-    qreal section_label_height() const;
+    qreal title_height() const;
 
     // --- Painting ---
+    void paint_title(QPainter& painter, qreal widget_width) const;
     void paint_margin(QPainter& painter, const QRectF& margin_rect) const;
     void paint_divider(QPainter& painter) const;
     void paint_line(QPainter& painter, const line_layout& line) const;
     void paint_section_label(QPainter& painter,
                            const QString& label,
-                           const QRectF& line_rect) const;
+                           const QRectF& col_rect) const;
     void paint_continuation_dot(QPainter& painter,
                                const QRectF& preceding_bar_rect) const;
 
@@ -56,7 +57,8 @@ private:
     int  drag_start_margin_ = 0;
 
     // --- Constants ---
-    static constexpr qreal k_line_spacing       = 16.0;
+    static constexpr qreal k_title_padding       = 16.0;  // above and below title text
+    static constexpr qreal k_line_spacing        = 16.0;
     static constexpr qreal k_inter_bar_spacing   = 6.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;
