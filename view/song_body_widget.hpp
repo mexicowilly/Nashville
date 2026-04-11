@@ -35,7 +35,7 @@ protected:
 private:
     // --- Layout ---
     void compute_layout(const QRectF& content_rect);
-    qreal plain_bar_height() const;
+    qreal plain_bar_height(bool has_articulation = false) const;
     qreal duration_bar_height() const;
     qreal title_height() const;
 
@@ -58,7 +58,9 @@ private:
 
     // --- Constants ---
     static constexpr qreal k_title_padding       = 16.0;  // above and below title text
-    static constexpr qreal k_line_spacing        = 16.0;
+    static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
+    static constexpr qreal k_line_spacing_tight  = 8.0;   // spacing between duration-mode lines
+    static constexpr qreal k_line_spacing_plain  = 0.0;   // spacing between plain lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;

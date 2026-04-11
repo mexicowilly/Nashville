@@ -67,15 +67,22 @@ void chord_renderer::paint(QPainter& painter,
                           const QRectF& rect,
                           const model::chord& ch,
                           const Fonts& fonts,
-                          bool /*is_duration_mode*/)
+                          bool /*is_duration_mode*/,
+                          bool line_has_articulation)
 {
     if (ch.mode() == model::chord::type::UNDEFINED)
         return;
 
-    qreal art_height = rect.height() * k_articulation_zone_ratio;
+    painter.save();
+
+    qreal art_height = line_has_articulation
+                       ? rect.height() * k_articulation_zone_ratio
+                       : 0.0;
+    constexpr qreal k_plain_top_pad = 4.0;
+    qreal top_offset = art_height > 0.0 ? art_height : k_plain_top_pad;
     QRectF artRect(rect.left(), rect.top(), rect.width(), art_height);
-    QRectF numRect(rect.left(), rect.top() + art_height,
-                   rect.width(), rect.height() - art_height);
+    QRectF numRect(rect.left(), rect.top() + top_offset,
+                   rect.width(), rect.height() - top_offset);
 
     // Paint number row; get tight rect around the number glyph for diamond
     qreal row_right = 0.0;
@@ -86,7 +93,8 @@ void chord_renderer::paint(QPainter& painter,
         paint_staccato(painter, artRect, numberGlyphRect.center().x());
 
     if (ch.is_pushed())
-        paint_pushed(painter, artRect, fonts);
+        paint_pushed(painter, artRect, fonts, numberGlyphRect.center().x(),
+                     numberGlyphRect.top());
 
     if (ch.is_tied())
     {
@@ -107,6 +115,8 @@ void chord_renderer::paint(QPainter& painter,
 
     if (ch.is_diamond())
         paint_diamond(painter, numberGlyphRect);
+
+    painter.restore();  // release clip rect
 }
 
 // ---------------------------------------------------------------------------
@@ -422,14 +432,18 @@ void chord_renderer::paint_staccato(QPainter& painter, const QRectF& artRect,
 // ---------------------------------------------------------------------------
 void chord_renderer::paint_pushed(QPainter& painter,
                                  const QRectF& artRect,
-                                 const Fonts& fonts)
+                                 const Fonts& fonts,
+                                 qreal number_center_x,
+                                 qreal /*number_top_y*/)
 {
     painter.save();
     painter.setFont(fonts.articulation);
     QFontMetricsF fm(fonts.articulation);
-    qreal y = artRect.top() + artRect.height() * k_pushed_top_ratio + fm.ascent();
-    qreal x = artRect.center().x() - fm.horizontalAdvance(">") / 2.0;
-    painter.drawText(QPointF(x, y), ">");
+    // Centre the > vertically within the articulation zone.
+    qreal baseline = artRect.top()
+                   + (artRect.height() + fm.ascent() - fm.descent()) / 2.0;
+    qreal x = number_center_x - fm.horizontalAdvance(">") / 2.0;
+    painter.drawText(QPointF(x, baseline), ">");
     painter.restore();
 }
 

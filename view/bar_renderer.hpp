@@ -24,7 +24,8 @@ public:
                       const QRectF& rect,
                       const model::bar& bar,
                       const chord_renderer::Fonts& fonts,
-                      bool line_duration_mode);
+                      bool line_duration_mode,
+                      bool line_has_articulation);
 
     // Vertical split ratios for duration-mode bars (public so callers can derive heights)
     static constexpr qreal k_chord_slot_ratio = 0.60;

@@ -31,7 +31,8 @@ void bar_renderer::paint(QPainter& painter,
                          const QRectF& rect,
                          const model::bar& bar,
                          const chord_renderer::Fonts& fonts,
-                         bool line_duration_mode)
+                         bool line_duration_mode,
+                         bool line_has_articulation)
 {
     if (bar.empty())
         return;
@@ -125,7 +126,8 @@ void bar_renderer::paint(QPainter& painter,
         qreal slot_width = chord_widths[i] * scale;
         QRectF slot_rect(x, chord_slot_rect.top(), slot_width, chord_slot_h);
 
-        chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode);
+        chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode,
+                              line_has_articulation);
         last_chord_right = x + chord_widths[i];  // actual glyph right edge
 
         if (duration_mode && line_duration_mode)

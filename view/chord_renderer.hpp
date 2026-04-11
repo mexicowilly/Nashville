@@ -39,7 +39,8 @@ public:
                       const QRectF& rect,
                       const model::chord& ch,
                       const Fonts& fonts,
-                      bool is_duration_mode = false);
+                      bool is_duration_mode,
+                      bool line_has_articulation);
 
     // Paints just the rhythmic symbol (note glyph + augmentation dot)
     // into the given rect. Called by BarRenderer for duration-mode bars.
@@ -52,7 +53,9 @@ private:
     // --- Articulation helpers ---
     static void paint_staccato(QPainter& painter, const QRectF& artRect,
                                qreal number_center_x);
-    static void paint_pushed(QPainter& painter, const QRectF& artRect, const Fonts& fonts);
+    static void paint_pushed(QPainter& painter, const QRectF& artRect,
+                             const Fonts& fonts, qreal number_center_x,
+                             qreal number_top_y);
     static void paint_tied_arc(QPainter& painter, const QRectF& artRect,
                                qreal diamond_left = -1.0, qreal diamond_right = -1.0);
     static void paint_diamond(QPainter& painter, const QRectF& numberRect);
@@ -96,7 +99,6 @@ private:
 
     // Articulation vertical offsets within the articulation zone (top = 0).
     static constexpr qreal k_staccato_top_ratio = 0.08;
-    static constexpr qreal k_pushed_top_ratio    = 0.35;
     static constexpr qreal k_tied_top_ratio      = 0.62;
 
     // Diamond padding around the number glyph rect.

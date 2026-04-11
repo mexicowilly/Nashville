@@ -84,8 +84,9 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     if (!current.bars.empty())
         raw_lines.push_back(std::move(current));
 
-    qreal plain_h    = plain_bar_height();
-    qreal duration_h = duration_bar_height();
+    qreal plain_h_bare = plain_bar_height(false);
+    qreal plain_h_art  = plain_bar_height(true);
+    qreal duration_h   = duration_bar_height();
 
     // --- Pass 2: measure section column width ---
     // All lines share the same section column width = widest label + padding.
@@ -110,6 +111,22 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
                           ? max_label_w + k_label_pad_h * 2.0 + k_section_gap
                           : 0.0;
 
+    // Helper: does any chord on this line have an above-number articulation?
+    auto line_has_articulation = [](const std::vector<const model::bar*>& bars) {
+        for (const auto* b : bars)
+            for (const auto& ch : b->chords())
+                if (ch.is_pushed() || ch.is_staccato())
+                    return true;
+        return false;
+    };
+
+    auto line_bar_height = [&](const std::vector<const model::bar*>& bars) -> qreal {
+        for (const auto* b : bars)
+            if (!b->empty() && b->chords().front().duration().has_value())
+                return duration_h;
+        return line_has_articulation(bars) ? plain_h_art : plain_h_bare;
+    };
+
     // --- Pass 3: compute per-column bar widths ---
     constexpr qreal k_bar_padding = 16.0;
     qreal bars_left = content_rect.left() + section_col_w;
@@ -117,11 +134,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
     for (const auto& raw : raw_lines)
     {
-        bool line_is_dur = false;
-        for (const auto* b : raw.bars)
-            if (!b->empty() && b->chords().front().duration().has_value())
-                { line_is_dur = true; break; }
-        qreal bar_h = line_is_dur ? duration_h : plain_h;
+        qreal bar_h = line_bar_height(raw.bars);
 
         for (std::size_t j = 0; j < raw.bars.size(); ++j)
         {
@@ -133,6 +146,24 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         }
     }
 
+    // --- Pass 3.5: determine which lines end a section ---
+    // A line ends a section if the next line starts a new section and
+    // there are at least 2 sections total.
+    auto line_has_section = [&](std::size_t i) {
+        for (const auto* b : raw_lines[i].bars)
+            if (b->section()) return true;
+        return false;
+    };
+    int section_count = 0;
+    for (std::size_t i = 0; i < raw_lines.size(); ++i)
+        if (line_has_section(i)) ++section_count;
+
+    std::vector<bool> ends_section(raw_lines.size(), false);
+    if (section_count >= 2)
+        for (std::size_t i = 0; i + 1 < raw_lines.size(); ++i)
+            if (line_has_section(i + 1))
+                ends_section[i] = true;
+
     // --- Pass 4: compute geometry ---
     qreal y = content_rect.top();
 
@@ -141,15 +172,13 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         const auto& raw = raw_lines[line_idx];
         line_layout line;
 
+        qreal actual_bar_h = line_bar_height(raw.bars);
+        line.is_duration_mode = (actual_bar_h == duration_h);
+        line.has_articulation = line_has_articulation(raw.bars);
+
         for (const auto* b : raw.bars)
-        {
-            if (!b->empty() && b->chords().front().duration().has_value())
-                line.is_duration_mode = true;
             if (b->section() && !line.section_label)
                 line.section_label = QString::fromStdString(*b->section());
-        }
-
-        qreal actual_bar_h = line.is_duration_mode ? duration_h : plain_h;
 
         // Section column: full bar height, left-aligned within content_rect.
         // Width is the label box only (without the gap).
@@ -179,10 +208,14 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             x += bar_w + k_inter_bar_spacing;
         }
 
+        line.draw_section_end_rule = ends_section[line_idx];
         line.rect = QRectF(content_rect.left(), y, content_rect.width(), actual_bar_h);
         lines_.push_back(std::move(line));
 
-        y += actual_bar_h + k_line_spacing;
+        qreal spacing = ends_section[line_idx] ? k_line_spacing
+                      : line.is_duration_mode   ? k_line_spacing_tight
+                                                : k_line_spacing_plain;
+        y += actual_bar_h + spacing;
     }
 
     setMinimumHeight(static_cast<int>(y + k_content_padding));
@@ -191,10 +224,18 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 // ---------------------------------------------------------------------------
 // Height helpers
 // ---------------------------------------------------------------------------
-qreal song_body_widget::plain_bar_height() const
+qreal song_body_widget::plain_bar_height(bool has_articulation) const
 {
-    QFontMetricsF fm(fonts_.number);
-    return fm.height() / chord_renderer::k_number_zone_ratio;
+    QFontMetricsF num_fm(fonts_.number);
+    qreal number_h = num_fm.ascent() + num_fm.descent();
+    if (!has_articulation)
+    {
+        constexpr qreal k_plain_top_pad = 4.0;
+        return number_h + k_plain_top_pad;
+    }
+    QFontMetricsF art_fm(fonts_.articulation);
+    constexpr qreal k_art_gap = 2.0;
+    return number_h + (art_fm.ascent() + art_fm.descent()) + k_art_gap;
 }
 
 qreal song_body_widget::duration_bar_height() const
@@ -286,10 +327,21 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line) co
 
     for (const auto& bl : line.bars)
     {
-        bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode);
+        bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
+                            line.has_articulation);
 
         if (bl.show_continuation_dot)
             paint_continuation_dot(painter, bl.rect);
+    }
+
+    if (line.draw_section_end_rule)
+    {
+        painter.save();
+        qreal rule_y = line.rect.bottom() + k_line_spacing / 2.0;
+        painter.setPen(QPen(QColor(180, 180, 180), 1.0));
+        painter.drawLine(QPointF(line.rect.left(), rule_y),
+                         QPointF(line.rect.right(), rule_y));
+        painter.restore();
     }
 }
 

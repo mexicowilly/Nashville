@@ -19,11 +19,11 @@ app::app(int argc, char* argv[])
     model::time_signature ts;
     ts.parse_user_input("8/8");
     s->time_sig(ts);
-    s->add_bar().parse_user_input("1 4").section("I");
+    s->add_bar().parse_user_input("1 p:4").section("I");
     s->add_bar().parse_user_input("57");
     s->add_bar().parse_user_input("dt:1");
     s->add_bar().parse_user_input("s:1");
-    s->add_bar().parse_user_input("5 7dim7").section("V1");
+    s->add_bar().parse_user_input("5 p:7dim7").section("V1");
     //ts.parse_user_input("6/8");
     s->add_bar().parse_user_input("4");
     s->add_bar().parse_user_input("t:1+");
