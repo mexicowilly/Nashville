@@ -75,8 +75,12 @@ void chord_renderer::paint(QPainter& painter,
 
     painter.save();
 
+    // Use fixed pixel heights for the articulation zone and top pad,
+    // independent of the chord slot height, so placement is stable
+    // regardless of how the caller sizes the rect.
+    QFontMetricsF art_fm(fonts.articulation);
     qreal art_height = line_has_articulation
-                       ? rect.height() * k_articulation_zone_ratio
+                       ? art_fm.ascent() + art_fm.descent()
                        : 0.0;
     constexpr qreal k_plain_top_pad = 4.0;
     qreal top_offset = art_height > 0.0 ? art_height : k_plain_top_pad;
@@ -418,12 +422,17 @@ void chord_renderer::paint_staccato(QPainter& painter, const QRectF& artRect,
                                     qreal number_center_x)
 {
     painter.save();
-    qreal dot_r = artRect.height() * 0.18;   // larger dot, more visible
-    qreal cx    = number_center_x;            // centered over the chord number
-    qreal cy    = artRect.top() + artRect.height() * k_staccato_top_ratio + dot_r;
+    constexpr qreal dot_r = 3.0;
+    qreal cx    = number_center_x;
+    qreal cy    = artRect.bottom() - dot_r - 1.0;
+    QPolygonF diamond;
+    diamond << QPointF(cx,          cy - dot_r)
+            << QPointF(cx + dot_r,  cy)
+            << QPointF(cx,          cy + dot_r)
+            << QPointF(cx - dot_r,  cy);
     painter.setBrush(painter.pen().color());
     painter.setPen(Qt::NoPen);
-    painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
+    painter.drawPolygon(diamond);
     painter.restore();
 }
 
@@ -440,8 +449,7 @@ void chord_renderer::paint_pushed(QPainter& painter,
     painter.setFont(fonts.articulation);
     QFontMetricsF fm(fonts.articulation);
     // Centre the > vertically within the articulation zone.
-    qreal baseline = artRect.top()
-                   + (artRect.height() + fm.ascent() - fm.descent()) / 2.0;
+    qreal baseline = artRect.bottom();
     qreal x = number_center_x - fm.horizontalAdvance(">") / 2.0;
     painter.drawText(QPointF(x, baseline), ">");
     painter.restore();

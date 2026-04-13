@@ -39,8 +39,12 @@ void bar_renderer::paint(QPainter& painter,
 
     bool duration_mode = is_duration_mode(bar);
 
-    qreal top_pad      = rect.height() * 0.05;
-    qreal chord_slot_h  = rect.height() * k_chord_slot_ratio;
+    constexpr qreal top_pad = 2.0;  // fixed top pad, independent of line height
+    // For non-duration lines the rhythm row is never drawn, so expand the
+    // chord slot to fill the remaining rect rather than leaving a void below.
+    qreal chord_slot_h  = line_duration_mode
+                         ? rect.height() * k_chord_slot_ratio
+                         : rect.height() - top_pad;
     qreal rhythm_row_h = rect.height() * k_rhythm_row_ratio;
 
     // --- Time signature: always reserve k_time_sig_slot_w so chord columns align ---

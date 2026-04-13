@@ -16,7 +16,6 @@ public:
     const std::vector<chord>& chords() const;
     bar& chords(const std::vector<chord>& cs);
     bool empty() const;
-    bool extends_line() const;
     bool is_eol() const;
     bar& is_eol(bool state);
     bar& parse_user_input(const std::string& str);
@@ -31,7 +30,6 @@ private:
     std::optional<time_signature> time_signature_;
     bool is_eol_ = false;
     std::optional<std::string> section_;
-    bool extends_line_ = false;
 };
 
 inline const std::vector<chord>& bar::chords() const
@@ -48,11 +46,6 @@ inline bar& bar::chords(const std::vector<chord>& cs)
 inline bool bar::empty() const
 {
     return chords_.empty();
-}
-
-inline bool bar::extends_line() const
-{
-    return extends_line_;
 }
 
 inline bool bar::is_eol() const

@@ -48,7 +48,8 @@ private:
                            const QString& label,
                            const QRectF& col_rect) const;
     void paint_continuation_dot(QPainter& painter,
-                               const QRectF& preceding_bar_rect) const;
+                               const QRectF& preceding_bar_rect,
+                               qreal num_center_y) const;
 
     // --- Draggable divider ---
     bool near_divider(int x) const;
@@ -59,8 +60,7 @@ private:
     // --- Constants ---
     static constexpr qreal k_title_padding       = 16.0;  // above and below title text
     static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
-    static constexpr qreal k_line_spacing_tight  = 8.0;   // spacing between duration-mode lines
-    static constexpr qreal k_line_spacing_plain  = 0.0;   // spacing between plain lines
+    static constexpr qreal k_line_spacing_normal =  8.0;  // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;

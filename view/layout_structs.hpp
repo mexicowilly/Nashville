@@ -15,6 +15,7 @@ struct bar_layout
     QRectF rect;
     bool is_duration_mode               = false;  // cached from bar contents
     bool show_continuation_dot         = false;  // paint dot in gap after this bar
+    qreal num_center_y                  = 0.0;    // vertical centre of number row, for dot placement
 };
 
 struct line_layout

@@ -64,21 +64,15 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     struct raw_line { std::vector<const model::bar*> bars; };
     std::vector<raw_line> raw_lines;
     raw_line current;
-    unsigned count_in_line = 0;
 
     for (const auto& b : bars)
     {
         current.bars.push_back(&b);
-        count_in_line++;
 
-        bool force_break = b.is_eol();
-        bool count_break = (count_in_line >= bpl_pref) && !b.extends_line();
-
-        if (force_break || count_break)
+        if (b.is_eol())
         {
             raw_lines.push_back(std::move(current));
             current.bars.clear();
-            count_in_line = 0;
         }
     }
     if (!current.bars.empty())
@@ -183,7 +177,17 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         // Section column: full bar height, left-aligned within content_rect.
         // Width is the label box only (without the gap).
         qreal box_w = section_col_w > 0.0 ? section_col_w - k_section_gap : 0.0;
-        line.section_col_rect = QRectF(content_rect.left(), y, box_w, actual_bar_h);
+        // The section label should centre on the number row, not the full bar height.
+        // Number row starts at: top_pad(2px) + art_zone (if any) + k_plain_top_pad(4px).
+        constexpr qreal k_bar_top_pad   = 2.0;   // matches bar_renderer fixed top_pad
+        constexpr qreal k_plain_top_pad = 4.0;   // matches chord_renderer k_plain_top_pad
+        qreal art_zone = line.has_articulation
+            ? [&]{ QFontMetricsF a(fonts_.articulation); return a.ascent() + a.descent(); }()
+            : 0.0;
+        qreal num_top = y + k_bar_top_pad + (art_zone > 0.0 ? art_zone : k_plain_top_pad);
+        QFontMetricsF num_fm(fonts_.number);
+        qreal num_h   = num_fm.ascent() + num_fm.descent();
+        line.section_col_rect = QRectF(content_rect.left(), num_top, box_w, num_h);
 
         qreal x = bars_left;
         for (std::size_t j = 0; j < raw.bars.size(); ++j)
@@ -197,9 +201,10 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             bl.is_duration_mode = !b->empty()
                                 && b->chords().front().duration().has_value();
 
-            if (j == bpl_pref - 1
-                && (j + 1) < raw.bars.size()
-                && raw.bars[j + 1]->extends_line())
+            bl.num_center_y = num_top + num_h / 2.0;
+
+            if (raw.bars.size() > bpl_pref
+                && j == bpl_pref - 1)
             {
                 bl.show_continuation_dot = true;
             }
@@ -212,9 +217,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         line.rect = QRectF(content_rect.left(), y, content_rect.width(), actual_bar_h);
         lines_.push_back(std::move(line));
 
-        qreal spacing = ends_section[line_idx] ? k_line_spacing
-                      : line.is_duration_mode   ? k_line_spacing_tight
-                                                : k_line_spacing_plain;
+        qreal spacing = ends_section[line_idx] ? k_line_spacing : k_line_spacing_normal;
         y += actual_bar_h + spacing;
     }
 
@@ -227,22 +230,17 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 qreal song_body_widget::plain_bar_height(bool has_articulation) const
 {
     QFontMetricsF num_fm(fonts_.number);
-    qreal number_h = num_fm.ascent() + num_fm.descent();
-    if (!has_articulation)
+    qreal h = num_fm.ascent() + num_fm.descent();
+    if (has_articulation)
     {
-        constexpr qreal k_plain_top_pad = 4.0;
-        return number_h + k_plain_top_pad;
+        QFontMetricsF art_fm(fonts_.articulation);
+        h += art_fm.ascent() + art_fm.descent();
     }
-    QFontMetricsF art_fm(fonts_.articulation);
-    constexpr qreal k_art_gap = 2.0;
-    return number_h + (art_fm.ascent() + art_fm.descent()) + k_art_gap;
+    return h;
 }
 
 qreal song_body_widget::duration_bar_height() const
 {
-    QFontMetricsF music_fm(fonts_.music);
-    // Add a compact fixed rhythm row on top of plain bar height.
-    // Avoids inflated music font metrics (Bravura fm.height() is ~76px at 14pt).
     constexpr qreal k_rhythm_row_px = 16.0;
     return plain_bar_height() + k_rhythm_row_px + bar_renderer::k_rule_thickness;
 }
@@ -331,13 +329,13 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line) co
                             line.has_articulation);
 
         if (bl.show_continuation_dot)
-            paint_continuation_dot(painter, bl.rect);
+            paint_continuation_dot(painter, bl.rect, bl.num_center_y);
     }
 
     if (line.draw_section_end_rule)
     {
         painter.save();
-        qreal rule_y = line.rect.bottom() + k_line_spacing / 2.0;
+        qreal rule_y = line.rect.bottom() + k_line_spacing_normal + (k_line_spacing - k_line_spacing_normal) / 2.0;
         painter.setPen(QPen(QColor(180, 180, 180), 1.0));
         painter.drawLine(QPointF(line.rect.left(), rule_y),
                          QPointF(line.rect.right(), rule_y));
@@ -387,12 +385,13 @@ void song_body_widget::paint_section_label(QPainter& painter,
 // paint_continuation_dot
 // ---------------------------------------------------------------------------
 void song_body_widget::paint_continuation_dot(QPainter& painter,
-                                           const QRectF& preceding_bar_rect) const
+                                           const QRectF& preceding_bar_rect,
+                                           qreal num_center_y) const
 {
     painter.save();
     constexpr qreal dot_r = 3.0;
     qreal cx = preceding_bar_rect.right() + k_inter_bar_spacing / 2.0;
-    qreal cy = preceding_bar_rect.center().y();
+    qreal cy = num_center_y;
     painter.setBrush(Qt::black);
     painter.setPen(Qt::NoPen);
     painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
