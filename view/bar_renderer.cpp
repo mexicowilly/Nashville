@@ -40,12 +40,29 @@ void bar_renderer::paint(QPainter& painter,
     bool duration_mode = is_duration_mode(bar);
 
     constexpr qreal top_pad = 2.0;  // fixed top pad, independent of line height
-    // For non-duration lines the rhythm row is never drawn, so expand the
-    // chord slot to fill the remaining rect rather than leaving a void below.
+
+    // For duration-mode lines the chord slot must be tall enough to hold the
+    // number glyph plus the articulation zone (if any).  Using a fixed ratio of
+    // the bar height fails once art height is added to the bar.  Compute it
+    // directly from font metrics instead so it is always exact.
+    QFontMetricsF nmFm_slot(fonts.number);
+    QFontMetricsF artFm_slot(fonts.articulation);
+    qreal num_h = nmFm_slot.ascent() + nmFm_slot.descent();
+    qreal art_h = line_has_articulation ? artFm_slot.ascent() + artFm_slot.descent() : 0.0;
+
+    // Does any chord on this line have a diamond? If so the diamond's bottom
+    // point extends k_diamond_padding_v below the tight glyph rect.  Add that
+    // plus 1px clearance to the chord slot so the rule always clears the diamond.
+    bool line_has_diamond = false;
+    for (const auto& ch : bar.chords())
+        if (ch.is_diamond()) { line_has_diamond = true; break; }
+
     qreal chord_slot_h  = line_duration_mode
-                         ? rect.height() * k_chord_slot_ratio
+                         ? num_h + art_h + (line_has_diamond
+                               ? chord_renderer::k_diamond_padding_v + 1.0 : 0.0)
                          : rect.height() - top_pad;
-    qreal rhythm_row_h = rect.height() * k_rhythm_row_ratio;
+    constexpr qreal k_rhythm_row_px = 16.0;  // must match duration_bar_height
+    qreal rhythm_row_h = line_duration_mode ? k_rhythm_row_px : rect.height() * k_rhythm_row_ratio;
 
     // --- Time signature: always reserve k_time_sig_slot_w so chord columns align ---
     // Paint glyphs only when this bar actually has a time sig change.
@@ -89,25 +106,11 @@ void bar_renderer::paint(QPainter& painter,
     }
 
     QRectF chord_slot_rect(chords_left,
-                          rect.top() + top_pad,
+                          line_duration_mode ? rect.top() : rect.top() + top_pad,
                           rect.width() - k_time_sig_slot_w,
                           chord_slot_h);
 
-    // Compute line_y to sit just below the rendered number glyph.
-    // paint_number_row centres the number vertically in the number zone, so
-    // the actual glyph bottom = num_zone_top + (num_zone_h + ascent + descent) / 2.
-    // Using this exact value keeps the rule flush below the number in both
-    // plain bars and duration-mode bars without overshooting.
-    qreal line_y = 0.0;
-    {
-        QFontMetricsF nmFm(fonts.number);
-        const qreal num_zone_top = chord_slot_rect.top()
-                                   + chord_slot_h * chord_renderer::k_articulation_zone_ratio;
-        const qreal num_zone_h   = chord_slot_h * chord_renderer::k_number_zone_ratio;
-        const qreal glyph_bottom = num_zone_top
-                                   + (num_zone_h + nmFm.ascent() + nmFm.descent()) / 2.0;
-        line_y = std::floor(glyph_bottom) + 1.0;
-    }
+    qreal line_y = chord_slot_rect.bottom();
 
     // Compute per-chord widths
     std::vector<qreal> chord_widths;
@@ -130,8 +133,11 @@ void bar_renderer::paint(QPainter& painter,
         qreal slot_width = chord_widths[i] * scale;
         QRectF slot_rect(x, chord_slot_rect.top(), slot_width, chord_slot_h);
 
+        // Pass line_has_articulation normally — chord_renderer carves the art
+        // zone from the top of the (now correctly sized) chord slot.
         chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode,
                               line_has_articulation);
+
         last_chord_right = x + chord_widths[i];  // actual glyph right edge
 
         if (duration_mode && line_duration_mode)

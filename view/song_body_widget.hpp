@@ -36,7 +36,7 @@ private:
     // --- Layout ---
     void compute_layout(const QRectF& content_rect);
     qreal plain_bar_height(bool has_articulation = false) const;
-    qreal duration_bar_height() const;
+    qreal duration_bar_height(bool has_articulation = false) const;
     qreal title_height() const;
 
     // --- Painting ---
@@ -60,7 +60,7 @@ private:
     // --- Constants ---
     static constexpr qreal k_title_padding       = 16.0;  // above and below title text
     static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
-    static constexpr qreal k_line_spacing_normal =  8.0;  // uniform spacing between all other lines
+    static constexpr qreal k_line_spacing_normal = 10.0;  // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;

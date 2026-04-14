@@ -67,7 +67,7 @@ void chord_renderer::paint(QPainter& painter,
                           const QRectF& rect,
                           const model::chord& ch,
                           const Fonts& fonts,
-                          bool /*is_duration_mode*/,
+                          bool is_duration_mode,
                           bool line_has_articulation)
 {
     if (ch.mode() == model::chord::type::UNDEFINED)
@@ -75,9 +75,6 @@ void chord_renderer::paint(QPainter& painter,
 
     painter.save();
 
-    // Use fixed pixel heights for the articulation zone and top pad,
-    // independent of the chord slot height, so placement is stable
-    // regardless of how the caller sizes the rect.
     QFontMetricsF art_fm(fonts.articulation);
     qreal art_height = line_has_articulation
                        ? art_fm.ascent() + art_fm.descent()
@@ -88,39 +85,18 @@ void chord_renderer::paint(QPainter& painter,
     QRectF numRect(rect.left(), rect.top() + top_offset,
                    rect.width(), rect.height() - top_offset);
 
-    // Paint number row; get tight rect around the number glyph for diamond
+    // Paint number row; get tight rect around the number glyph for diamond.
     qreal row_right = 0.0;
     QRectF numberGlyphRect = paint_number_row(painter, numRect, ch, fonts, row_right);
 
-    // Articulations — order: staccato (top), pushed, tied, diamond (around number)
-    if (ch.is_staccato())
-        paint_staccato(painter, artRect, numberGlyphRect.center().x());
-
-    if (ch.is_pushed())
-        paint_pushed(painter, artRect, fonts, numberGlyphRect.center().x(),
-                     numberGlyphRect.top());
-
-    if (ch.is_tied())
-    {
-        // Pass diamond horizontal bounds so arc endpoints clear the diamond.
-        // For non-diamond ties, start after the full row (number + extensions etc).
-        qreal diamond_left  = -1.0;
-        qreal diamond_right = row_right;  // start after all rendered elements
-        if (ch.is_diamond())
-        {
-            QRectF dr = numberGlyphRect.adjusted(
-                -k_diamond_padding_h, -k_diamond_padding_v,
-                 k_diamond_padding_h,  k_diamond_padding_v);
-            diamond_left  = dr.left();
-            diamond_right = dr.right();
-        }
-        paint_tied_arc(painter, artRect, diamond_left, diamond_right);
-    }
+    if (line_has_articulation)
+        paint_articulations(painter, artRect, ch, fonts,
+                            numberGlyphRect.center().x(), row_right);
 
     if (ch.is_diamond())
-        paint_diamond(painter, numberGlyphRect);
+        paint_diamond(painter, numberGlyphRect, artRect.bottom(), numRect.bottom() - 1.0);
 
-    painter.restore();  // release clip rect
+    painter.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +221,49 @@ void chord_renderer::paint_rhythm(QPainter& painter,
 }
 
 // ---------------------------------------------------------------------------
+// Public: paint_articulations
+// Shared articulation dispatcher used by both paint() (plain mode) and
+// bar_renderer (duration mode, where artRect lives above the chord slot).
+// ---------------------------------------------------------------------------
+void chord_renderer::paint_articulations(QPainter& painter,
+                                         const QRectF& artRect,
+                                         const model::chord& ch,
+                                         const Fonts& fonts,
+                                         qreal number_center_x,
+                                         qreal row_right)
+{
+    if (ch.is_staccato() && ch.is_pushed())
+    {
+        qreal mid = artRect.top() + artRect.height() / 2.0;
+        QRectF staccatoRect(artRect.left(), artRect.top(), artRect.width(), artRect.height() / 2.0);
+        QRectF pushedRect(artRect.left(), mid, artRect.width(), artRect.height() / 2.0);
+        paint_staccato(painter, staccatoRect, number_center_x);
+        paint_pushed(painter, pushedRect, fonts, number_center_x, artRect.top());
+    }
+    else
+    {
+        if (ch.is_staccato())
+            paint_staccato(painter, artRect, number_center_x);
+        if (ch.is_pushed())
+            paint_pushed(painter, artRect, fonts, number_center_x, artRect.top());
+    }
+
+    if (ch.is_tied())
+    {
+        qreal diamond_left  = -1.0;
+        qreal diamond_right = row_right;
+        if (ch.is_diamond())
+        {
+            // Tie arc endpoints need to clear the diamond — derive its bounds
+            // from the centre of artRect (approximate; diamond is on number row).
+            diamond_left  = artRect.center().x() - k_diamond_padding_h;
+            diamond_right = artRect.center().x() + k_diamond_padding_h;
+        }
+        paint_tied_arc(painter, artRect, diamond_left, diamond_right);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Private: paint_number_row
 // ---------------------------------------------------------------------------
 QRectF chord_renderer::paint_number_row(QPainter& painter,
@@ -278,8 +297,12 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
         total_width += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
 
-    qreal baseline = rowRect.top()
-                     + (rowRect.height() + nmFm.ascent() - nmFm.descent()) / 2.0;
+    // Compute baseline so the tight ink bounds of the number are centred in rowRect.
+    QString num_str = QString::number(ch.number());
+    QRectF tbr = nmFm.tightBoundingRect(num_str);
+    // tbr.top() is negative (above baseline), tbr.bottom() is positive (below).
+    // Centre: rowRect.center().y() == baseline + (tbr.top() + tbr.bottom()) / 2
+    qreal baseline = rowRect.center().y() - (tbr.top() + tbr.bottom()) / 2.0;
     qreal x = rowRect.left();
 
     painter.save();
@@ -289,13 +312,14 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
 
     // Number — dominant
     painter.setFont(fonts.number);
-    QString num_str   = QString::number(ch.number());
-    qreal num_left    = x;
+    qreal num_left  = x;
     painter.drawText(QPointF(x, baseline), num_str);
-    QRectF numberGlyphRect(num_left,
-                           baseline - nmFm.ascent(),
-                           nmFm.horizontalAdvance(num_str),
-                           nmFm.ascent() + nmFm.descent());
+
+    // Tight ink rect for diamond sizing and centring.
+    QRectF numberGlyphRect(num_left + tbr.left(),
+                           baseline + tbr.top(),
+                           tbr.width(),
+                           tbr.height());
     x += nmFm.horizontalAdvance(num_str);
 
     // Mode suffix
@@ -497,7 +521,8 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 // ---------------------------------------------------------------------------
 // Private: paint_diamond — drawn around the number glyph rect
 // ---------------------------------------------------------------------------
-void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect)
+void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect,
+                                   qreal /*art_bottom*/, qreal /*max_bottom*/)
 {
     painter.save();
     QRectF r = numberRect.adjusted(-k_diamond_padding_h, -k_diamond_padding_v,

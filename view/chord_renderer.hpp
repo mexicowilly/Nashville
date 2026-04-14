@@ -27,6 +27,11 @@ public:
     static constexpr qreal k_number_zone_ratio           = 0.65;
     static constexpr qreal k_articulation_zone_ratio     = 0.35;
 
+    // Diamond padding around the tight number glyph rect.
+    // Public so bar_renderer can account for vertical clearance in slot sizing.
+    static constexpr qreal k_diamond_padding_h = 10.0;  // left/right
+    static constexpr qreal k_diamond_padding_v =  6.0;  // top/bottom
+
     // Returns the minimum bounding size needed to render this chord,
     // given the supplied fonts. Used by the layout pass.
     static QSizeF size_hint(const model::chord& ch, const Fonts& fonts);
@@ -49,6 +54,16 @@ public:
                              const model::chord& ch,
                              const Fonts& fonts);
 
+    // Paints only the above-number articulations (staccato, push, tie) into
+    // artRect, centred on number_center_x.  Called by bar_renderer for
+    // duration-mode bars where the art zone lives above the chord slot.
+    static void paint_articulations(QPainter& painter,
+                                    const QRectF& artRect,
+                                    const model::chord& ch,
+                                    const Fonts& fonts,
+                                    qreal number_center_x,
+                                    qreal row_right);
+
 private:
     // --- Articulation helpers ---
     static void paint_staccato(QPainter& painter, const QRectF& artRect,
@@ -58,7 +73,7 @@ private:
                              qreal number_top_y);
     static void paint_tied_arc(QPainter& painter, const QRectF& artRect,
                                qreal diamond_left = -1.0, qreal diamond_right = -1.0);
-    static void paint_diamond(QPainter& painter, const QRectF& numberRect);
+    static void paint_diamond(QPainter& painter, const QRectF& numberRect, qreal art_bottom, qreal max_bottom);
 
     // --- Number row helpers ---
 
@@ -100,12 +115,6 @@ private:
     // Articulation vertical offsets within the articulation zone (top = 0).
     static constexpr qreal k_staccato_top_ratio = 0.08;
     static constexpr qreal k_tied_top_ratio      = 0.62;
-
-    // Diamond padding around the number glyph rect.
-    // Horizontal padding is larger than vertical so the diamond looks
-    // proportionally wide rather than pinched.
-    static constexpr qreal k_diamond_padding_h = 10.0;  // left/right
-    static constexpr qreal k_diamond_padding_v =  5.0;  // top/bottom
 
     // Extra horizontal padding between chord elements
     static constexpr qreal k_element_spacing = 2.0;

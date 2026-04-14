@@ -78,9 +78,10 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     if (!current.bars.empty())
         raw_lines.push_back(std::move(current));
 
-    qreal plain_h_bare = plain_bar_height(false);
-    qreal plain_h_art  = plain_bar_height(true);
-    qreal duration_h   = duration_bar_height();
+    qreal plain_h_bare   = plain_bar_height(false);
+    qreal plain_h_art    = plain_bar_height(true);
+    qreal duration_h_bare = duration_bar_height(false);
+    qreal duration_h_art  = duration_bar_height(true);
 
     // --- Pass 2: measure section column width ---
     // All lines share the same section column width = widest label + padding.
@@ -115,10 +116,11 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     };
 
     auto line_bar_height = [&](const std::vector<const model::bar*>& bars) -> qreal {
+        bool has_art = line_has_articulation(bars);
         for (const auto* b : bars)
             if (!b->empty() && b->chords().front().duration().has_value())
-                return duration_h;
-        return line_has_articulation(bars) ? plain_h_art : plain_h_bare;
+                return has_art ? duration_h_art : duration_h_bare;
+        return has_art ? plain_h_art : plain_h_bare;
     };
 
     // --- Pass 3: compute per-column bar widths ---
@@ -167,7 +169,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         line_layout line;
 
         qreal actual_bar_h = line_bar_height(raw.bars);
-        line.is_duration_mode = (actual_bar_h == duration_h);
+        line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art);
         line.has_articulation = line_has_articulation(raw.bars);
 
         for (const auto* b : raw.bars)
@@ -239,10 +241,18 @@ qreal song_body_widget::plain_bar_height(bool has_articulation) const
     return h;
 }
 
-qreal song_body_widget::duration_bar_height() const
+qreal song_body_widget::duration_bar_height(bool has_articulation) const
 {
+    QFontMetricsF num_fm(fonts_.number);
+    qreal num_h = num_fm.ascent() + num_fm.descent();
+    qreal art_h = 0.0;
+    if (has_articulation)
+    {
+        QFontMetricsF art_fm(fonts_.articulation);
+        art_h = art_fm.ascent() + art_fm.descent();
+    }
     constexpr qreal k_rhythm_row_px = 16.0;
-    return plain_bar_height() + k_rhythm_row_px + bar_renderer::k_rule_thickness;
+    return num_h + art_h + k_rhythm_row_px + bar_renderer::k_rule_thickness;
 }
 
 qreal song_body_widget::title_height() const
