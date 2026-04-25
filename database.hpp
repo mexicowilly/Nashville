@@ -55,7 +55,7 @@ private:
         REMOVE_BAR,
         REMOVE_CHORD,
         SELECT_CHORD_NOT_IN_BAR,
-        REMOVE_BAR_CHORDS,
+        //REMOVE_BAR_CHORDS,
         REMOVE_PLAYLIST_SONGS,
         REMOVE_PLAYLIST
     };

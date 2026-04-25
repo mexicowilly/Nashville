@@ -260,9 +260,9 @@ const char* REMOVE_CHORD_SQL = R"(
 DELETE FROM chord WHERE id = ?1;
 )";
 
-const char* REMOVE_BAR_CHORDS_SQL = R"(
-DELETE FROM bar_chords WHERE bar_id = ?1;
-)";
+//const char* REMOVE_BAR_CHORDS_SQL = R"(
+//DELETE FROM bar_chords WHERE bar_id = ?1;
+//)";
 
 const char* REMOVE_SONG_SQL = R"(
 DELETE FROM song WHERE id = ?1;
@@ -364,7 +364,7 @@ database::database(const std::filesystem::path& file_name)
             { statement::SELECT_PLAYLIST_ID, std::make_shared<prepared>(db_, SELECT_PLAYLIST_ID_SQL) },
             { statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
             { statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
-            { statement::REMOVE_BAR_CHORDS, std::make_shared<prepared>(db_, REMOVE_BAR_CHORDS_SQL) },
+            //{ statement::REMOVE_BAR_CHORDS, std::make_shared<prepared>(db_, REMOVE_BAR_CHORDS_SQL) },
             { statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
             { statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) },
             { statement::REMOVE_PLAYLIST_SONGS, std::make_shared<prepared>(db_, REMOVE_PLAYLIST_SONGS_SQL) }
@@ -653,13 +653,11 @@ void database::remove_song(const std::string& s)
 {
     assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
     assert(prepared_statements_.count(statement::SELECT_CHORDS_BY_BAR) == 1);
-    assert(prepared_statements_.count(statement::REMOVE_BAR_CHORDS) == 1);
     assert(prepared_statements_.count(statement::REMOVE_BAR) == 1);
     assert(prepared_statements_.count(statement::REMOVE_SONG) == 1);
     assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
     auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
     auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
-    auto rem_bcs = prepared_statements_[statement::REMOVE_BAR_CHORDS];
     auto rem_b = prepared_statements_[statement::REMOVE_BAR];
     sel_s->reset();
     sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
@@ -675,7 +673,8 @@ void database::remove_song(const std::string& s)
         while (rc2 == SQLITE_ROW)
         {
             auto bar_id = sqlite3_column_int64(sel_bids->ptr(), 0);
-            // Now maybe_remove_chord on the bar
+            // Now maybe_remove_chord on the bar. If the chord is removed, then all of
+            // its bar_chords will also be removed thanks to cascading
             sel_cs->reset();
             sqlite3_bind_int64(sel_cs->ptr(), 1, bar_id);
             auto rc3 = sqlite3_step(sel_cs->ptr());
@@ -687,11 +686,12 @@ void database::remove_song(const std::string& s)
             if (rc3 != SQLITE_DONE)
                 throw std::runtime_error("Could not remove chords:"s + sqlite3_errstr(rc3));
             // Then remove all bar_chords for this bar
-            rem_bcs->reset();
-            sqlite3_bind_int64(rem_bcs->ptr(), 1, bar_id);
-            rc3 = sqlite3_step(rem_bcs->ptr());
-            if (rc3 != SQLITE_DONE)
-                throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
+            //rem_bcs->reset();
+            //sqlite3_bind_int64(rem_bcs->ptr(), 1, bar_id);
+            //rc3 = sqlite3_step(rem_bcs->ptr());
+            //if (rc3 != SQLITE_DONE)
+                //throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
+
             // Then remove the bar itself
             rem_b->reset();
             sqlite3_bind_int64(rem_b->ptr(), 1, bar_id);
