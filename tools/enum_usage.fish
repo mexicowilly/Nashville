@@ -8,7 +8,7 @@ set class_name $argv[3]
 set enum_name $argv[4]
 
 # Extract enum values from header
-set enum_values (sed -n '/enum class $enum_name/,/};/p' $header | \
+set enum_values (sed -n "/enum class $enum_name/,/};/p" $header | \
     sed 's,//.*,,g; s/[*][^*]*[*]//g; s/enum class[^{]*{//g; s/}//g; s/=.*//g; s/,/\n/g' | \
     sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -E '^[A-Za-z_][A-Za-z0-9_]*$')
 

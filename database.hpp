@@ -17,8 +17,9 @@ public:
     database(const std::filesystem::path& file_name);
     ~database();
 
-    void insert_song(const model::song& s);
     bool in_memory() const;
+    void insert_playlist(const model::playlist& pl);
+    void insert_song(const model::song& s);
     void move_to_file(const std::filesystem::path& file_name);
     void remove_playlist(const std::string& pl);
     void remove_song(const std::string& s);
@@ -39,12 +40,10 @@ private:
         SELECT_CHORDS_BY_BAR,
         SELECT_TIME_SIGNATURE,
         INSERT_TIME_SIGNATURE,
-        SELECT_SONGS,
         SELECT_SONG_ID,
         INSERT_SONG,
         SELECT_SONG_BARS,
         INSERT_SONG_BAR,
-        SELECT_PLAYLISTS,
         INSERT_PLAYLIST,
         SELECT_PLAYLIST_SONGS,
         INSERT_PLAYLIST_SONG,
@@ -57,7 +56,8 @@ private:
         REMOVE_CHORD,
         SELECT_CHORD_NOT_IN_BAR,
         REMOVE_BAR_CHORDS,
-        REMOVE_PLAYLIST_SONGS
+        REMOVE_PLAYLIST_SONGS,
+        REMOVE_PLAYLIST
     };
 
     class prepared
@@ -76,7 +76,6 @@ private:
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);
-    //std::uint64_t insert_playlist(const model::playlist& p);
     std::uint64_t insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index);
     void maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id);
     std::vector<model::bar> select_bars(std::uint64_t song_id);
