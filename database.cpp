@@ -273,7 +273,7 @@ DELETE FROM playlist_songs WHERE song_id = ?1;
 )";
 
 const char* REMOVE_PLAYLIST_SQL = R"(
-DELETE FROM playlist WHERE name = ?1 RETURNING id;
+DELETE FROM playlist WHERE name = ?1;
 )";
 
 }
@@ -352,7 +352,7 @@ database::database(const std::filesystem::path& file_name)
                              nullptr);
     if (rc != SQLITE_OK)
         throw std::runtime_error("Unable to open the database '"s + file_name.c_str() + "' " + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Opened the database '" << file_name << "'");
+    CHUCHO_DEBUG_L("Opened the database '" << file_name.string() << "'");
     char* err;
     rc = sqlite3_exec(db_,
                       schema,
@@ -426,6 +426,7 @@ std::uint64_t database::insert_bar(const model::bar& b)
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar: "s + sqlite3_errstr(rc));
+    CHUCHO_DEBUG_L("Inserted bar: " << b.to_user_input());
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -442,6 +443,7 @@ std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t cho
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar chord: "s + sqlite3_errstr(rc));
+    CHUCHO_DEBUG_L("Inserted relation bar(" << bar_id << ") with chord(" << chord_id << ") position " << index);
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -512,6 +514,7 @@ void database::insert_playlist(const model::playlist& pl)
     auto raw = ins_pl->ptr();
     int rc;
     bool inserted_new = true;
+    transaction tx(*this);
     for (int i = 0; i < 2; i++)
     {
         ins_pl->reset();
@@ -555,6 +558,7 @@ void database::insert_playlist(const model::playlist& pl)
             throw std::runtime_error("Problem looking up a song named '"s + n + "':" + sqlite3_errstr(rc2));
         }
     }
+    tx.commit();
     if (inserted_new)
         CHUCHO_DEBUG_L("Inserted new playlist '"s + pl.name() + "'");
 }
@@ -621,6 +625,7 @@ std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a song bar: "s + sqlite3_errstr(rc));
+    CHUCHO_DEBUG_L("Inserted relation song(" << song_id << ") with bar(" << bar_id << ") position " << index);
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -642,6 +647,7 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
     rc = sqlite3_step(rem_c->ptr());
     if (rc != SQLITE_DONE)
         throw std::runtime_error("Could not remove a chord: "s + sqlite3_errstr(rc));
+    CHUCHO_DEBUG_L("Removed chord with id " << chord_id);
 }
 
 void database::move_to_file(const std::filesystem::path& file_name)
@@ -672,22 +678,13 @@ void database::remove_playlist(const std::string& pl)
     assert(prepared_statements_.count(statement::REMOVE_PLAYLIST) == 1);
     assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
     auto rm_pl = prepared_statements_[statement::REMOVE_PLAYLIST];
-    auto rm_pls = prepared_statements_[statement::REMOVE_PLAYLIST_SONGS];
     rm_pl->reset();
     sqlite3_bind_text(rm_pl->ptr(), 1, pl.c_str(), pl.length(), SQLITE_STATIC);
+    transaction tx(*this);
     auto rc = sqlite3_step(rm_pl->ptr());
-    if (rc == SQLITE_ROW)
-    {
-        rm_pls->reset();
-        sqlite3_bind_int64(rm_pls->ptr(), 1, sqlite3_column_int64(rm_pl->ptr(), 0));
-        rc = sqlite3_step(rm_pls->ptr());
-        if (rc != SQLITE_DONE)
-            throw std::runtime_error("Could not remove song references for playlist '"s + pl + "': " + sqlite3_errstr(rc));
-    }
-    else
-    {
+    if (rc != SQLITE_DONE)
         throw std::runtime_error("Could not remove playlist '"s + pl + "': " + sqlite3_errstr(rc));
-    }
+    tx.commit();
     CHUCHO_DEBUG_L("Removed playlist '"s + pl + "'");
 }
 
@@ -763,6 +760,7 @@ void database::remove_song(const std::string& s)
         rc3 = sqlite3_step(rem_b->ptr());
         if (rc3 != SQLITE_DONE)
             throw std::runtime_error("Could not remove bar: "s + sqlite3_errstr(rc3));
+        CHUCHO_DEBUG_L("Removed bar with id " << bar_id);
     }
 
     // 3. Remove the song from any playlists that reference it.
@@ -782,76 +780,9 @@ void database::remove_song(const std::string& s)
         throw std::runtime_error("Could not remove song '"s + s + "': " + sqlite3_errstr(rc5));
 
     tx.commit();
+
+    CHUCHO_DEBUG_L("Remove the song '" << s << "'");
 }
-
-//void database::remove_song(const std::string& s)
-//{
-
-    //assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
-    //assert(prepared_statements_.count(statement::SELECT_CHORDS_BY_BAR) == 1);
-    //assert(prepared_statements_.count(statement::REMOVE_BAR) == 1);
-    //assert(prepared_statements_.count(statement::REMOVE_SONG) == 1);
-    //assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
-    //auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
-    //auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
-    //auto rem_b = prepared_statements_[statement::REMOVE_BAR];
-    //sel_s->reset();
-    //sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
-    //auto rc = sqlite3_step(sel_s->ptr());
-    //auto song_id = sqlite3_column_int64(sel_s->ptr(), 0);
-    //if (rc == SQLITE_ROW)
-    //{
-        //// Remove the song
-        //auto rem_s = prepared_statements_[statement::REMOVE_SONG];
-        //rem_s->reset();
-        //sqlite3_bind_int64(rem_s->ptr(), 1, song_id);
-        //auto rc2 = sqlite3_step(rem_s->ptr());
-        //if (rc2 != SQLITE_DONE)
-            //throw std::runtime_error("Could not remove song '"s + s + "': " + sqlite3_errstr(rc2));
-        //assert(prepared_statements_.count(statement::SELECT_SONG_BARS) == 1);
-        //auto sel_bids = prepared_statements_[statement::SELECT_SONG_BARS];
-        //sel_bids->reset();
-        //sqlite3_bind_int64(sel_bids->ptr(), 1, song_id);
-        //rc2 = sqlite3_step(sel_bids->ptr());
-        //while (rc2 == SQLITE_ROW)
-        //{
-            //auto bar_id = sqlite3_column_int64(sel_bids->ptr(), 0);
-            //// Remove the bar itself
-            //rem_b->reset();
-            //sqlite3_bind_int64(rem_b->ptr(), 1, bar_id);
-            //auto rc3 = sqlite3_step(rem_b->ptr());
-            //if (rc3 != SQLITE_DONE)
-                //throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
-            //// Now maybe_remove_chord on the bar. If the chord is removed, then all of
-            //// its bar_chords will also be removed thanks to cascading
-            //sel_cs->reset();
-            //sqlite3_bind_int64(sel_cs->ptr(), 1, bar_id);
-            //rc3 = sqlite3_step(sel_cs->ptr());
-            //while (rc3 == SQLITE_ROW)
-            //{
-                //maybe_remove_chord(bar_id, sqlite3_column_int64(sel_cs->ptr(), 0));
-                //rc3 = sqlite3_step(sel_cs->ptr());
-            //}
-            //if (rc3 != SQLITE_DONE)
-                //throw std::runtime_error("Could not remove chords:"s + sqlite3_errstr(rc3));
-            //// Then remove all bar_chords for this bar
-            ////rem_bcs->reset();
-            ////sqlite3_bind_int64(rem_bcs->ptr(), 1, bar_id);
-            ////rc3 = sqlite3_step(rem_bcs->ptr());
-            ////if (rc3 != SQLITE_DONE)
-                ////throw std::runtime_error("Could not remove bar:"s + sqlite3_errstr(rc3));
-
-            //rc2 = sqlite3_step(sel_bids->ptr());
-        //}
-    //}
-    //// Remove the song from any playlists that have it
-    //auto rem_ps = prepared_statements_[statement::REMOVE_PLAYLIST_SONGS];
-    //rem_ps->reset();
-    //sqlite3_bind_int64(rem_ps->ptr(), 1, song_id);
-    //rc = sqlite3_step(rem_ps->ptr());
-    //if (rc != SQLITE_DONE)
-        //throw std::runtime_error("Could not remove song '"s + s + "' from playlists: " + sqlite3_errstr(rc));
-//}
 
 std::vector<model::bar> database::select_bars(std::uint64_t song_id)
 {
@@ -863,7 +794,7 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
     auto raw = sel_bs->ptr();
     auto sel_b = prepared_statements_[statement::SELECT_BAR];
     sqlite3_bind_int64(raw, 1, song_id);
-   auto rc = sqlite3_step(raw);
+    auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
         sel_b->reset();
@@ -958,6 +889,7 @@ model::playlist database::select_playlist(const std::string& name)
     model::playlist p(name);
     assert(prepared_statements_.count(statement::SELECT_PLAYLIST_ID) == 1);
     auto sel_p = prepared_statements_[statement::SELECT_PLAYLIST_ID];
+    transaction tx(*this);
     sel_p->reset();
     sqlite3_bind_text(sel_p->ptr(), 1, name.c_str(), name.length(), SQLITE_STATIC);
     auto rc = sqlite3_step(sel_p->ptr());
@@ -981,6 +913,7 @@ model::playlist database::select_playlist(const std::string& name)
     {
         throw std::runtime_error("Error retrieving playlist: "s + sqlite3_errstr(rc));
     }
+    tx.commit();
     return p;
 }
 
@@ -1025,9 +958,9 @@ model::song database::select_song(const std::string& name)
     model::song found(name);
     assert(prepared_statements_.count(statement::SELECT_SONG) == 1);
     auto sel_s = prepared_statements_[statement::SELECT_SONG];
-    transaction tx(*this);
     sel_s->reset();
     auto raw = sel_s->ptr();
+    transaction tx(*this);
     sqlite3_bind_text(raw, 1, name.c_str(), name.length(), SQLITE_STATIC);
     auto rc = sqlite3_step(raw);
     if (rc == SQLITE_ROW)
@@ -1072,11 +1005,7 @@ std::uint64_t database::time_signature_id(const model::time_signature& ts)
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a time signature: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
-    auto id = sqlite3_column_int64(raw, 0);
-    // Reset them so that the enclosing transaction can be committed
-    sel_ts->reset();
-    ins_ts->reset();
-    return id;
+    return sqlite3_column_int64(raw, 0);
 }
 
 }
