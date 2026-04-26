@@ -55,7 +55,6 @@ private:
         REMOVE_BAR,
         REMOVE_CHORD,
         SELECT_CHORD_NOT_IN_BAR,
-        //REMOVE_BAR_CHORDS,
         REMOVE_PLAYLIST_SONGS,
         REMOVE_PLAYLIST
     };
@@ -71,6 +70,19 @@ private:
 
     private:
         sqlite3_stmt* stmt_;
+    };
+
+    class transaction
+    {
+    public:
+        transaction(database& db);
+        ~transaction();
+
+        void commit();
+
+    private:
+        database& db_;
+        bool is_committed_;
     };
 
     std::uint64_t insert_bar(const model::bar& b);

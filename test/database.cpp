@@ -147,17 +147,18 @@ protected:
 
 }
 
-//TEST_F(db_test, one_song)
-//{
-    //model::song s("doggies");
-    //s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare simple song");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, one_song)
+{
+    model::song s("doggies");
+    s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
+    EXPECT_NO_THROW(db_->insert_song(s));
+    model::song found("hello");
+    EXPECT_NO_THROW(found = db_->select_song("doggies"));
+    CHUCHO_INFO_L("About to compare simple song");
+    expect_song(s, found);
+    EXPECT_NO_THROW(db_->remove_song("doggies"));
+    EXPECT_THROW(db_->select_song("doggies"), std::runtime_error);
+}
 
 //TEST_F(db_test, all_chord_attrs)
 //{
