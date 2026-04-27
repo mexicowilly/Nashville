@@ -2,6 +2,7 @@
 #include "../database.hpp"
 #include <filesystem>
 #include <chucho/log.hpp>
+#include <chrono>
 
 using namespace nashville;
 
@@ -153,188 +154,214 @@ TEST_F(db_test, one_song)
     s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found("hello");
+    auto start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(found = db_->select_song("doggies"));
+    std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
+    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " microseconds");
     CHUCHO_INFO_L("About to compare simple song");
     expect_song(s, found);
     EXPECT_NO_THROW(db_->remove_song("doggies"));
     EXPECT_THROW(db_->select_song("doggies"), std::runtime_error);
 }
 
-//TEST_F(db_test, all_chord_attrs)
-//{
-    //model::song s("funny chord");
-    //auto& ch = s.add_bar().add_chord();
-    //ch.number(7)
-      //.bass_note(4)
-      //.bass_note_step(model::chord::flat_sharp::FLAT)
-      //.duration(model::chord::time::DOTTED_HALF)
-      //.extensions("maj7")
-      //.is_diamond(true)
-      //.is_pushed(true)
-      //.is_staccato(true)
-      //.is_tied(true)
-      //.mode(model::chord::type::AUGMENTED)
-      //.step(model::chord::flat_sharp::FLAT);
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare funny chord");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, all_chord_attrs)
+{
+    model::song s("funny chord");
+    auto& b = s.add_bar();
+    auto& ch = b.add_chord();
+    ch.number(7)
+      .bass_note(4)
+      .bass_note_step(model::chord::flat_sharp::FLAT)
+      .duration(model::chord::time::DOTTED_HALF)
+      .extensions("maj7")
+      .is_diamond(true)
+      .is_pushed(true)
+      .is_tied(true)
+      .mode(model::chord::type::AUGMENTED)
+      .step(model::chord::flat_sharp::FLAT);
+    auto& ch2 = b.add_chord();
+    ch2.number(2)
+       .bass_note(3)
+       .bass_note_step(model::chord::flat_sharp::SHARP)
+       .duration(model::chord::time::EIGHTH)
+       .extensions("add6")
+       .is_staccato(true)
+       .mode(model::chord::type::DIMINISHED);
+    EXPECT_NO_THROW(db_->insert_song(s));
+    model::song found("uh");
+    EXPECT_NO_THROW(found = db_->select_song("funny chord"));
+    CHUCHO_INFO_L("About to compare funny chord");
+    expect_song(s, found);
+}
 
-//TEST_F(db_test, all_bar_attrs)
-//{
-    //model::song s("bar attrs");
-    //auto& b = s.add_bar();
-    //b.is_eol(true)
-     //.section("doggies")
-     //.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
-     //.add_chord();
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare funny bar");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, all_bar_attrs)
+{
+    model::song s("bar attrs");
+    auto& b = s.add_bar();
+    b.is_eol(true)
+     .section("doggies")
+     .time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     .add_chord();
+    EXPECT_NO_THROW(db_->insert_song(s));
+    model::song found("uh");
+    EXPECT_NO_THROW(found = db_->select_song("bar attrs"));
+    CHUCHO_INFO_L("About to compare funny bar");
+    expect_song(s, found);
+}
 
-//TEST_F(db_test, all_song_attrs)
-//{
-    //model::song s("song attrs");
-    //s.key("G Minor")
-     //.time_sig(model::time_signature().count(12).kind(model::time_signature::beat_type::EIGHTH))
-     //.tempo({ 240, model::chord::time::QUARTER })
-     //.bars_per_line(72);
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare song attrs");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, all_song_attrs)
+{
+    model::song s("song attrs");
+    s.key("G Minor")
+     .time_sig(model::time_signature().count(12).kind(model::time_signature::beat_type::EIGHTH))
+     .tempo({ 240, model::chord::time::QUARTER })
+     .bars_per_line(72);
+    EXPECT_NO_THROW(db_->insert_song(s));
+    model::song found("uh");
+    EXPECT_NO_THROW(found = db_->select_song("song attrs"));
+    CHUCHO_INFO_L("About to compare song attrs");
+    expect_song(s, found);
+}
 
-//TEST_F(db_test, lots_of_bars)
-//{
-    //model::song s("lots of bars");
-    //s.time_sig(model::time_signature().count(4).kind(model::time_signature::beat_type::QUARTER))
-     //.key("C");
-    //model::time_signature ts;
-    //for (int i = 0; i < 10000; i++)
-    //{
-        //auto& b = s.add_bar();
-        //if (i % 4 != 0)
-        //{
-            //switch (i % 3)
-            //{
-            //case 0:
-                //ts.kind(model::time_signature::beat_type::EIGHTH);
-                //break;
-            //case 1:
-                //ts.kind(model::time_signature::beat_type::QUARTER);
-                //break;
-            //case 2:
-                //ts.kind(model::time_signature::beat_type::HALF);
-                //break;
-            //}
-            //ts.count(i % 8);
-            //b.time_sig(ts);
-        //}
-        //b.is_eol(i & 1)
-         //.section(std::to_string(i) + " section");
-        //auto& ch = b.add_chord();
-        //ch.number((i % 7) + 1);
-    //}
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare lots of bars");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, lots_of_bars)
+{
+    model::song s("lots of bars");
+    s.time_sig(model::time_signature().count(4).kind(model::time_signature::beat_type::QUARTER))
+     .key("C");
+    model::time_signature ts;
+    for (int i = 0; i < 10000; i++)
+    {
+        auto& b = s.add_bar();
+        if (i % 4 != 0)
+        {
+            switch (i % 3)
+            {
+            case 0:
+                ts.kind(model::time_signature::beat_type::EIGHTH);
+                break;
+            case 1:
+                ts.kind(model::time_signature::beat_type::QUARTER);
+                break;
+            case 2:
+                ts.kind(model::time_signature::beat_type::HALF);
+                break;
+            }
+            ts.count(i % 8);
+            b.time_sig(ts);
+        }
+        b.is_eol(i & 1)
+         .section(std::to_string(i) + " section");
+        auto& ch = b.add_chord();
+        ch.number((i % 7) + 1);
+    }
+    auto start = std::chrono::high_resolution_clock::now();
+    EXPECT_NO_THROW(db_->insert_song(s));
+    std::chrono::duration<double, std::milli> elapsed = std::chrono::high_resolution_clock::now() - start;
+    CHUCHO_INFO_L("Inserting one song took " << elapsed.count() << " milliseconds");
+    model::song found("uh");
+    start = std::chrono::high_resolution_clock::now();
+    EXPECT_NO_THROW(found = db_->select_song("lots of bars"));
+    elapsed = std::chrono::high_resolution_clock::now() - start;
+    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " milliseconds");
+    CHUCHO_INFO_L("About to compare lots of bars");
+    expect_song(s, found);
+}
 
-//TEST_F(db_test, lots_of_chords)
-//{
-    //model::song s("lots of chords");
-    //s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
-     //.key("D minor");
-    //auto& b = s.add_bar();
-    //for (int i = 0; i < 100; i++)
-    //{
-        //for (int j = 1; j <= 7; j++)
-        //{
-            //for (int k = 0; k <= 7; k++)
-            //{
-                //auto& ch = b.add_chord();
-                //ch.number(j);
-                //if (k > 0)
-                    //ch.bass_note(k);
-                //switch (k % 3)
-                //{
-                //case 1:
-                    //ch.bass_note_step(model::chord::flat_sharp::FLAT);
-                    //break;
-                //case 2:
-                    //ch.bass_note_step(model::chord::flat_sharp::FLAT);
-                    //break;
-                //}
-                //switch (i % 9)
-                //{
-                //case 1:
-                    //ch.duration(model::chord::time::SIXTEENTH);
-                    //break;
-                //case 2:
-                    //ch.duration(model::chord::time::EIGHTH);
-                    //break;
-                //case 3:
-                    //ch.duration(model::chord::time::DOTTED_EIGHTH);
-                    //break;
-                //case 4:
-                    //ch.duration(model::chord::time::QUARTER);
-                    //break;
-                //case 5:
-                    //ch.duration(model::chord::time::DOTTED_QUARTER);
-                    //break;
-                //case 6:
-                    //ch.duration(model::chord::time::HALF);
-                    //break;
-                //case 7:
-                    //ch.duration(model::chord::time::DOTTED_HALF);
-                    //break;
-                //case 8:
-                    //ch.duration(model::chord::time::WHOLE);
-                    //break;
-                //}
-                //ch.extensions(std::string("ext ") + std::to_string(i & 1));
-                //ch.is_diamond(i & 1);
-                //ch.is_pushed(i & 1);
-                //ch.is_staccato(i & 1);
-                //ch.is_tied(i % 1);
-                //ch.mode(static_cast<model::chord::type>(i % 5));
-            //}
-        //}
-    //}
-    //EXPECT_NO_THROW(db_->insert_songs({ s }));
-    //std::vector<model::song> found;
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(1, found.size());
-    //CHUCHO_INFO_L("About to compare lots of chords");
-    //expect_song(s, found[0]);
-//}
+TEST_F(db_test, lots_of_chords)
+{
+    model::song s("lots of chords");
+    s.time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     .key("D minor");
+    auto& b = s.add_bar();
+    for (int i = 0; i < 100; i++)
+    {
+        for (int j = 1; j <= 7; j++)
+        {
+            for (int k = 0; k <= 7; k++)
+            {
+                auto& ch = b.add_chord();
+                ch.number(j);
+                if (k > 0)
+                    ch.bass_note(k);
+                switch (k % 3)
+                {
+                case 1:
+                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    break;
+                case 2:
+                    ch.bass_note_step(model::chord::flat_sharp::FLAT);
+                    break;
+                }
+                switch (i % 9)
+                {
+                case 1:
+                    ch.duration(model::chord::time::SIXTEENTH);
+                    break;
+                case 2:
+                    ch.duration(model::chord::time::EIGHTH);
+                    break;
+                case 3:
+                    ch.duration(model::chord::time::DOTTED_EIGHTH);
+                    break;
+                case 4:
+                    ch.duration(model::chord::time::QUARTER);
+                    break;
+                case 5:
+                    ch.duration(model::chord::time::DOTTED_QUARTER);
+                    break;
+                case 6:
+                    ch.duration(model::chord::time::HALF);
+                    break;
+                case 7:
+                    ch.duration(model::chord::time::DOTTED_HALF);
+                    break;
+                case 8:
+                    ch.duration(model::chord::time::WHOLE);
+                    break;
+                }
+                ch.extensions(std::string("ext ") + std::to_string(i & 1));
+                ch.is_diamond(i & 1);
+                ch.is_pushed(i & 1);
+                ch.is_tied(i % 1);
+                ch.mode(static_cast<model::chord::type>(i % 5));
+            }
+        }
+    }
+    EXPECT_NO_THROW(db_->insert_song(s));
+    model::song found("uh");
+    EXPECT_NO_THROW(found = db_->select_song("lots of chords"));
+    CHUCHO_INFO_L("About to compare lots of chords");
+    expect_song(s, found);
+}
 
-//TEST_F(db_test, lots_of_songs)
-//{
-    //auto songs = create_songs(10000);
-    //CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
-    //EXPECT_NO_THROW(db_->insert_songs(songs));
-    //std::vector<model::song> found;
-    //CHUCHO_INFO_L("Retrieving " << songs.size() << " songs");
-    //EXPECT_NO_THROW(found = db_->select_songs());
-    //ASSERT_EQ(songs.size(), found.size());
-    //CHUCHO_INFO_L("About to compare lots of songs");
-    //for (int i = 0; i < songs.size(); i++)
-        //expect_song(songs[i], found[i]);
-//}
+TEST_F(db_test, lots_of_songs)
+{
+    auto songs = create_songs(10000);
+    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(db_->insert_song(s));
+    std::vector<model::song> found;
+    CHUCHO_INFO_L("Retrieving " << songs.size() << " songs");
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(found.push_back(db_->select_song(s.name())));
+    ASSERT_EQ(songs.size(), found.size());
+    CHUCHO_INFO_L("About to compare lots of songs");
+    for (int i = 0; i < songs.size(); i++)
+        expect_song(songs[i], found[i]);
+    auto start = std::chrono::high_resolution_clock::now();
+    EXPECT_NO_THROW(db_->select_song(songs[4000].name()));
+    std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
+    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " microseconds");
+    start = std::chrono::high_resolution_clock::now();
+    EXPECT_NO_THROW(db_->remove_song(songs[7000].name()));
+    elapsed = std::chrono::high_resolution_clock::now() - start;
+    CHUCHO_INFO_L("Removing one song took " << elapsed.count() << " microseconds");
+    EXPECT_THROW(db_->select_song(songs[7000].name()), std::runtime_error);
+}
+
+TEST_F(db_test, one_playlist)
+{
+}
 
 //TEST_F(db_test, lots_of_playlists)
 //{

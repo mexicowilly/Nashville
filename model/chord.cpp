@@ -48,12 +48,18 @@ std::ostream& operator<< (std::ostream& out, const chord& c)
                 out << (*c.bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
             out << *c.bass_note_;
         }
-        if (c.is_staccato_ || c.is_diamond_ || c.is_tied_)
+        if (c.is_staccato_ || c.is_diamond_ || c.is_tied_ || c.is_pushed_)
         {
             out << " (";
             if (c.is_diamond_)
             {
                 out << "d";
+                if (c.is_staccato_ || c.is_tied_ || c.is_pushed_)
+                    out << ",";
+            }
+            if (c.is_pushed_)
+            {
+                out << "p";
                 if (c.is_staccato_ || c.is_tied_)
                     out << ",";
             }
@@ -113,6 +119,8 @@ bool chord::operator== (const chord& other) const
            extensions_ == other.extensions_ &&
            is_staccato_ == other.is_staccato_ &&
            is_diamond_ == other.is_diamond_ &&
+           is_tied_ == other.is_tied_ &&
+           is_pushed_ == other.is_pushed_ &&
            duration_ == other.duration_;
 }
 

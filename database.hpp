@@ -55,7 +55,6 @@ private:
         REMOVE_BAR,
         REMOVE_CHORD,
         SELECT_CHORD_NOT_IN_BAR,
-        REMOVE_PLAYLIST_SONGS,
         REMOVE_PLAYLIST
     };
 
@@ -83,6 +82,7 @@ private:
     private:
         database& db_;
         bool is_committed_;
+        bool is_active_;
     };
 
     std::uint64_t insert_bar(const model::bar& b);

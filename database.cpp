@@ -268,10 +268,6 @@ const char* REMOVE_BAR_SQL = R"(
 DELETE FROM bar WHERE id = ?1;
 )";
 
-const char* REMOVE_PLAYLIST_SONGS_SQL = R"(
-DELETE FROM playlist_songs WHERE song_id = ?1;
-)";
-
 const char* REMOVE_PLAYLIST_SQL = R"(
 DELETE FROM playlist WHERE name = ?1;
 )";
@@ -308,35 +304,52 @@ void database::prepared::reset()
 
 database::transaction::transaction(database& db)
     : db_(db),
-      is_committed_(false)
+      is_committed_(false),
+      is_active_(false)
 {
-    char* err = nullptr;
-    if (sqlite3_exec(db.db_, "BEGIN;", nullptr, nullptr, &err) != SQLITE_OK)
+    if (sqlite3_txn_state(db.db_, nullptr) == SQLITE_TXN_NONE)
     {
-        std::string msg = err ? err : "unknown error";
-        sqlite3_free(err);
-        throw std::runtime_error("Could not begin transaction: " + msg);
+        char* err = nullptr;
+        if (sqlite3_exec(db.db_, "BEGIN;", nullptr, nullptr, &err) != SQLITE_OK)
+        {
+            std::string msg = err ? err : "unknown error";
+            sqlite3_free(err);
+            throw std::runtime_error("Could not begin transaction: " + msg);
+        }
+        is_active_ = true;
+        CHUCHO_DEBUG_STR(db.get_logger(), "Created active transaction");
+    }
+    else
+    {
+        CHUCHO_DEBUG_STR(db.get_logger(), "Created inactive transaction");
     }
 }
 
 database::transaction::~transaction()
 {
-    if (!is_committed_)
+    if (is_active_ && !is_committed_)
+    {
         sqlite3_exec(db_.db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        CHUCHO_DEBUG_STR(db_.get_logger(), "Rolled back active transaction");
+    }
 }
 
 void database::transaction::commit()
 {
-    for (auto& p : db_.prepared_statements_)
-        p.second->reset();
-    char* err = nullptr;
-    if (sqlite3_exec(db_.db_, "COMMIT;", nullptr, nullptr, &err) != SQLITE_OK)
+    if (is_active_)
     {
-        std::string msg = err ? err : "unknown error";
-        sqlite3_free(err);
-        throw std::runtime_error("Could not commit transaction: " + msg);
+        for (auto& p : db_.prepared_statements_)
+            p.second->reset();
+        char* err = nullptr;
+        if (sqlite3_exec(db_.db_, "COMMIT;", nullptr, nullptr, &err) != SQLITE_OK)
+        {
+            std::string msg = err ? err : "unknown error";
+            sqlite3_free(err);
+            throw std::runtime_error("Could not commit transaction: " + msg);
+        }
+        is_committed_ = true;
+        CHUCHO_DEBUG_STR(db_.get_logger(), "Committed active transaction");
     }
-    is_committed_ = true;
 }
 
 database::database()
@@ -394,8 +407,7 @@ database::database(const std::filesystem::path& file_name)
             { statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
             { statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
             { statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
-            { statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) },
-            { statement::REMOVE_PLAYLIST_SONGS, std::make_shared<prepared>(db_, REMOVE_PLAYLIST_SONGS_SQL) }
+            { statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) }
         };
     }
     catch (std::invalid_argument& e)
@@ -570,6 +582,7 @@ void database::insert_song(const model::song& s)
     auto raw = ins_s->ptr();
     int rc;
     bool inserted_new = true;
+    transaction tx(*this);
     for (int i = 0; i < 2; i++)
     {
         ins_s->reset();
@@ -595,7 +608,6 @@ void database::insert_song(const model::song& s)
         throw std::runtime_error("Unable to insert song '"s + s.name() + "': " + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
     auto song_id = sqlite3_column_int64(raw, 0);
-    transaction tx(*this);
     for (unsigned i = 0; i < s.bars().size(); i++)
     {
         auto& cur_bar = s.bars()[i];
@@ -676,7 +688,6 @@ void database::move_to_file(const std::filesystem::path& file_name)
 void database::remove_playlist(const std::string& pl)
 {
     assert(prepared_statements_.count(statement::REMOVE_PLAYLIST) == 1);
-    assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
     auto rm_pl = prepared_statements_[statement::REMOVE_PLAYLIST];
     rm_pl->reset();
     sqlite3_bind_text(rm_pl->ptr(), 1, pl.c_str(), pl.length(), SQLITE_STATIC);
@@ -695,14 +706,14 @@ void database::remove_song(const std::string& s)
     assert(prepared_statements_.count(statement::SELECT_CHORDS_BY_BAR) == 1);
     assert(prepared_statements_.count(statement::REMOVE_BAR) == 1);
     assert(prepared_statements_.count(statement::REMOVE_SONG) == 1);
-    assert(prepared_statements_.count(statement::REMOVE_PLAYLIST_SONGS) == 1);
 
     auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
     auto sel_bids = prepared_statements_[statement::SELECT_SONG_BARS];
     auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
     auto rem_b  = prepared_statements_[statement::REMOVE_BAR];
-    auto rem_ps = prepared_statements_[statement::REMOVE_PLAYLIST_SONGS];
     auto rem_s = prepared_statements_[statement::REMOVE_SONG];
+
+    transaction tx(*this);
 
     // Look up the song's ID. If it doesn't exist, there's nothing to do.
     sel_s->reset();
@@ -713,8 +724,6 @@ void database::remove_song(const std::string& s)
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not look up song '"s + s + "': " + sqlite3_errstr(rc));
     auto song_id = sqlite3_column_int64(sel_s->ptr(), 0);
-
-    transaction tx(*this);
 
     // 1. Collect all bar IDs for this song BEFORE deleting anything,
     //    because deleting the song cascades song_bars rows away.
@@ -762,14 +771,6 @@ void database::remove_song(const std::string& s)
             throw std::runtime_error("Could not remove bar: "s + sqlite3_errstr(rc3));
         CHUCHO_DEBUG_L("Removed bar with id " << bar_id);
     }
-
-    // 3. Remove the song from any playlists that reference it.
-    //    (Requires REMOVE_PLAYLIST_SONGS_SQL to filter by song_id.)
-    rem_ps->reset();
-    sqlite3_bind_int64(rem_ps->ptr(), 1, song_id);
-    auto rc4 = sqlite3_step(rem_ps->ptr());
-    if (rc4 != SQLITE_DONE)
-        throw std::runtime_error("Could not remove song '"s + s + "' from playlists: " + sqlite3_errstr(rc4));
 
     // 4. Finally, remove the song row itself. song_bars cascade is now
     //    a no-op because we already cleared the relevant bars above.
