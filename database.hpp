@@ -98,7 +98,7 @@ private:
     // These are shared pointers so that the database will remain copyable.
     // It also facilitates creating the map with a bracketed initialization
     // list.
-    std::map<statement, std::shared_ptr<prepared>> prepared_statements_;
+    std::map<statement, std::unique_ptr<prepared>> prepared_statements_;
 };
 
 inline bool database::in_memory() const

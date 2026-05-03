@@ -244,8 +244,7 @@ ORDER BY playlist_songs.song_index;
 
 const char* INSERT_PLAYLIST_SONG_SQL = R"(
 INSERT INTO playlist_songs (song_id, playlist_id, song_index)
-VALUES (?1, ?2, ?3)
-RETURNING id;
+VALUES (?1, ?2, ?3);
 )";
 
 const char* SELECT_PLAYLIST_ID_SQL = R"(
@@ -382,33 +381,67 @@ database::database(const std::filesystem::path& file_name)
     CHUCHO_DEBUG_L_STR("Successfully loaded the schema");
     try
     {
-        prepared_statements_ =
+        struct stmt_def { statement key; const char* sql; };
+        const stmt_def defs[] =
         {
-            { statement::SELECT_CHORD, std::make_shared<prepared>(db_, SELECT_CHORD_SQL) },
-            { statement::SELECT_CHORD_BY_ID, std::make_shared<prepared>(db_, SELECT_CHORD_BY_ID_SQL) },
-            { statement::INSERT_CHORD, std::make_shared<prepared>(db_, INSERT_CHORD_SQL) },
-            { statement::SELECT_BAR, std::make_shared<prepared>(db_, SELECT_BAR_SQL) },
-            { statement::INSERT_BAR, std::make_shared<prepared>(db_, INSERT_BAR_SQL) },
-            { statement::SELECT_CHORDS_BY_BAR, std::make_shared<prepared>(db_, SELECT_CHORDS_BY_BAR_SQL) },
-            { statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
-            { statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
-            { statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) },
-            { statement::SELECT_SONG_ID, std::make_shared<prepared>(db_, SELECT_SONG_ID_SQL) },
-            { statement::INSERT_SONG, std::make_shared<prepared>(db_, INSERT_SONG_SQL) },
-            { statement::SELECT_SONG_BARS, std::make_shared<prepared>(db_, SELECT_SONG_BARS_SQL) },
-            { statement::INSERT_SONG_BAR, std::make_shared<prepared>(db_, INSERT_SONG_BAR_SQL) },
-            { statement::INSERT_PLAYLIST, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SQL) },
-            { statement::SELECT_PLAYLIST_SONGS, std::make_shared<prepared>(db_, SELECT_PLAYLIST_SONGS_SQL) },
-            { statement::INSERT_PLAYLIST_SONG, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SONG_SQL) },
-            { statement::SELECT_SONG_NAMES, std::make_shared<prepared>(db_, SELECT_SONG_NAMES_SQL) },
-            { statement::SELECT_SONG, std::make_shared<prepared>(db_, SELECT_SONG_SQL) },
-            { statement::SELECT_PLAYLIST_NAMES, std::make_shared<prepared>(db_, SELECT_PLAYLIST_NAMES_SQL) },
-            { statement::SELECT_PLAYLIST_ID, std::make_shared<prepared>(db_, SELECT_PLAYLIST_ID_SQL) },
-            { statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
-            { statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
-            { statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
-            { statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) }
+            { statement::SELECT_CHORD,           SELECT_CHORD_SQL },
+            { statement::SELECT_CHORD_BY_ID,     SELECT_CHORD_BY_ID_SQL },
+            { statement::INSERT_CHORD,           INSERT_CHORD_SQL },
+            { statement::SELECT_BAR,             SELECT_BAR_SQL },
+            { statement::INSERT_BAR,             INSERT_BAR_SQL },
+            { statement::SELECT_CHORDS_BY_BAR,   SELECT_CHORDS_BY_BAR_SQL },
+            { statement::SELECT_TIME_SIGNATURE,  SELECT_TIME_SIGNATURE_SQL },
+            { statement::INSERT_TIME_SIGNATURE,  INSERT_TIME_SIGNATURE_SQL },
+            { statement::INSERT_BAR_CHORD,       INSERT_BAR_CHORD_SQL },
+            { statement::SELECT_SONG_ID,         SELECT_SONG_ID_SQL },
+            { statement::INSERT_SONG,            INSERT_SONG_SQL },
+            { statement::SELECT_SONG_BARS,       SELECT_SONG_BARS_SQL },
+            { statement::INSERT_SONG_BAR,        INSERT_SONG_BAR_SQL },
+            { statement::INSERT_PLAYLIST,        INSERT_PLAYLIST_SQL },
+            { statement::SELECT_PLAYLIST_SONGS,  SELECT_PLAYLIST_SONGS_SQL },
+            { statement::INSERT_PLAYLIST_SONG,   INSERT_PLAYLIST_SONG_SQL },
+            { statement::SELECT_SONG_NAMES,      SELECT_SONG_NAMES_SQL },
+            { statement::SELECT_SONG,            SELECT_SONG_SQL },
+            { statement::SELECT_PLAYLIST_NAMES,  SELECT_PLAYLIST_NAMES_SQL },
+            { statement::SELECT_PLAYLIST_ID,     SELECT_PLAYLIST_ID_SQL },
+            { statement::SELECT_CHORD_NOT_IN_BAR, SELECT_CHORD_NOT_IN_BAR_SQL },
+            { statement::REMOVE_CHORD,           REMOVE_CHORD_SQL },
+            { statement::REMOVE_BAR,             REMOVE_BAR_SQL },
+            { statement::REMOVE_SONG,            REMOVE_SONG_SQL },
+            { statement::REMOVE_PLAYLIST,        REMOVE_PLAYLIST_SQL },
         };
+
+        for (const auto& d : defs)
+            prepared_statements_.try_emplace(d.key, std::make_unique<prepared>(db_, d.sql));
+
+        //prepared_statements_ =
+        //{
+            //{ statement::SELECT_CHORD, std::make_shared<prepared>(db_, SELECT_CHORD_SQL) },
+            //{ statement::SELECT_CHORD_BY_ID, std::make_shared<prepared>(db_, SELECT_CHORD_BY_ID_SQL) },
+            //{ statement::INSERT_CHORD, std::make_shared<prepared>(db_, INSERT_CHORD_SQL) },
+            //{ statement::SELECT_BAR, std::make_shared<prepared>(db_, SELECT_BAR_SQL) },
+            //{ statement::INSERT_BAR, std::make_shared<prepared>(db_, INSERT_BAR_SQL) },
+            //{ statement::SELECT_CHORDS_BY_BAR, std::make_shared<prepared>(db_, SELECT_CHORDS_BY_BAR_SQL) },
+            //{ statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
+            //{ statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
+            //{ statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) },
+            //{ statement::SELECT_SONG_ID, std::make_shared<prepared>(db_, SELECT_SONG_ID_SQL) },
+            //{ statement::INSERT_SONG, std::make_shared<prepared>(db_, INSERT_SONG_SQL) },
+            //{ statement::SELECT_SONG_BARS, std::make_shared<prepared>(db_, SELECT_SONG_BARS_SQL) },
+            //{ statement::INSERT_SONG_BAR, std::make_shared<prepared>(db_, INSERT_SONG_BAR_SQL) },
+            //{ statement::INSERT_PLAYLIST, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SQL) },
+            //{ statement::SELECT_PLAYLIST_SONGS, std::make_shared<prepared>(db_, SELECT_PLAYLIST_SONGS_SQL) },
+            //{ statement::INSERT_PLAYLIST_SONG, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SONG_SQL) },
+            //{ statement::SELECT_SONG_NAMES, std::make_shared<prepared>(db_, SELECT_SONG_NAMES_SQL) },
+            //{ statement::SELECT_SONG, std::make_shared<prepared>(db_, SELECT_SONG_SQL) },
+            //{ statement::SELECT_PLAYLIST_NAMES, std::make_shared<prepared>(db_, SELECT_PLAYLIST_NAMES_SQL) },
+            //{ statement::SELECT_PLAYLIST_ID, std::make_shared<prepared>(db_, SELECT_PLAYLIST_ID_SQL) },
+            //{ statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
+            //{ statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
+            //{ statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
+            //{ statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) },
+            //{ statement::REMOVE_PLAYLIST, std::make_shared<prepared>(db_, REMOVE_PLAYLIST_SQL) }
+        //};
     }
     catch (std::invalid_argument& e)
     {
@@ -427,7 +460,7 @@ database::~database()
 std::uint64_t database::insert_bar(const model::bar& b)
 {
     assert(prepared_statements_.count(statement::INSERT_BAR) == 1);
-    auto ins_b = prepared_statements_[statement::INSERT_BAR];
+    auto& ins_b = prepared_statements_[statement::INSERT_BAR];
     ins_b->reset();
     auto raw = ins_b->ptr();
     if (b.time_sig())
@@ -446,7 +479,7 @@ std::uint64_t database::insert_bar(const model::bar& b)
 std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index)
 {
     assert(prepared_statements_.count(statement::INSERT_BAR_CHORD) == 1);
-    auto ins_bc = prepared_statements_[statement::INSERT_BAR_CHORD];
+    auto& ins_bc = prepared_statements_[statement::INSERT_BAR_CHORD];
     ins_bc->reset();
     auto raw = ins_bc->ptr();
     sqlite3_bind_int(raw, 1, chord_id);
@@ -463,7 +496,7 @@ std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t cho
 std::uint64_t database::insert_chord(const model::chord& c)
 {
     assert(prepared_statements_.count(statement::SELECT_CHORD) == 1);
-    auto sel_c = prepared_statements_[statement::SELECT_CHORD];
+    auto& sel_c = prepared_statements_[statement::SELECT_CHORD];
     sel_c->reset();
     auto raw = sel_c->ptr();
     sqlite3_bind_int(raw, 1, c.number());
@@ -489,7 +522,7 @@ std::uint64_t database::insert_chord(const model::chord& c)
         return sqlite3_column_int64(raw, 0);
     }
     assert(prepared_statements_.count(statement::INSERT_CHORD) == 1);
-    auto ins_c = prepared_statements_[statement::INSERT_CHORD];
+    auto& ins_c = prepared_statements_[statement::INSERT_CHORD];
     ins_c->reset();
     raw = ins_c->ptr();
     sqlite3_bind_int(raw, 1, c.number());
@@ -520,9 +553,9 @@ void database::insert_playlist(const model::playlist& pl)
     assert(prepared_statements_.count(statement::INSERT_PLAYLIST) == 1);
     assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
     assert(prepared_statements_.count(statement::INSERT_PLAYLIST_SONG) == 1);
-    auto ins_pl = prepared_statements_[statement::INSERT_PLAYLIST];
-    auto sel_sid = prepared_statements_[statement::SELECT_SONG_ID];
-    auto ins_ps = prepared_statements_[statement::INSERT_PLAYLIST_SONG];
+    auto& ins_pl = prepared_statements_[statement::INSERT_PLAYLIST];
+    auto& sel_sid = prepared_statements_[statement::SELECT_SONG_ID];
+    auto& ins_ps = prepared_statements_[statement::INSERT_PLAYLIST_SONG];
     auto raw = ins_pl->ptr();
     int rc;
     bool inserted_new = true;
@@ -578,7 +611,7 @@ void database::insert_playlist(const model::playlist& pl)
 void database::insert_song(const model::song& s)
 {
     assert(prepared_statements_.count(statement::INSERT_SONG) == 1);
-    auto ins_s = prepared_statements_[statement::INSERT_SONG];
+    auto& ins_s = prepared_statements_[statement::INSERT_SONG];
     auto raw = ins_s->ptr();
     int rc;
     bool inserted_new = true;
@@ -628,7 +661,7 @@ void database::insert_song(const model::song& s)
 std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index)
 {
     assert(prepared_statements_.count(statement::INSERT_SONG_BAR) == 1);
-    auto ins_sb = prepared_statements_[statement::INSERT_SONG_BAR];
+    auto& ins_sb = prepared_statements_[statement::INSERT_SONG_BAR];
     ins_sb->reset();
     auto raw = ins_sb->ptr();
     sqlite3_bind_int(raw, 1, bar_id);
@@ -645,7 +678,7 @@ std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar
 void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
 {
     assert(prepared_statements_.count(statement::SELECT_CHORD_NOT_IN_BAR) == 1);
-    auto sel_c = prepared_statements_[statement::SELECT_CHORD_NOT_IN_BAR];
+    auto& sel_c = prepared_statements_[statement::SELECT_CHORD_NOT_IN_BAR];
     sel_c->reset();
     sqlite3_bind_int64(sel_c->ptr(), 1, chord_id);
     sqlite3_bind_int64(sel_c->ptr(), 2, bar_id);
@@ -653,7 +686,7 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
     if (rc == SQLITE_ROW)
         return;
     assert(prepared_statements_.count(statement::REMOVE_CHORD) == 1);
-    auto rem_c = prepared_statements_[statement::REMOVE_CHORD];
+    auto& rem_c = prepared_statements_[statement::REMOVE_CHORD];
     rem_c->reset();
     sqlite3_bind_int64(rem_c->ptr(), 1, chord_id);
     rc = sqlite3_step(rem_c->ptr());
@@ -668,27 +701,55 @@ void database::move_to_file(const std::filesystem::path& file_name)
     auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
     if (back == nullptr)
     {
-        throw std::runtime_error("Could not move database to file '"s +
+        throw std::runtime_error("Could not initialize moving the database to file '"s +
                                  file_name.string() + "': " +
                                  sqlite3_errstr(sqlite3_errcode(other.db_)));
     }
-    auto rc = sqlite3_backup_step(back, -1);
-    sqlite3_backup_finish(back);
-    if (rc != SQLITE_DONE)
+    auto step_rc = sqlite3_backup_step(back, -1);
+    auto finish_rc = sqlite3_backup_finish(back);
+    auto rc = (step_rc == SQLITE_DONE) ? finish_rc : step_rc;
+    if (rc != SQLITE_OK && rc != SQLITE_DONE)
     {
         throw std::runtime_error("Could not move database to file '"s +
                                  file_name.string() + "': " + sqlite3_errstr(rc));
     }
-    *this = other;
-    // Prevent the closing of the database in other
-    other.db_ = nullptr;
+
+    // other already prepared its own statements against its file-backed db_
+    // in its constructor. Swap both members so *this becomes the file-backed
+    // database, and other (about to be destroyed) takes the in-memory one.
+    std::swap(db_, other.db_);
+    std::swap(prepared_statements_, other.prepared_statements_);
+
     CHUCHO_DEBUG_L("Moved the in-memory database to the file '"s + file_name.string() + "'");
 }
+
+//void database::move_to_file(const std::filesystem::path& file_name)
+//{
+    //database other(file_name);
+    //auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
+    //if (back == nullptr)
+    //{
+        //throw std::runtime_error("Could not move database to file '"s +
+                                 //file_name.string() + "': " +
+                                 //sqlite3_errstr(sqlite3_errcode(other.db_)));
+    //}
+    //auto rc = sqlite3_backup_step(back, -1);
+    //sqlite3_backup_finish(back);
+    //if (rc != SQLITE_DONE)
+    //{
+        //throw std::runtime_error("Could not move database to file '"s +
+                                 //file_name.string() + "': " + sqlite3_errstr(rc));
+    //}
+    //*this = other;
+    //// Prevent the closing of the database in other
+    //other.db_ = nullptr;
+    //CHUCHO_DEBUG_L("Moved the in-memory database to the file '"s + file_name.string() + "'");
+//}
 
 void database::remove_playlist(const std::string& pl)
 {
     assert(prepared_statements_.count(statement::REMOVE_PLAYLIST) == 1);
-    auto rm_pl = prepared_statements_[statement::REMOVE_PLAYLIST];
+    auto& rm_pl = prepared_statements_[statement::REMOVE_PLAYLIST];
     rm_pl->reset();
     sqlite3_bind_text(rm_pl->ptr(), 1, pl.c_str(), pl.length(), SQLITE_STATIC);
     transaction tx(*this);
@@ -707,11 +768,11 @@ void database::remove_song(const std::string& s)
     assert(prepared_statements_.count(statement::REMOVE_BAR) == 1);
     assert(prepared_statements_.count(statement::REMOVE_SONG) == 1);
 
-    auto sel_s = prepared_statements_[statement::SELECT_SONG_ID];
-    auto sel_bids = prepared_statements_[statement::SELECT_SONG_BARS];
-    auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
-    auto rem_b  = prepared_statements_[statement::REMOVE_BAR];
-    auto rem_s = prepared_statements_[statement::REMOVE_SONG];
+    auto& sel_s = prepared_statements_[statement::SELECT_SONG_ID];
+    auto& sel_bids = prepared_statements_[statement::SELECT_SONG_BARS];
+    auto& sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
+    auto& rem_b  = prepared_statements_[statement::REMOVE_BAR];
+    auto& rem_s = prepared_statements_[statement::REMOVE_SONG];
 
     transaction tx(*this);
 
@@ -790,10 +851,10 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
     std::vector<model::bar> bars;
     assert(prepared_statements_.count(statement::SELECT_SONG_BARS) == 1);
     assert(prepared_statements_.count(statement::SELECT_BAR) == 1);
-    auto sel_bs = prepared_statements_[statement::SELECT_SONG_BARS];
+    auto& sel_bs = prepared_statements_[statement::SELECT_SONG_BARS];
     sel_bs->reset();
     auto raw = sel_bs->ptr();
-    auto sel_b = prepared_statements_[statement::SELECT_BAR];
+    auto& sel_b = prepared_statements_[statement::SELECT_BAR];
     sqlite3_bind_int64(raw, 1, song_id);
     auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
@@ -837,11 +898,11 @@ std::vector<model::chord> database::select_chords(std::uint64_t bar_id)
     std::vector<model::chord> chords;
     assert(prepared_statements_.count(statement::SELECT_CHORDS_BY_BAR) == 1);
     assert(prepared_statements_.count(statement::SELECT_CHORD_BY_ID) == 1);
-    auto sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
+    auto& sel_cs = prepared_statements_[statement::SELECT_CHORDS_BY_BAR];
     sel_cs->reset();
     auto raw = sel_cs->ptr();
     sqlite3_bind_int64(raw, 1, bar_id);
-    auto sel_c = prepared_statements_[statement::SELECT_CHORD_BY_ID];
+    auto& sel_c = prepared_statements_[statement::SELECT_CHORD_BY_ID];
     auto rc = sqlite3_step(raw);
     while (rc == SQLITE_ROW)
     {
@@ -889,7 +950,7 @@ model::playlist database::select_playlist(const std::string& name)
 {
     model::playlist p(name);
     assert(prepared_statements_.count(statement::SELECT_PLAYLIST_ID) == 1);
-    auto sel_p = prepared_statements_[statement::SELECT_PLAYLIST_ID];
+    auto& sel_p = prepared_statements_[statement::SELECT_PLAYLIST_ID];
     transaction tx(*this);
     sel_p->reset();
     sqlite3_bind_text(sel_p->ptr(), 1, name.c_str(), name.length(), SQLITE_STATIC);
@@ -897,7 +958,7 @@ model::playlist database::select_playlist(const std::string& name)
     if (rc == SQLITE_ROW)
     {
         assert(prepared_statements_.count(statement::SELECT_PLAYLIST_SONGS) == 1);
-        auto sel_ps = prepared_statements_[statement::SELECT_PLAYLIST_SONGS];
+        auto& sel_ps = prepared_statements_[statement::SELECT_PLAYLIST_SONGS];
         sel_ps->reset();
         auto raw = sel_ps->ptr();
         sqlite3_bind_int64(raw, 1, sqlite3_column_int64(sel_p->ptr(), 0));
@@ -922,7 +983,7 @@ std::vector<std::string> database::select_playlist_names()
 {
     std::vector<std::string> names;
     assert(prepared_statements_.count(statement::SELECT_PLAYLIST_NAMES) == 1);
-    auto sel_p = prepared_statements_[statement::SELECT_PLAYLIST_NAMES];
+    auto& sel_p = prepared_statements_[statement::SELECT_PLAYLIST_NAMES];
     sel_p->reset();
     auto raw = sel_p->ptr();
     auto rc = sqlite3_step(raw);
@@ -940,7 +1001,7 @@ std::vector<std::string> database::select_song_names()
 {
     std::vector<std::string> names;
     assert(prepared_statements_.count(statement::SELECT_SONG_NAMES) == 1);
-    auto sel_s = prepared_statements_[statement::SELECT_SONG_NAMES];
+    auto& sel_s = prepared_statements_[statement::SELECT_SONG_NAMES];
     sel_s->reset();
     auto raw = sel_s->ptr();
     auto rc = sqlite3_step(raw);
@@ -958,7 +1019,7 @@ model::song database::select_song(const std::string& name)
 {
     model::song found(name);
     assert(prepared_statements_.count(statement::SELECT_SONG) == 1);
-    auto sel_s = prepared_statements_[statement::SELECT_SONG];
+    auto& sel_s = prepared_statements_[statement::SELECT_SONG];
     sel_s->reset();
     auto raw = sel_s->ptr();
     transaction tx(*this);
@@ -989,8 +1050,8 @@ std::uint64_t database::time_signature_id(const model::time_signature& ts)
 {
     assert(prepared_statements_.count(statement::INSERT_TIME_SIGNATURE) == 1);
     assert(prepared_statements_.count(statement::SELECT_TIME_SIGNATURE) == 1);
-    auto sel_ts = prepared_statements_[statement::SELECT_TIME_SIGNATURE];
-    auto ins_ts = prepared_statements_[statement::INSERT_TIME_SIGNATURE];
+    auto& sel_ts = prepared_statements_[statement::SELECT_TIME_SIGNATURE];
+    auto& ins_ts = prepared_statements_[statement::INSERT_TIME_SIGNATURE];
     sel_ts->reset();
     auto raw = sel_ts->ptr();
     sqlite3_bind_int(raw, 1, static_cast<int>(ts.kind()));

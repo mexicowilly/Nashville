@@ -12,6 +12,14 @@ namespace
 class db_test : public ::testing::Test, public chucho::loggable<db_test>
 {
 protected:
+    std::vector<model::playlist> create_playlists(unsigned num)
+    {
+        std::vector<model::playlist> pls;
+        for (int i = 0; i < num; i++)
+            pls.emplace_back(std::string("playlist ") + std::to_string(i));
+        return pls;
+    }
+
     std::vector<model::song> create_songs(unsigned num)
     {
         std::vector<std::string> keys = { "A", "B", "C", "D", "E", "F", "G",
@@ -19,7 +27,7 @@ protected:
         std::vector<model::song> songs;
         for (int i = 0; i < num; i++)
         {
-            auto s = model::song(std::string("name ") + std::to_string(i));
+            auto s = model::song(std::string("song ") + std::to_string(i));
             s.key(keys[i % 14]);
             model::time_signature ts;
             ts.count((i % 12) + 1);
@@ -66,7 +74,7 @@ protected:
                 break;
             }
             s.tempo(temp);
-            s.bars_per_line((i% 16) + 1);
+            s.bars_per_line((i % 16) + 1);
             for (int j = 0; j < 35; j++)
             {
                 auto& b = s.add_bar();
@@ -104,6 +112,14 @@ protected:
         EXPECT_EQ(lhs.step(), rhs.step());
     }
 
+    void expect_playlist(const model::playlist& lhs, const model::playlist& rhs)
+    {
+        EXPECT_EQ(lhs.name(), rhs.name());
+        ASSERT_EQ(lhs.songs().size(), rhs.songs().size());
+        for (auto i = 0; i < lhs.songs().size(); i++)
+            EXPECT_EQ(lhs.songs()[i], rhs.songs()[i]);
+    }
+
     void expect_song(const model::song& lhs, const model::song& rhs)
     {
         ASSERT_EQ(lhs.bars().size(), rhs.bars().size());
@@ -118,14 +134,13 @@ protected:
 
     virtual void SetUp() override
     {
-        std::string fname = ":memory:";
+        std::filesystem::path fname = ":memory:";
         auto dir = std::getenv("DB_DIR");
         if (dir != nullptr)
         {
-            std::filesystem::path p(dir);
-            std::filesystem::create_directories(p);
-            p /= std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + ".nashv";
-            fname = p.string();
+            std::filesystem::path fname = dir;
+            std::filesystem::create_directories(fname);
+            fname /= std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + ".nashv";
         }
         try
         {
@@ -359,8 +374,69 @@ TEST_F(db_test, lots_of_songs)
     EXPECT_THROW(db_->select_song(songs[7000].name()), std::runtime_error);
 }
 
+TEST_F(db_test, lots_of_song_names)
+{
+    auto songs = create_songs(10000);
+    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(db_->insert_song(s));
+    std::vector<std::string> names;
+    EXPECT_NO_THROW(names = db_->select_song_names());
+    std::vector<std::string> org_names;
+    for (const auto& s : songs)
+        org_names.push_back(s.name());
+    std::sort(org_names.begin(), org_names.end());
+    std::sort(names.begin(), names.end());
+    EXPECT_EQ(org_names, names);
+}
+
 TEST_F(db_test, one_playlist)
 {
+    auto pls = create_playlists(1);
+    auto songs = create_songs(10);
+    for (const auto& s : songs)
+    {
+        EXPECT_NO_THROW(db_->insert_song(s));
+        pls[0].add_song(s.name());
+    }
+    EXPECT_NO_THROW(db_->insert_playlist(pls[0]));
+    EXPECT_NO_THROW(db_->remove_playlist(pls[0].name()));
+    std::vector<std::string> names;
+    EXPECT_NO_THROW(names = db_->select_song_names());
+    std::vector<std::string> org_names;
+    for (const auto& s : songs)
+        org_names.push_back(s.name());
+    std::sort(org_names.begin(), org_names.end());
+    std::sort(names.begin(), names.end());
+}
+
+TEST_F(db_test, move_to_file)
+{
+    auto songs = create_songs(1000);
+    database mem;
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(mem.insert_song(s));
+    auto playlists = create_playlists(100);
+    for (int i = 0; i < playlists.size(); i++)
+        playlists[i].add_song(songs[i % 10].name());
+    for (const auto& pl : playlists)
+        EXPECT_NO_THROW(mem.insert_playlist(pl));
+    std::filesystem::path fname("./move_to_file.nashv");
+    std::filesystem::remove(fname);
+    EXPECT_NO_THROW(mem.move_to_file(fname));
+    for (const auto& s : songs)
+    {
+        model::song found_s("uh");
+        EXPECT_NO_THROW(found_s = mem.select_song(s.name()));
+        expect_song(s, found_s);
+    }
+    for (const auto& p : playlists)
+    {
+        model::playlist found_p("uh");
+        EXPECT_NO_THROW(found_p = mem.select_playlist(p.name()));
+        expect_playlist(p, found_p);
+    }
+    std::filesystem::remove(fname);
 }
 
 //TEST_F(db_test, lots_of_playlists)
