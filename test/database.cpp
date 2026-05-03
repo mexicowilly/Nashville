@@ -439,29 +439,33 @@ TEST_F(db_test, move_to_file)
     std::filesystem::remove(fname);
 }
 
-//TEST_F(db_test, lots_of_playlists)
-//{
-    //auto songs = create_songs(10000);
-    //CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
-    //EXPECT_NO_THROW(db_->insert_songs(songs));
-    //std::vector<model::playlist> playlists;
-    //for (unsigned i = 0; i < songs.size(); i += 10)
-    //{
-        //auto cur = model::playlist(std::string("playlist ") + std::to_string(i));
-        //for (unsigned j = 0; j < 10; j++)
-            //cur.add_song(songs[j * 10]);
-        //playlists.push_back(cur);
-    //}
-    //CHUCHO_INFO_L("Inserting " << playlists.size() << " playlists");
-    //EXPECT_NO_THROW(db_->insert_playlists(playlists));
-    //std::vector<model::playlist> found;
-    //CHUCHO_INFO_L("Retrieving " << playlists.size() << " playlists");
-    //EXPECT_NO_THROW(found = db_->select_playlists(songs));
-    //ASSERT_EQ(playlists.size(), found.size());
-    //for (unsigned i = 0; i < playlists.size(); i++)
-    //{
-        //ASSERT_EQ(playlists[i].songs().size(), found[i].songs().size());
-        //for (unsigned j = 0; j < playlists[i].songs().size(); j++)
-            //EXPECT_STREQ(playlists[i].songs()[j].get().name().c_str(), found[i].songs()[j].get().name().c_str());
-    //}
-//}
+TEST_F(db_test, lots_of_playlists)
+{
+    auto songs = create_songs(10000);
+    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(db_->insert_song(s));
+    std::vector<model::playlist> playlists;
+    for (unsigned i = 0; i < songs.size(); i += 10)
+    {
+        auto cur = model::playlist(std::string("playlist ") + std::to_string(i));
+        for (unsigned j = 0; j < 10; j++)
+            cur.add_song(songs[j * 10].name());
+        playlists.push_back(cur);
+    }
+    CHUCHO_INFO_L("Inserting " << playlists.size() << " playlists");
+    for (const auto& p : playlists)
+        EXPECT_NO_THROW(db_->insert_playlist(p));
+    CHUCHO_INFO_L("Retrieving " << playlists.size() << " playlists");
+    std::vector<std::string> found;
+    EXPECT_NO_THROW(found = db_->select_playlist_names());
+    ASSERT_EQ(playlists.size(), found.size());
+    for (const auto& p : playlists)
+    {
+        model::playlist sel("uh");
+        EXPECT_NO_THROW(sel = db_->select_playlist(p.name()));
+        ASSERT_EQ(p.songs().size(), sel.songs().size());
+        for (unsigned j = 0; j < p.songs().size(); j++)
+            EXPECT_EQ(p.songs()[j], sel.songs()[j]);
+    }
+}

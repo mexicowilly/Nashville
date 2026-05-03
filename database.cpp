@@ -363,7 +363,7 @@ database::database(const std::filesystem::path& file_name)
                              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXRESCODE,
                              nullptr);
     if (rc != SQLITE_OK)
-        throw std::runtime_error("Unable to open the database '"s + file_name.c_str() + "' " + sqlite3_errstr(rc));
+        throw std::runtime_error("Unable to open the database '"s + file_name.string() + "' " + sqlite3_errstr(rc));
     CHUCHO_DEBUG_L("Opened the database '" << file_name.string() << "'");
     char* err;
     rc = sqlite3_exec(db_,
@@ -413,35 +413,6 @@ database::database(const std::filesystem::path& file_name)
 
         for (const auto& d : defs)
             prepared_statements_.try_emplace(d.key, std::make_unique<prepared>(db_, d.sql));
-
-        //prepared_statements_ =
-        //{
-            //{ statement::SELECT_CHORD, std::make_shared<prepared>(db_, SELECT_CHORD_SQL) },
-            //{ statement::SELECT_CHORD_BY_ID, std::make_shared<prepared>(db_, SELECT_CHORD_BY_ID_SQL) },
-            //{ statement::INSERT_CHORD, std::make_shared<prepared>(db_, INSERT_CHORD_SQL) },
-            //{ statement::SELECT_BAR, std::make_shared<prepared>(db_, SELECT_BAR_SQL) },
-            //{ statement::INSERT_BAR, std::make_shared<prepared>(db_, INSERT_BAR_SQL) },
-            //{ statement::SELECT_CHORDS_BY_BAR, std::make_shared<prepared>(db_, SELECT_CHORDS_BY_BAR_SQL) },
-            //{ statement::SELECT_TIME_SIGNATURE, std::make_shared<prepared>(db_, SELECT_TIME_SIGNATURE_SQL) },
-            //{ statement::INSERT_TIME_SIGNATURE, std::make_shared<prepared>(db_, INSERT_TIME_SIGNATURE_SQL) },
-            //{ statement::INSERT_BAR_CHORD, std::make_shared<prepared>(db_, INSERT_BAR_CHORD_SQL) },
-            //{ statement::SELECT_SONG_ID, std::make_shared<prepared>(db_, SELECT_SONG_ID_SQL) },
-            //{ statement::INSERT_SONG, std::make_shared<prepared>(db_, INSERT_SONG_SQL) },
-            //{ statement::SELECT_SONG_BARS, std::make_shared<prepared>(db_, SELECT_SONG_BARS_SQL) },
-            //{ statement::INSERT_SONG_BAR, std::make_shared<prepared>(db_, INSERT_SONG_BAR_SQL) },
-            //{ statement::INSERT_PLAYLIST, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SQL) },
-            //{ statement::SELECT_PLAYLIST_SONGS, std::make_shared<prepared>(db_, SELECT_PLAYLIST_SONGS_SQL) },
-            //{ statement::INSERT_PLAYLIST_SONG, std::make_shared<prepared>(db_, INSERT_PLAYLIST_SONG_SQL) },
-            //{ statement::SELECT_SONG_NAMES, std::make_shared<prepared>(db_, SELECT_SONG_NAMES_SQL) },
-            //{ statement::SELECT_SONG, std::make_shared<prepared>(db_, SELECT_SONG_SQL) },
-            //{ statement::SELECT_PLAYLIST_NAMES, std::make_shared<prepared>(db_, SELECT_PLAYLIST_NAMES_SQL) },
-            //{ statement::SELECT_PLAYLIST_ID, std::make_shared<prepared>(db_, SELECT_PLAYLIST_ID_SQL) },
-            //{ statement::SELECT_CHORD_NOT_IN_BAR, std::make_shared<prepared>(db_, SELECT_CHORD_NOT_IN_BAR_SQL) },
-            //{ statement::REMOVE_CHORD, std::make_shared<prepared>(db_, REMOVE_CHORD_SQL) },
-            //{ statement::REMOVE_BAR, std::make_shared<prepared>(db_, REMOVE_BAR_SQL) },
-            //{ statement::REMOVE_SONG, std::make_shared<prepared>(db_, REMOVE_SONG_SQL) },
-            //{ statement::REMOVE_PLAYLIST, std::make_shared<prepared>(db_, REMOVE_PLAYLIST_SQL) }
-        //};
     }
     catch (std::invalid_argument& e)
     {
@@ -722,29 +693,6 @@ void database::move_to_file(const std::filesystem::path& file_name)
 
     CHUCHO_DEBUG_L("Moved the in-memory database to the file '"s + file_name.string() + "'");
 }
-
-//void database::move_to_file(const std::filesystem::path& file_name)
-//{
-    //database other(file_name);
-    //auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
-    //if (back == nullptr)
-    //{
-        //throw std::runtime_error("Could not move database to file '"s +
-                                 //file_name.string() + "': " +
-                                 //sqlite3_errstr(sqlite3_errcode(other.db_)));
-    //}
-    //auto rc = sqlite3_backup_step(back, -1);
-    //sqlite3_backup_finish(back);
-    //if (rc != SQLITE_DONE)
-    //{
-        //throw std::runtime_error("Could not move database to file '"s +
-                                 //file_name.string() + "': " + sqlite3_errstr(rc));
-    //}
-    //*this = other;
-    //// Prevent the closing of the database in other
-    //other.db_ = nullptr;
-    //CHUCHO_DEBUG_L("Moved the in-memory database to the file '"s + file_name.string() + "'");
-//}
 
 void database::remove_playlist(const std::string& pl)
 {
