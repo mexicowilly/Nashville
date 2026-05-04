@@ -8,6 +8,8 @@ namespace nashville
 class loggable
 {
 public:
+    static constexpr const char* PATTERN = "%Y-%m-%d %H:%M:%S.%f %L %n: %v";
+
     loggable(const std::string& name);
 
     std::shared_ptr<spdlog::logger> lgr();

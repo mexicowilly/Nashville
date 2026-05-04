@@ -3,7 +3,7 @@
 #include <QStandardPaths>
 #include <fstream>
 #include <filesystem>
-#include <spdlog/spdlog.h>
+#include "loggable.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -13,7 +13,7 @@ int main(int argc, char* argv[])
     std::filesystem::create_directories(cfg_dir);
     std::filesystem::path data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdString();
     std::filesystem::create_directories(data_dir);
-    spdlog::set_pattern("%Y-%m-%d %H:%M:%S.%f %L %n: %v");
+    spdlog::set_pattern(nashville::loggable::PATTERN);
     spdlog::info("Using config path '{}'", cfg_dir.string());
     spdlog::info("Using data path '{}'", data_dir.string());
     nashville::app app(argc, argv);

@@ -28,7 +28,7 @@ loggable::loggable(const std::string& name)
         sinks.emplace_back(std::make_shared<spdlog::sinks::stdout_sink_st>());
     }
     lgr_ = std::make_shared<spdlog::logger>(name, sinks.begin(), sinks.end());
-    lgr_->set_pattern("%Y-%m-%d %H:%M:%S.%f %L %n: %v");
+    lgr_->set_pattern(PATTERN);
 }
 
 }
