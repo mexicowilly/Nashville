@@ -2,16 +2,18 @@
 
 #include "chord.hpp"
 #include "time_signature.hpp"
-#include <chucho/loggable.hpp>
+#include "loggable.hpp"
 #include <vector>
 #include <optional>
 
 namespace nashville::model
 {
 
-class bar : chucho::loggable<bar>
+class bar : public loggable
 {
 public:
+    bar();
+
     chord& add_chord();
     const std::vector<chord>& chords() const;
     bar& chords(const std::vector<chord>& cs);

@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include "../database.hpp"
 #include <filesystem>
-#include <chucho/log.hpp>
 #include <chrono>
 
 using namespace nashville;
@@ -9,8 +8,14 @@ using namespace nashville;
 namespace
 {
 
-class db_test : public ::testing::Test, public chucho::loggable<db_test>
+class db_test : public ::testing::Test, public loggable
 {
+public:
+    db_test()
+        : loggable("db_test")
+    {
+    }
+
 protected:
     std::vector<model::playlist> create_playlists(unsigned num)
     {
@@ -83,7 +88,7 @@ protected:
             }
             songs.push_back(s);
         }
-        CHUCHO_INFO_L("Created " << songs.size() << " songs");
+        lgr()->info("Created {} songs", songs.size());
         return songs;
     }
 
@@ -172,8 +177,8 @@ TEST_F(db_test, one_song)
     auto start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(found = db_->select_song("doggies"));
     std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
-    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " microseconds");
-    CHUCHO_INFO_L("About to compare simple song");
+    lgr()->info("Selecting one song took {} microseconds", elapsed.count());
+    lgr()->info("About to compare simple song");
     expect_song(s, found);
     EXPECT_NO_THROW(db_->remove_song("doggies"));
     EXPECT_THROW(db_->select_song("doggies"), std::runtime_error);
@@ -205,7 +210,7 @@ TEST_F(db_test, all_chord_attrs)
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found("uh");
     EXPECT_NO_THROW(found = db_->select_song("funny chord"));
-    CHUCHO_INFO_L("About to compare funny chord");
+    lgr()->info("About to compare funny chord");
     expect_song(s, found);
 }
 
@@ -220,7 +225,7 @@ TEST_F(db_test, all_bar_attrs)
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found("uh");
     EXPECT_NO_THROW(found = db_->select_song("bar attrs"));
-    CHUCHO_INFO_L("About to compare funny bar");
+    lgr()->info("About to compare funny bar");
     expect_song(s, found);
 }
 
@@ -234,7 +239,7 @@ TEST_F(db_test, all_song_attrs)
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found("uh");
     EXPECT_NO_THROW(found = db_->select_song("song attrs"));
-    CHUCHO_INFO_L("About to compare song attrs");
+    lgr()->info("About to compare song attrs");
     expect_song(s, found);
 }
 
@@ -272,13 +277,13 @@ TEST_F(db_test, lots_of_bars)
     auto start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(db_->insert_song(s));
     std::chrono::duration<double, std::milli> elapsed = std::chrono::high_resolution_clock::now() - start;
-    CHUCHO_INFO_L("Inserting one song took " << elapsed.count() << " milliseconds");
+    lgr()->info("Inserting one song took {} milliseconds", elapsed.count());
     model::song found("uh");
     start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(found = db_->select_song("lots of bars"));
     elapsed = std::chrono::high_resolution_clock::now() - start;
-    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " milliseconds");
-    CHUCHO_INFO_L("About to compare lots of bars");
+    lgr()->info("Selecting one song took {} milliseconds", elapsed.count());
+    lgr()->info("About to compare lots of bars");
     expect_song(s, found);
 }
 
@@ -345,39 +350,39 @@ TEST_F(db_test, lots_of_chords)
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found("uh");
     EXPECT_NO_THROW(found = db_->select_song("lots of chords"));
-    CHUCHO_INFO_L("About to compare lots of chords");
+    lgr()->info("About to compare lots of chords");
     expect_song(s, found);
 }
 
 TEST_F(db_test, lots_of_songs)
 {
     auto songs = create_songs(10000);
-    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    lgr()->info("Inserting {} songs", songs.size());
     for (const auto& s : songs)
         EXPECT_NO_THROW(db_->insert_song(s));
     std::vector<model::song> found;
-    CHUCHO_INFO_L("Retrieving " << songs.size() << " songs");
+    lgr()->info("Retrieving {} songs", songs.size());
     for (const auto& s : songs)
         EXPECT_NO_THROW(found.push_back(db_->select_song(s.name())));
     ASSERT_EQ(songs.size(), found.size());
-    CHUCHO_INFO_L("About to compare lots of songs");
+    lgr()->info("About to compare lots of songs");
     for (int i = 0; i < songs.size(); i++)
         expect_song(songs[i], found[i]);
     auto start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(db_->select_song(songs[4000].name()));
     std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
-    CHUCHO_INFO_L("Selecting one song took " << elapsed.count() << " microseconds");
+    lgr()->info("Selecting one song took {} microseconds", elapsed.count());
     start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(db_->remove_song(songs[7000].name()));
     elapsed = std::chrono::high_resolution_clock::now() - start;
-    CHUCHO_INFO_L("Removing one song took " << elapsed.count() << " microseconds");
+    lgr()->info("Removing one song took {} microseconds", elapsed.count());
     EXPECT_THROW(db_->select_song(songs[7000].name()), std::runtime_error);
 }
 
 TEST_F(db_test, lots_of_song_names)
 {
     auto songs = create_songs(10000);
-    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    lgr()->info("Inserting {} songs", songs.size());
     for (const auto& s : songs)
         EXPECT_NO_THROW(db_->insert_song(s));
     std::vector<std::string> names;
@@ -442,7 +447,7 @@ TEST_F(db_test, move_to_file)
 TEST_F(db_test, lots_of_playlists)
 {
     auto songs = create_songs(10000);
-    CHUCHO_INFO_L("Inserting " << songs.size() << " songs");
+    lgr()->info("Inserting {} songs", songs.size());
     for (const auto& s : songs)
         EXPECT_NO_THROW(db_->insert_song(s));
     std::vector<model::playlist> playlists;
@@ -453,10 +458,10 @@ TEST_F(db_test, lots_of_playlists)
             cur.add_song(songs[j * 10].name());
         playlists.push_back(cur);
     }
-    CHUCHO_INFO_L("Inserting " << playlists.size() << " playlists");
+    lgr()->info("Inserting {} playlists", playlists.size());
     for (const auto& p : playlists)
         EXPECT_NO_THROW(db_->insert_playlist(p));
-    CHUCHO_INFO_L("Retrieving " << playlists.size() << " playlists");
+    lgr()->info("Retrieving {} playlists", playlists.size());
     std::vector<std::string> found;
     EXPECT_NO_THROW(found = db_->select_playlist_names());
     ASSERT_EQ(playlists.size(), found.size());

@@ -3,6 +3,13 @@
 namespace nashville::model
 {
 
+song::song(const std::string& nm)
+    : loggable("song"),
+      name_(nm),
+      tempo_({ 88, chord::time::QUARTER })
+{
+}
+
 song& song::bars_per_line(unsigned num)
 {
     bars_per_line_= num;

@@ -7,6 +7,8 @@ add_executable(unit-test
     ../model/time_signature.cpp
     ../database.cpp
     ../sqlite3.c
+    ../loggable.cpp
+    ../loggable.hpp
     bar.cpp
     chord.cpp
     database.cpp
@@ -14,4 +16,6 @@ add_executable(unit-test
     time_signature.cpp
 )
 
-target_link_libraries(unit-test PRIVATE ${CHUCHO_LIB} GTest::gtest_main Qt6::Widgets Qt6::Core)
+target_compile_definitions(unit-test PRIVATE TESTING)
+
+target_link_libraries(unit-test PRIVATE GTest::gtest_main Qt6::Widgets Qt6::Core)

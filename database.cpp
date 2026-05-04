@@ -1,7 +1,6 @@
 #include "database.hpp"
 #include <cassert>
 #include <cstdlib>
-#include <chucho/log.hpp>
 #include <algorithm>
 
 using namespace std::string_literals;
@@ -316,11 +315,11 @@ database::transaction::transaction(database& db)
             throw std::runtime_error("Could not begin transaction: " + msg);
         }
         is_active_ = true;
-        CHUCHO_DEBUG_STR(db.get_logger(), "Created active transaction");
+        db.lgr()->debug("Created active transaction");
     }
     else
     {
-        CHUCHO_DEBUG_STR(db.get_logger(), "Created inactive transaction");
+        db.lgr()->debug("Created inactive transaction");
     }
 }
 
@@ -329,7 +328,7 @@ database::transaction::~transaction()
     if (is_active_ && !is_committed_)
     {
         sqlite3_exec(db_.db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-        CHUCHO_DEBUG_STR(db_.get_logger(), "Rolled back active transaction");
+        db_.lgr()->debug("Rolled back active transaction");
     }
 }
 
@@ -347,7 +346,7 @@ void database::transaction::commit()
             throw std::runtime_error("Could not commit transaction: " + msg);
         }
         is_committed_ = true;
-        CHUCHO_DEBUG_STR(db_.get_logger(), "Committed active transaction");
+        db_.lgr()->debug("Committed active transaction");
     }
 }
 
@@ -357,6 +356,7 @@ database::database()
 }
 
 database::database(const std::filesystem::path& file_name)
+    : loggable("database")
 {
     int rc = sqlite3_open_v2(file_name.c_str(),
                              &db_,
@@ -364,7 +364,7 @@ database::database(const std::filesystem::path& file_name)
                              nullptr);
     if (rc != SQLITE_OK)
         throw std::runtime_error("Unable to open the database '"s + file_name.string() + "' " + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Opened the database '" << file_name.string() << "'");
+    lgr()->debug("Opened the database '{}'", file_name.string());
     char* err;
     rc = sqlite3_exec(db_,
                       schema,
@@ -374,11 +374,11 @@ database::database(const std::filesystem::path& file_name)
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
-        CHUCHO_FATAL_L("The database schema contains errors: " << err);
+        lgr()->critical("The database schema contains errors: {}", err);
         sqlite3_free(err);
         std::abort();
     }
-    CHUCHO_DEBUG_L_STR("Successfully loaded the schema");
+    lgr()->debug("Successfully loaded the schema");
     try
     {
         struct stmt_def { statement key; const char* sql; };
@@ -416,10 +416,10 @@ database::database(const std::filesystem::path& file_name)
     }
     catch (std::invalid_argument& e)
     {
-        CHUCHO_FATAL_L_STR(e.what());
+        lgr()->critical(e.what());
         std::abort();
     }
-    CHUCHO_DEBUG_L_STR("Successfully created the prepared statements");
+    lgr()->debug("Successfully created the prepared statements");
 }
 
 database::~database()
@@ -442,7 +442,7 @@ std::uint64_t database::insert_bar(const model::bar& b)
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar: "s + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Inserted bar: " << b.to_user_input());
+    lgr()->debug("Inserted bar: {}", b.to_user_input());
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -459,7 +459,7 @@ std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t cho
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar chord: "s + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Inserted relation bar(" << bar_id << ") with chord(" << chord_id << ") position " << index);
+    lgr()->debug("Inserted relation bar({}) with chord({}) position {}", bar_id, chord_id, index);
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -489,7 +489,7 @@ std::uint64_t database::insert_chord(const model::chord& c)
     if (rc == SQLITE_ROW)
     {
         assert(sqlite3_column_count(raw) == 1);
-        CHUCHO_DEBUG_L("Found existing chord: " << c.to_user_input());
+        lgr()->debug("Found existing chord: {}", c.to_user_input());
         return sqlite3_column_int64(raw, 0);
     }
     assert(prepared_statements_.count(statement::INSERT_CHORD) == 1);
@@ -515,7 +515,7 @@ std::uint64_t database::insert_chord(const model::chord& c)
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a chord: "s + sqlite3_errstr(rc));
     assert(sqlite3_column_count(raw) == 1);
-    CHUCHO_DEBUG_L("Inserted new chord: " << c.to_user_input());
+    lgr()->debug("Inserted new chord: {}", c.to_user_input());
     return sqlite3_column_int64(raw, 0);
 }
 
@@ -538,7 +538,7 @@ void database::insert_playlist(const model::playlist& pl)
         rc = sqlite3_step(raw);
         if (rc == SQLITE_CONSTRAINT_UNIQUE)
         {
-            CHUCHO_DEBUG_L("Replacing the playlist '" << pl.name() << "'");
+            lgr()->debug("Replacing the playlist '{}'", pl.name());
             remove_playlist(pl.name());
             inserted_new = false;
         }
@@ -576,7 +576,7 @@ void database::insert_playlist(const model::playlist& pl)
     }
     tx.commit();
     if (inserted_new)
-        CHUCHO_DEBUG_L("Inserted new playlist '"s + pl.name() + "'");
+        lgr()->debug("Inserted new playlist '{}'", pl.name());
 }
 
 void database::insert_song(const model::song& s)
@@ -599,7 +599,7 @@ void database::insert_song(const model::song& s)
         rc = sqlite3_step(raw);
         if (rc == SQLITE_CONSTRAINT_UNIQUE)
         {
-            CHUCHO_DEBUG_L("Replacing the song '" << s.name() << "'");
+            lgr()->debug("Replacing the song '{}'", s.name());
             remove_song(s.name());
             inserted_new = false;
         }
@@ -626,7 +626,7 @@ void database::insert_song(const model::song& s)
     }
     tx.commit();
     if (inserted_new)
-        CHUCHO_DEBUG_L("Inserted new song '" << s.name() << "'");
+        lgr()->debug("Inserted new song '{}'", s.name());
 }
 
 std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index)
@@ -641,7 +641,7 @@ std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a song bar: "s + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Inserted relation song(" << song_id << ") with bar(" << bar_id << ") position " << index);
+    lgr()->debug("Inserted relation song({}) with bar({}) position {}", song_id, bar_id, index);
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
 }
@@ -663,7 +663,7 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
     rc = sqlite3_step(rem_c->ptr());
     if (rc != SQLITE_DONE)
         throw std::runtime_error("Could not remove a chord: "s + sqlite3_errstr(rc));
-    CHUCHO_DEBUG_L("Removed chord with id " << chord_id);
+    lgr()->debug("Removed chord with id {}", chord_id);
 }
 
 void database::move_to_file(const std::filesystem::path& file_name)
@@ -691,7 +691,7 @@ void database::move_to_file(const std::filesystem::path& file_name)
     std::swap(db_, other.db_);
     std::swap(prepared_statements_, other.prepared_statements_);
 
-    CHUCHO_DEBUG_L("Moved the in-memory database to the file '"s + file_name.string() + "'");
+    lgr()->debug("Moved the in-memory database to the file '{}'", file_name.string());
 }
 
 void database::remove_playlist(const std::string& pl)
@@ -705,7 +705,7 @@ void database::remove_playlist(const std::string& pl)
     if (rc != SQLITE_DONE)
         throw std::runtime_error("Could not remove playlist '"s + pl + "': " + sqlite3_errstr(rc));
     tx.commit();
-    CHUCHO_DEBUG_L("Removed playlist '"s + pl + "'");
+    lgr()->debug("Removed playlist '{}'", pl);
 }
 
 void database::remove_song(const std::string& s)
@@ -778,7 +778,7 @@ void database::remove_song(const std::string& s)
         rc3 = sqlite3_step(rem_b->ptr());
         if (rc3 != SQLITE_DONE)
             throw std::runtime_error("Could not remove bar: "s + sqlite3_errstr(rc3));
-        CHUCHO_DEBUG_L("Removed bar with id " << bar_id);
+        lgr()->debug("Removed bar with id {}", bar_id);
     }
 
     // 4. Finally, remove the song row itself. song_bars cascade is now
@@ -791,7 +791,7 @@ void database::remove_song(const std::string& s)
 
     tx.commit();
 
-    CHUCHO_DEBUG_L("Remove the song '" << s << "'");
+    lgr()->debug("Removed the song '{}'", s);
 }
 
 std::vector<model::bar> database::select_bars(std::uint64_t song_id)

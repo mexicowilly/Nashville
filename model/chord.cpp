@@ -1,5 +1,4 @@
 #include "chord.hpp"
-#include <chucho/log.hpp>
 #include <stdexcept>
 #include <regex>
 #include <cassert>
@@ -9,104 +8,14 @@ namespace nashville::model
 {
 
 chord::chord()
-    : number_(1),
+    : loggable("chord"),
+      number_(1),
       mode_(type::UNDEFINED),
       is_staccato_(false),
       is_diamond_(false),
       is_tied_(false),
       is_pushed_(false)
 {
-}
-
-std::ostream& operator<< (std::ostream& out, const chord& c)
-{
-    out << "chord:{";
-    if (c.mode_ != chord::type::UNDEFINED)
-    {
-        if (c.step_)
-            out << (c.step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
-        out << c.number_;
-        switch (c.mode_)
-        {
-            case chord::type::MINOR:
-                out << "min";
-                break;
-            case chord::type::DIMINISHED:
-                out << "dim";
-                break;
-            case chord::type::AUGMENTED:
-                out << "aug";
-                break;
-            default: ;
-        }
-        if (!c.extensions_.empty())
-            out << " " << c.extensions_;
-        if (c.bass_note_)
-        {
-            out << " / ";
-            if (c.bass_note_step_)
-                out << (*c.bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
-            out << *c.bass_note_;
-        }
-        if (c.is_staccato_ || c.is_diamond_ || c.is_tied_ || c.is_pushed_)
-        {
-            out << " (";
-            if (c.is_diamond_)
-            {
-                out << "d";
-                if (c.is_staccato_ || c.is_tied_ || c.is_pushed_)
-                    out << ",";
-            }
-            if (c.is_pushed_)
-            {
-                out << "p";
-                if (c.is_staccato_ || c.is_tied_)
-                    out << ",";
-            }
-            if (c.is_staccato_)
-            {
-                out << "s";
-                if (c.is_tied_)
-                    out << ",";
-            }
-            if (c.is_tied_)
-                out << "t";
-            out << ")";
-        }
-        if (c.duration_)
-        {
-            out << " ";
-            switch (*c.duration_)
-            {
-                case chord::time::SIXTEENTH:
-                    out << "s";
-                    break;
-                case chord::time::EIGHTH:
-                    out << "e";
-                    break;
-                case chord::time::DOTTED_EIGHTH:
-                    out << "e.";
-                    break;
-                case chord::time::QUARTER:
-                    out << "q";
-                    break;
-                case chord::time::DOTTED_QUARTER:
-                    out << "q.";
-                    break;
-                case chord::time::HALF:
-                    out << "h";
-                    break;
-                case chord::time::DOTTED_HALF:
-                    out << "h.";
-                    break;
-                case chord::time::WHOLE:
-                    out << "w";
-                    break;
-            }
-        }
-    }
-    out << "}";
-    return out;
 }
 
 bool chord::operator== (const chord& other) const
@@ -156,7 +65,7 @@ chord& chord::is_diamond(bool state)
     if (is_diamond_ && is_staccato_)
     {
         is_staccato_ = false;
-        CHUCHO_INFO_L("Removing staccato flag due to diamond being set");
+        lgr()->info("Removing staccato flag due to diamond being set");
     }
     return *this;
 }
@@ -175,12 +84,12 @@ chord& chord::is_staccato(bool state)
         if (is_diamond_)
         {
             is_diamond_ = false;
-            CHUCHO_INFO_L("Removing diamond flag due to staccato being set");
+            lgr()->info("Removing diamond flag due to staccato being set");
         }
         if (is_tied_)
         {
             is_tied_ = false;
-            CHUCHO_INFO_L("Removing tied flag due to staccato being set");
+            lgr()->info("Removing tied flag due to staccato being set");
         }
     }
     return *this;
@@ -192,7 +101,7 @@ chord& chord::is_tied(bool state)
     if (is_tied_ && is_staccato_)
     {
         is_staccato_ = false;
-        CHUCHO_INFO_L("Removing staccato flag due to tied being set");
+        lgr()->info("Removing staccato flag due to tied being set");
     }
     return *this;
 }
@@ -215,7 +124,7 @@ chord& chord::number(unsigned num)
 
 chord& chord::parse_user_input(const std::string& usr)
 {
-    CHUCHO_DEBUG_L("Parsing chord input: '" << usr << "'");
+    lgr()->debug("Parsing chord input: '{}'", usr);
     if (usr.empty())
         throw std::invalid_argument("The chord description cannot be empty");
     chord saved(*this);
@@ -322,7 +231,7 @@ chord& chord::parse_user_input(const std::string& usr)
         *this = saved;
         throw std::invalid_argument("'" + usr + "' is not a valid chord description");
     }
-    CHUCHO_DEBUG_L("Found " << *this);
+    lgr()->debug("Found {}", to_string());
     return *this;
 }
 
@@ -330,6 +239,98 @@ chord& chord::step(flat_sharp fs)
 {
     step_ = fs;
     return *this;
+}
+
+std::string chord::to_string() const
+{
+    std::stringstream out;
+    out << "chord:{";
+    if (mode_ != chord::type::UNDEFINED)
+    {
+        if (step_)
+            out << (step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
+        out << number_;
+        switch (mode_)
+        {
+            case chord::type::MINOR:
+                out << "min";
+                break;
+            case chord::type::DIMINISHED:
+                out << "dim";
+                break;
+            case chord::type::AUGMENTED:
+                out << "aug";
+                break;
+            default: ;
+        }
+        if (!extensions_.empty())
+            out << " " << extensions_;
+        if (bass_note_)
+        {
+            out << " / ";
+            if (bass_note_step_)
+                out << (*bass_note_step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
+            out << *bass_note_;
+        }
+        if (is_staccato_ || is_diamond_ || is_tied_ || is_pushed_)
+        {
+            out << " (";
+            if (is_diamond_)
+            {
+                out << "d";
+                if (is_staccato_ || is_tied_ || is_pushed_)
+                    out << ",";
+            }
+            if (is_pushed_)
+            {
+                out << "p";
+                if (is_staccato_ || is_tied_)
+                    out << ",";
+            }
+            if (is_staccato_)
+            {
+                out << "s";
+                if (is_tied_)
+                    out << ",";
+            }
+            if (is_tied_)
+                out << "t";
+            out << ")";
+        }
+        if (duration_)
+        {
+            out << " ";
+            switch (*duration_)
+            {
+                case chord::time::SIXTEENTH:
+                    out << "s";
+                    break;
+                case chord::time::EIGHTH:
+                    out << "e";
+                    break;
+                case chord::time::DOTTED_EIGHTH:
+                    out << "e.";
+                    break;
+                case chord::time::QUARTER:
+                    out << "q";
+                    break;
+                case chord::time::DOTTED_QUARTER:
+                    out << "q.";
+                    break;
+                case chord::time::HALF:
+                    out << "h";
+                    break;
+                case chord::time::DOTTED_HALF:
+                    out << "h.";
+                    break;
+                case chord::time::WHOLE:
+                    out << "w";
+                    break;
+            }
+        }
+    }
+    out << "}";
+    return out.str();
 }
 
 std::string chord::to_user_input() const

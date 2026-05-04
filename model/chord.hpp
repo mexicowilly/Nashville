@@ -1,14 +1,14 @@
 #pragma once
 
-#include <chucho/loggable.hpp>
 #include <optional>
 #include <string>
 #include <ostream>
+#include "loggable.hpp"
 
 namespace nashville::model
 {
 
-class chord : chucho::loggable<chord>
+class chord : public loggable
 {
 public:
     enum class type
@@ -40,7 +40,6 @@ public:
 
     chord();
 
-    friend std::ostream& operator<< (std::ostream& out, const chord& c);
     bool operator== (const chord& other) const;
 
     std::optional<unsigned> bass_note() const;
@@ -67,6 +66,7 @@ public:
     chord& parse_user_input(const std::string& usr);
     std::optional<flat_sharp> step() const;
     chord& step(flat_sharp fs);
+    std::string to_string() const;
     std::string to_user_input() const;
 
 private:

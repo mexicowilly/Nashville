@@ -1,13 +1,13 @@
 #pragma once
 
-#include <chucho/loggable.hpp>
+#include "loggable.hpp"
 #include "bar.hpp"
 #include <tuple>
 
 namespace nashville::model
 {
 
-class song : chucho::loggable<song>
+class song : public loggable
 {
 public:
     song(const std::string& nm);
@@ -35,12 +35,6 @@ private:
     std::tuple<unsigned, chord::time> tempo_;
     unsigned bars_per_line_ = 4;
 };
-
-inline song::song(const std::string& nm)
-    : name_(nm),
-      tempo_({ 88, chord::time::QUARTER })
-{
-}
 
 inline bar& song::add_bar()
 {

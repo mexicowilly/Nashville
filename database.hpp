@@ -1,6 +1,6 @@
 #pragma once
 
-#include <chucho/loggable.hpp>
+#include "loggable.hpp"
 #include "sqlite3.h"
 #include <map>
 #include <filesystem>
@@ -10,7 +10,7 @@
 namespace nashville
 {
 
-class database : chucho::loggable<database>
+class database : loggable
 {
 public:
     database();

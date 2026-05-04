@@ -1,9 +1,13 @@
 #include "bar.hpp"
-#include <chucho/log.hpp>
 #include <cstring>
 
 namespace nashville::model
 {
+
+bar::bar()
+    : loggable("bar")
+{
+}
 
 chord& bar::add_chord()
 {
@@ -18,7 +22,7 @@ bar& bar::is_eol(bool state)
 
 bar& bar::parse_user_input(const std::string& str)
 {
-    CHUCHO_DEBUG_L("Parsing bar input: '" << str << "'");
+    lgr()->debug("Parsing bar input: '{}'");
     std::string src(str);
     std::vector<chord> new_chords;
     auto token = std::strtok(const_cast<char*>(src.c_str()), " ");
@@ -28,7 +32,7 @@ bar& bar::parse_user_input(const std::string& str)
         token = std::strtok(nullptr, " ");
     }
     chords_ = new_chords;
-    CHUCHO_DEBUG_L("Done");
+    lgr()->debug("Done");
     return *this;
 }
 

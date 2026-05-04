@@ -1,12 +1,12 @@
 #pragma once
 
-#include <chucho/loggable.hpp>
+#include "loggable.hpp"
 #include "song.hpp"
 
 namespace nashville::model
 {
 
-class playlist : chucho::loggable<playlist>
+class playlist : public loggable
 {
 public:
     playlist(const std::string& name);
@@ -22,7 +22,8 @@ private:
 };
 
 inline playlist::playlist(const std::string& name)
-    : name_(name)
+    : loggable("playlist"),
+      name_(name)
 {
 }
 

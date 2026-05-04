@@ -14,13 +14,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include_directories(.)
+
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 include_directories(${Qt6Core_INCLUDE_DIRS} ${Qt6Widgets_INCLUDE_DIRS})
-
-find_library(CHUCHO_LIB chucho REQUIRED)
 
 find_package(GTest REQUIRED)
 
@@ -29,6 +29,8 @@ qt_add_executable(nashville
     app.hpp
     database.cpp
     database.hpp
+    loggable.cpp
+    loggable.hpp
     measures.cpp
     measures.hpp
     model/bar.cpp
@@ -70,6 +72,6 @@ qt_add_executable(nashville
     widgets/title_text.hpp
 )
 
-target_link_libraries(nashville PRIVATE ${CHUCHO_LIB} Qt6::Widgets Qt6::Core Qt6::PrintSupport)
+target_link_libraries(nashville PRIVATE Qt6::Widgets Qt6::Core Qt6::PrintSupport)
 
 add_subdirectory(test)
