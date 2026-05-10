@@ -428,6 +428,15 @@ database::~database()
     sqlite3_close(db_);
 }
 
+std::filesystem::path database::file_name() const
+{
+    std::filesystem::path p;
+    auto fn = sqlite3_db_filename(db_, "main");
+    if (fn != nullptr || std::strlen(fn) != 0)
+        p = fn;
+    return p;
+}
+
 std::uint64_t database::insert_bar(const model::bar& b)
 {
     assert(prepared_statements_.count(statement::INSERT_BAR) == 1);
@@ -668,12 +677,13 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
 
 void database::move_to_file(const std::filesystem::path& file_name)
 {
-    database other(file_name);
+    auto abs = std::filesystem::absolute(file_name).lexically_normal();
+    database other(abs);
     auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
     if (back == nullptr)
     {
         throw std::runtime_error("Could not initialize moving the database to file '"s +
-                                 file_name.string() + "': " +
+                                 abs.string() + "': " +
                                  sqlite3_errstr(sqlite3_errcode(other.db_)));
     }
     auto step_rc = sqlite3_backup_step(back, -1);
@@ -691,7 +701,7 @@ void database::move_to_file(const std::filesystem::path& file_name)
     std::swap(db_, other.db_);
     std::swap(prepared_statements_, other.prepared_statements_);
 
-    lgr()->debug("Moved the in-memory database to the file '{}'", file_name.string());
+    lgr()->info("Moved the in-memory database to the file '{}'", abs.string());
 }
 
 void database::remove_playlist(const std::string& pl)

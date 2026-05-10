@@ -9,6 +9,7 @@ class loggable
 {
 public:
     static constexpr const char* PATTERN = "%Y-%m-%d %H:%M:%S.%f %L %n: %v";
+    static constexpr const char* ENV_VARIABLE = "NASHVILLE_LOG_LEVEL";
 
     loggable(const std::string& name);
 

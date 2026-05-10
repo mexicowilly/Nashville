@@ -173,7 +173,7 @@ TEST_F(db_test, one_song)
     model::song s("doggies");
     s.add_bar().add_chord().number(1).mode(model::chord::type::MAJOR);
     EXPECT_NO_THROW(db_->insert_song(s));
-    model::song found("hello");
+    model::song found;
     auto start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(found = db_->select_song("doggies"));
     std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
@@ -208,7 +208,7 @@ TEST_F(db_test, all_chord_attrs)
        .is_staccato(true)
        .mode(model::chord::type::DIMINISHED);
     EXPECT_NO_THROW(db_->insert_song(s));
-    model::song found("uh");
+    model::song found;
     EXPECT_NO_THROW(found = db_->select_song("funny chord"));
     lgr()->info("About to compare funny chord");
     expect_song(s, found);
@@ -223,7 +223,7 @@ TEST_F(db_test, all_bar_attrs)
      .time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
      .add_chord();
     EXPECT_NO_THROW(db_->insert_song(s));
-    model::song found("uh");
+    model::song found;
     EXPECT_NO_THROW(found = db_->select_song("bar attrs"));
     lgr()->info("About to compare funny bar");
     expect_song(s, found);
@@ -237,7 +237,7 @@ TEST_F(db_test, all_song_attrs)
      .tempo({ 240, model::chord::time::QUARTER })
      .bars_per_line(72);
     EXPECT_NO_THROW(db_->insert_song(s));
-    model::song found("uh");
+    model::song found;
     EXPECT_NO_THROW(found = db_->select_song("song attrs"));
     lgr()->info("About to compare song attrs");
     expect_song(s, found);
@@ -278,7 +278,7 @@ TEST_F(db_test, lots_of_bars)
     EXPECT_NO_THROW(db_->insert_song(s));
     std::chrono::duration<double, std::milli> elapsed = std::chrono::high_resolution_clock::now() - start;
     lgr()->info("Inserting one song took {} milliseconds", elapsed.count());
-    model::song found("uh");
+    model::song found;
     start = std::chrono::high_resolution_clock::now();
     EXPECT_NO_THROW(found = db_->select_song("lots of bars"));
     elapsed = std::chrono::high_resolution_clock::now() - start;
@@ -348,7 +348,7 @@ TEST_F(db_test, lots_of_chords)
         }
     }
     EXPECT_NO_THROW(db_->insert_song(s));
-    model::song found("uh");
+    model::song found;
     EXPECT_NO_THROW(found = db_->select_song("lots of chords"));
     lgr()->info("About to compare lots of chords");
     expect_song(s, found);
@@ -428,10 +428,12 @@ TEST_F(db_test, move_to_file)
         EXPECT_NO_THROW(mem.insert_playlist(pl));
     std::filesystem::path fname("./move_to_file.nashv");
     std::filesystem::remove(fname);
+    ASSERT_TRUE(mem.in_memory());
+    EXPECT_TRUE(mem.file_name().empty());
     EXPECT_NO_THROW(mem.move_to_file(fname));
     for (const auto& s : songs)
     {
-        model::song found_s("uh");
+        model::song found_s;
         EXPECT_NO_THROW(found_s = mem.select_song(s.name()));
         expect_song(s, found_s);
     }
@@ -441,6 +443,9 @@ TEST_F(db_test, move_to_file)
         EXPECT_NO_THROW(found_p = mem.select_playlist(p.name()));
         expect_playlist(p, found_p);
     }
+    ASSERT_FALSE(mem.in_memory());
+    fname = std::filesystem::absolute(fname).lexically_normal();
+    EXPECT_EQ(fname, mem.file_name());
     std::filesystem::remove(fname);
 }
 

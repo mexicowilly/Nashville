@@ -17,6 +17,7 @@ public:
     database(const std::filesystem::path& file_name);
     ~database();
 
+    std::filesystem::path file_name() const;
     bool in_memory() const;
     void insert_playlist(const model::playlist& pl);
     void insert_song(const model::song& s);
@@ -95,15 +96,13 @@ private:
     std::uint64_t time_signature_id(const model::time_signature& ts);
 
     sqlite3* db_;
-    // These are shared pointers so that the database will remain copyable.
-    // It also facilitates creating the map with a bracketed initialization
-    // list.
     std::map<statement, std::unique_ptr<prepared>> prepared_statements_;
 };
 
 inline bool database::in_memory() const
 {
-    return sqlite3_db_filename(db_, "main") == nullptr;
+    auto fn = sqlite3_db_filename(db_, "main");
+    return fn == nullptr || std::strlen(fn) == 0;
 }
 
 }

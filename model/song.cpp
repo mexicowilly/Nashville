@@ -3,11 +3,19 @@
 namespace nashville::model
 {
 
+song::song()
+    : song("Title")
+{
+    name_.clear();
+}
+
 song::song(const std::string& nm)
     : loggable("song"),
       name_(nm),
       tempo_({ 88, chord::time::QUARTER })
 {
+    if (nm.empty())
+        throw std::invalid_argument("The song name cannot be empty");
 }
 
 song& song::bars_per_line(unsigned num)
@@ -24,6 +32,8 @@ song& song::key(const std::string& k)
 
 song& song::name(const std::string& n)
 {
+    if (n.empty())
+        throw std::invalid_argument("The song name cannot be empty");
     name_ = n;
     return *this;
 }

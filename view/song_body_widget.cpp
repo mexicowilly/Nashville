@@ -2,17 +2,25 @@
 #include "margin_renderer.hpp"
 #include <QPainter>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QFontDatabase>
 #include <QApplication>
+#include <QLineEdit>
+#include <QMenu>
+#include <QAction>
+#include <stdexcept>
 #include <cmath>
 
 namespace nashville::view
 {
 
+// Color used for placeholder title text.
+static const QColor k_placeholder_color(150, 150, 150);
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
-song_body_widget::song_body_widget(const model::song& song, QWidget* parent)
+song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     : QWidget(parent), song_(song)
 {
     setMouseTracking(true);
@@ -264,7 +272,8 @@ qreal song_body_widget::title_height() const
 // ---------------------------------------------------------------------------
 // paint_title
 // ---------------------------------------------------------------------------
-void song_body_widget::paint_title(QPainter& painter, qreal widget_width) const
+void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
+                                   bool stash_hit_rect) const
 {
     painter.save();
 
@@ -273,16 +282,36 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width) const
     QFontMetricsF fm(title_font);
 
     QString title = QString::fromStdString(song_.name());
-    qreal text_w  = fm.horizontalAdvance(title);
+    const bool title_empty = title.isEmpty();
+
+    // Empty titles render as gray placeholder text.
+    QString display_title = title_empty
+                            ? QString::fromUtf8(k_title_placeholder)
+                            : title;
+
+    qreal text_w  = fm.horizontalAdvance(display_title);
     qreal x       = (widget_width - text_w) / 2.0;
     qreal baseline = k_title_padding + fm.ascent();
 
-    painter.setPen(QPen(Qt::black, 1.0));
-    painter.drawText(QPointF(x, baseline), title);
+    painter.setPen(QPen(title_empty ? k_placeholder_color : Qt::black, 1.0));
+    painter.drawText(QPointF(x, baseline), display_title);
 
-    // Underline directly beneath the text
-    qreal underline_y = std::round(baseline + fm.descent() + 1.0);
-    painter.drawLine(QPointF(x, underline_y), QPointF(x + text_w, underline_y));
+    // Underline directly beneath the text — only for real titles.  An
+    // underlined placeholder reads as a real title.
+    if (!title_empty)
+    {
+        qreal underline_y = std::round(baseline + fm.descent() + 1.0);
+        painter.drawLine(QPointF(x, underline_y), QPointF(x + text_w, underline_y));
+    }
+
+    if (stash_hit_rect)
+    {
+        // Slightly padded vertically for easier clicking.  Minimum width
+        // ensures the placeholder is clickable even with short text.
+        title_rect_ = QRectF(x, k_title_padding - 2.0,
+                             std::max(text_w, 40.0),
+                             fm.height() + 4.0);
+    }
 
     painter.restore();
 }
@@ -308,9 +337,11 @@ void song_body_widget::paintEvent(QPaintEvent*)
 // ---------------------------------------------------------------------------
 // paint_margin
 // ---------------------------------------------------------------------------
-void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect) const
+void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect,
+                                    bool stash_hit_rects) const
 {
-    margin_renderer::paint(painter, margin_rect, song_);
+    margin_renderer::paint(painter, margin_rect, song_,
+                           stash_hit_rects ? &margin_layout_ : nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +448,7 @@ void song_body_widget::resizeEvent(QResizeEvent*)
 }
 
 // ---------------------------------------------------------------------------
-// Draggable divider
+// Mouse handling — divider drag, then click-to-edit hit testing
 // ---------------------------------------------------------------------------
 bool song_body_widget::near_divider(int x) const
 {
@@ -426,13 +457,38 @@ bool song_body_widget::near_divider(int x) const
 
 void song_body_widget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && near_divider(event->pos().x()))
+    if (event->button() != Qt::LeftButton)
+        return;
+
+    // If an inline editor is open and the click lands outside it, commit
+    // the current editor before hit-testing the new click.  This lets the
+    // user hop straight from one editable element to another.  Clicks
+    // inside the editor itself fall through normally so the QLineEdit
+    // handles them.
+    if (active_editor_ && !active_editor_->geometry().contains(event->pos()))
+        close_line_editor(/*commit_value=*/true);
+
+    // Divider drag wins over edit hit-testing.
+    if (near_divider(event->pos().x()))
     {
         dragging_divider_ = true;
         drag_start_x_      = event->pos().x();
         drag_start_margin_ = margin_width_;
         setCursor(Qt::SplitHCursor);
+        return;
     }
+
+    const QPointF p = event->pos();
+    if (title_rect_.contains(p))
+        edit_title();
+    else if (margin_layout_.key_rect.contains(p))
+        edit_key();
+    else if (margin_layout_.time_sig_rect.contains(p))
+        edit_time_signature();
+    else if (margin_layout_.tempo_glyph_rect.contains(p))
+        edit_tempo_glyph();
+    else if (margin_layout_.tempo_bpm_rect.contains(p))
+        edit_tempo_bpm();
 }
 
 void song_body_widget::mouseMoveEvent(QMouseEvent* event)
@@ -448,12 +504,27 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
             margin_width_ = new_margin;
             rebuild();
         }
+        return;
     }
-    else
+
+    if (near_divider(event->pos().x()))
     {
-        setCursor(near_divider(event->pos().x()) ? Qt::SplitHCursor
-                                                : Qt::ArrowCursor);
+        setCursor(Qt::SplitHCursor);
+        return;
     }
+
+    const QPointF p = event->pos();
+    if (title_rect_.contains(p)
+        || margin_layout_.key_rect.contains(p)
+        || margin_layout_.time_sig_rect.contains(p)
+        || margin_layout_.tempo_glyph_rect.contains(p)
+        || margin_layout_.tempo_bpm_rect.contains(p))
+    {
+        setCursor(Qt::PointingHandCursor);
+        return;
+    }
+
+    setCursor(Qt::ArrowCursor);
 }
 
 void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
@@ -464,6 +535,257 @@ void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
         setCursor(near_divider(event->pos().x()) ? Qt::SplitHCursor
                                                 : Qt::ArrowCursor);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Edit handlers
+// ---------------------------------------------------------------------------
+
+// The title editor's rect is sized to the painted text rect, with a small
+// horizontal pad so a long new title has room to grow as it's typed.
+// When the title is empty (a fresh song) the editor opens blank with a
+// "Title" placeholder hint, matching the gray placeholder shown in the
+// painted view.  Empty input on commit is rejected (revert) — both
+// because the model layer rejects empty names and because an empty title
+// should retain whatever the song was previously called.
+void song_body_widget::edit_title()
+{
+    QRectF r = title_rect_;
+    // Give the editor reasonable typing room beyond the current title.
+    constexpr qreal k_min_editor_w = 240.0;
+    if (r.width() < k_min_editor_w)
+    {
+        qreal extra = k_min_editor_w - r.width();
+        r.adjust(-extra / 2.0, 0, extra / 2.0, 0);
+    }
+    QString current = QString::fromStdString(song_.name());
+    open_line_editor(r, current,
+        [this](const QString& text) -> bool
+        {
+            QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+                return false;  // revert: leave the model name untouched
+            song_.name(trimmed.toStdString());
+            rebuild();
+            return true;
+        },
+        QString::fromUtf8(k_title_placeholder));
+}
+
+void song_body_widget::edit_key()
+{
+    // The key hit-rect is the full circle.  An editor that exact size and
+    // shape would feel cramped — anchor it to the circle's vertical band
+    // but stretch across the margin so there's room to type.
+    QRectF r = margin_layout_.key_rect;
+    qreal full_w = std::max<qreal>(margin_width_ - 8.0, r.width());
+    r.setLeft(4.0);
+    r.setWidth(full_w);
+
+    QString current = QString::fromStdString(song_.key());
+    open_line_editor(r, current,
+        [this](const QString& text) -> bool
+        {
+            // The key must begin with a Western note letter A–H so that
+            // the renderer's accidental substitution and circle layout
+            // work.  H is included for German notation (B natural).
+            // Anything after that is accepted verbatim.
+            QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+                return false;  // revert
+            QChar first = trimmed.at(0).toUpper();
+            if (first < QChar('A') || first > QChar('H'))
+                return false;  // revert
+            song_.key(trimmed.toStdString());
+            rebuild();
+            return true;
+        });
+}
+
+void song_body_widget::edit_time_signature()
+{
+    const auto& ts = song_.time_sig();
+    QString current = QString("%1/%2")
+                        .arg(ts.count())
+                        .arg(static_cast<int>(ts.kind()));
+
+    // Stretch the editor across the full margin so "12/8" fits comfortably.
+    // Anchor it vertically to the painted time-signature rect.
+    QRectF r = margin_layout_.time_sig_rect;
+    qreal full_w = std::max<qreal>(margin_width_ - 8.0, r.width());
+    r.setLeft(4.0);
+    r.setWidth(full_w);
+
+    open_line_editor(r, current,
+        [this](const QString& text) -> bool
+        {
+            model::time_signature new_ts;
+            try
+            {
+                new_ts.parse_user_input(text.toStdString());
+            }
+            catch (const std::invalid_argument&)
+            {
+                // Invalid input — silently revert (caller will close the
+                // editor, leaving the previous time signature unchanged).
+                return false;
+            }
+            song_.time_sig(new_ts);
+            rebuild();
+            return true;
+        });
+}
+
+// Note-value popup for the tempo glyph.  The seven values listed match the
+// glyphs supported by margin_renderer::tempo_glyph().
+void song_body_widget::edit_tempo_glyph()
+{
+    using time = model::chord::time;
+    auto [bpm, beat_unit] = song_.tempo();
+    (void)bpm;
+
+    struct entry { const char* label; time value; };
+    static const entry entries[] = {
+        { "Whole",          time::WHOLE          },
+        { "Half",           time::HALF           },
+        { "Dotted half",    time::DOTTED_HALF    },
+        { "Quarter",        time::QUARTER        },
+        { "Dotted quarter", time::DOTTED_QUARTER },
+        { "Eighth",         time::EIGHTH         },
+        { "Dotted eighth",  time::DOTTED_EIGHTH  },
+    };
+
+    QMenu menu(this);
+    for (const auto& e : entries)
+    {
+        QAction* a = menu.addAction(tr(e.label));
+        a->setCheckable(true);
+        a->setChecked(e.value == beat_unit);
+        time v = e.value;
+        connect(a, &QAction::triggered, this, [this, v]() {
+            auto [bpm2, prev_unit] = song_.tempo();
+            (void)prev_unit;
+            song_.tempo({bpm2, v});
+            rebuild();
+        });
+    }
+
+    // Anchor the menu just below the glyph.
+    QPoint anchor = mapToGlobal(QPoint(
+        static_cast<int>(margin_layout_.tempo_glyph_rect.left()),
+        static_cast<int>(margin_layout_.tempo_glyph_rect.bottom())));
+    menu.exec(anchor);
+}
+
+void song_body_widget::edit_tempo_bpm()
+{
+    auto [bpm, beat_unit] = song_.tempo();
+
+    QRectF r = margin_layout_.tempo_bpm_rect;
+    // The BPM rect can be quite narrow ("= 60"); widen for typing room.
+    constexpr qreal k_min_bpm_editor_w = 80.0;
+    if (r.width() < k_min_bpm_editor_w)
+        r.setWidth(k_min_bpm_editor_w);
+
+    open_line_editor(r, QString::number(bpm),
+        [this, beat_unit](const QString& text) -> bool
+        {
+            bool ok = false;
+            int v = text.trimmed().toInt(&ok);
+            if (!ok || v < 1 || v > 400)
+            {
+                // Invalid input — silently revert.
+                return false;
+            }
+            song_.tempo({static_cast<unsigned>(v), beat_unit});
+            rebuild();
+            return true;
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Inline-editor plumbing
+// ---------------------------------------------------------------------------
+void song_body_widget::open_line_editor(const QRectF& rect,
+                                        const QString& initial,
+                                        std::function<bool(const QString&)> commit,
+                                        const QString& placeholder)
+{
+    // Tear down any pre-existing editor without committing — the caller is
+    // explicitly opening a fresh one.
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/false);
+
+    auto* edit = new QLineEdit(this);
+    edit->setText(initial);
+    if (!placeholder.isEmpty())
+        edit->setPlaceholderText(placeholder);
+    edit->selectAll();
+    edit->setGeometry(rect.toRect());
+    edit->setFrame(true);
+    edit->show();
+    edit->setFocus(Qt::MouseFocusReason);
+    edit->installEventFilter(this);  // catch Esc
+
+    active_editor_  = edit;
+    editor_commit_  = std::move(commit);
+
+    // Enter key, focus loss → commit attempt.  Re-entry from teardown is
+    // harmless because close_line_editor clears active_editor_ before
+    // invoking the commit callback, so a stray second call is a no-op.
+    connect(edit, &QLineEdit::editingFinished, this, [this]() {
+        close_line_editor(/*commit_value=*/true);
+    });
+}
+
+void song_body_widget::close_line_editor(bool commit_value)
+{
+    if (!active_editor_)
+        return;
+
+    QLineEdit* edit = active_editor_;
+    auto commit = std::move(editor_commit_);
+    QString text = edit->text().trimmed();
+
+    // Tear down before invoking the commit callback so the callback's
+    // rebuild() can repaint without the (about-to-be-deleted) editor on
+    // top, and so any focus-loss noise during teardown can't re-enter us.
+    active_editor_ = nullptr;
+    edit->removeEventFilter(this);
+    edit->hide();
+    edit->deleteLater();
+
+    if (commit_value && commit)
+    {
+        // The callback may return false to indicate validation failure;
+        // in that case we simply drop the change and leave the previous
+        // value intact — the editor is already closed.  We repaint
+        // explicitly so any region the editor occupied gets restored
+        // cleanly (e.g. the gray "Title" placeholder reappears in full
+        // after an empty-title revert on a fresh song).
+        bool committed = commit(text);
+        if (!committed)
+            update();
+    }
+    else
+    {
+        // Esc/cancel path — no commit, but we still need a clean repaint.
+        update();
+    }
+}
+
+bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == active_editor_ && event->type() == QEvent::KeyPress)
+    {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Escape)
+        {
+            close_line_editor(/*commit_value=*/false);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 // ---------------------------------------------------------------------------
@@ -482,10 +804,10 @@ void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect)
 
     QRectF my_rect(0, 0, width(), height());
     painter.fillRect(my_rect, Qt::white);
-    paint_title(painter, width());
-    margin_renderer::paint(painter,
-                           QRectF(0, title_height(), margin_width_, height() - title_height()),
-                           song_);
+    paint_title(painter, width(), /*stash_hit_rect=*/false);
+    paint_margin(painter,
+                 QRectF(0, title_height(), margin_width_, height() - title_height()),
+                 /*stash_hit_rects=*/false);
     paint_divider(painter);
     painter.setPen(QPen(Qt::black, 1.0));
     for (const auto& line : lines_)

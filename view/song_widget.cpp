@@ -11,7 +11,7 @@ namespace nashville::view
 // ---------------------------------------------------------------------------
 // song_widget
 // ---------------------------------------------------------------------------
-song_widget::song_widget(const model::song& song, QWidget* parent)
+song_widget::song_widget(model::song& song, QWidget* parent)
     : QWidget(parent), song_(song)
 {
     auto* layout = new QVBoxLayout(this);

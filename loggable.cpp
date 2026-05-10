@@ -3,7 +3,6 @@
 #include "spdlog/sinks/stdout_sinks.h"
 #include <QStandardPaths>
 #include <filesystem>
-#include <cstdlib>
 
 namespace
 {
@@ -22,13 +21,14 @@ loggable::loggable(const std::string& name)
         #if !defined(TESTING)
         std::filesystem::path data_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdString();
         sinks.emplace_back(std::make_shared<spdlog::sinks::rotating_file_sink_st>(data_dir / "Nashville.log",
-                                                                                  1000000,
+                                                                                  1048576,
                                                                                   10));
         #endif
         sinks.emplace_back(std::make_shared<spdlog::sinks::stdout_sink_st>());
     }
     lgr_ = std::make_shared<spdlog::logger>(name, sinks.begin(), sinks.end());
     lgr_->set_pattern(PATTERN);
+    lgr_->set_level(spdlog::get_level());
 }
 
 }

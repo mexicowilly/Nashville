@@ -10,20 +10,22 @@ namespace nashville::view
 {
 
 // Top-level widget: scrollable page with title + body.
+// The chart is always editable — clicking the title or any of the three
+// margin elements (key, time signature, tempo) opens an editor dialog.
 class song_widget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit song_widget(const model::song& song, QWidget* parent = nullptr);
+    explicit song_widget(model::song& song, QWidget* parent = nullptr);
 
     // Print the chart to printer.
     void print(QPrinter* printer);
 
-    // Call when song data changes.
+    // Call when song data changes from outside the widget.
     void refresh();
 
 private:
-    const model::song& song_;
+    model::song&       song_;
     song_body_widget*  body_   = nullptr;
     QScrollArea*       scroll_ = nullptr;
 };

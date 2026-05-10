@@ -10,16 +10,19 @@ namespace nashville::view
 static constexpr const char* k_flat  = "\u266D"; // ♭
 static constexpr const char* k_sharp = "\u266F"; // ♯
 
+// Color used for placeholder text on empty fields (medium gray).
+static const QColor k_placeholder_color(150, 150, 150);
+
 void margin_renderer::paint(QPainter& painter,
                             const QRectF& margin_rect,
-                            const model::song& song)
+                            const model::song& song,
+                            margin_layout* out_layout)
 {
     painter.save();
 
     QFont base_font("Georgia", 13);
     QFont key_font("Georgia", 16, QFont::Bold);
     QFontMetricsF base_fm(base_font);
-    QFontMetricsF key_fm(key_font);
 
     // Load Bravura for the tempo note glyph so it matches the rhythm row.
     int bravura_id = QFontDatabase::addApplicationFont(":/fonts/Bravura.otf");
@@ -32,16 +35,50 @@ void margin_renderer::paint(QPainter& painter,
     qreal y  = margin_rect.top() + k_top_padding;
 
     // ----------------------------------------------------------------
-    // 1. Key — letter (+ accidental) inside a circle
+    // 1. Key — letter (+ accidental) (+ free-form suffix) inside a circle
+    //
+    // The user can store any string in the key — "A", "Bb", "A min",
+    // "F# Major", "C dorian", … — so we render whatever's there.  The
+    // circle's diameter is capped at the margin width so the chart area
+    // isn't pushed around by long keys; if the text would overflow, the
+    // font is scaled down until it fits.
     // ----------------------------------------------------------------
-    QString key_letter, key_accidental;
-    parse_key(song.key(), key_letter, key_accidental);
-    QString key_display = key_letter + key_accidental;
+    QString key_letter, key_accidental, key_suffix;
+    const bool key_empty = song.key().empty();
+    parse_key(song.key(), key_letter, key_accidental, key_suffix);
+    QString key_display = key_letter + key_accidental + key_suffix;
 
-    painter.setFont(key_font);
-    qreal key_text_w = key_fm.horizontalAdvance(key_display);
-    qreal key_text_h = key_fm.height();
-    qreal circle_r  = std::max(key_text_w, key_text_h) / 2.0 + k_circle_padding;
+    // Maximum circle radius so the circle (and any inset text padding) fit
+    // inside the margin column with a small gutter to either side.
+    constexpr qreal k_margin_gutter = 4.0;
+    qreal max_radius = std::max<qreal>(
+        12.0,
+        margin_rect.width() / 2.0 - k_margin_gutter);
+
+    // Find a font size at which the text fits comfortably inside that
+    // capped circle.  Start at the configured key font size and shrink in
+    // 1pt steps; accept a size when the natural circle radius for the text
+    // is within the cap, or when we hit the floor.
+    QFont scaled_key_font = key_font;
+    constexpr qreal k_min_key_pt = 8.0;
+    qreal try_pt = key_font.pointSizeF();
+    qreal key_text_w = 0.0;
+    qreal key_text_h = 0.0;
+    qreal natural_r  = 0.0;
+    while (true)
+    {
+        scaled_key_font.setPointSizeF(try_pt);
+        QFontMetricsF fm(scaled_key_font);
+        key_text_w = fm.horizontalAdvance(key_display);
+        key_text_h = fm.height();
+        natural_r  = std::max(key_text_w, key_text_h) / 2.0 + k_circle_padding;
+        if (natural_r <= max_radius || try_pt <= k_min_key_pt)
+            break;
+        try_pt -= 1.0;
+    }
+
+    QFontMetricsF scaled_key_fm(scaled_key_font);
+    qreal circle_r = std::min(natural_r, max_radius);
 
     QPointF circle_center(cx, y + circle_r);
 
@@ -51,8 +88,20 @@ void margin_renderer::paint(QPainter& painter,
 
     qreal key_x        = circle_center.x() - key_text_w / 2.0;
     qreal key_baseline = circle_center.y()
-                        + (key_fm.ascent() - key_fm.descent()) / 2.0;
+                        + (scaled_key_fm.ascent() - scaled_key_fm.descent()) / 2.0;
+
+    // Empty key renders as gray "?" — placeholder for an unset field.
+    painter.setFont(scaled_key_font);
+    painter.setPen(QPen(key_empty ? k_placeholder_color : Qt::black, 1.0));
     painter.drawText(QPointF(key_x, key_baseline), key_display);
+
+    if (out_layout)
+    {
+        out_layout->key_rect = QRectF(circle_center.x() - circle_r,
+                                      circle_center.y() - circle_r,
+                                      circle_r * 2.0,
+                                      circle_r * 2.0);
+    }
 
     y += circle_r * 2.0 + k_element_spacing;
 
@@ -64,6 +113,7 @@ void margin_renderer::paint(QPainter& painter,
     QString kind_str  = QString::number(static_cast<int>(ts.kind()));
 
     painter.setFont(base_font);
+    painter.setPen(QPen(Qt::black, 1.0));
     qreal ts_num_w = std::max(base_fm.horizontalAdvance(count_str),
                               base_fm.horizontalAdvance(kind_str));
 
@@ -74,6 +124,7 @@ void margin_renderer::paint(QPainter& painter,
     qreal sep      = 1.0;                                  // gap below glyph and above denominator
     qreal sep_left = cx - ts_num_w / 2.0;
 
+    qreal ts_top = y;
     painter.drawText(QPointF(count_x, y + base_fm.ascent()), count_str);
 
     // Separator line — centred, 1px thick, with breathing room above and below
@@ -81,6 +132,17 @@ void margin_renderer::paint(QPainter& painter,
     painter.fillRect(QRectF(sep_left, line_y, ts_num_w, 1.0), Qt::black);
 
     painter.drawText(QPointF(kind_x, line_y + sep + base_fm.ascent()), kind_str);
+
+    qreal ts_bottom = line_y + sep + row_h;
+    if (out_layout)
+    {
+        // Generous horizontal hit-target around the stacked numerals.
+        qreal pad_h = 8.0;
+        out_layout->time_sig_rect = QRectF(sep_left - pad_h,
+                                           ts_top,
+                                           ts_num_w + pad_h * 2.0,
+                                           ts_bottom - ts_top);
+    }
 
     y += row_h + sep + 1.0 + sep + row_h + k_element_spacing;
 
@@ -118,6 +180,29 @@ void margin_renderer::paint(QPainter& painter,
     painter.setFont(base_font);
     painter.drawText(QPointF(start_x + glyph_w, baseline_y), text_str);
 
+    if (out_layout)
+    {
+        qreal pad_h = 6.0;
+        qreal pad_v = 2.0;
+        out_layout->tempo_rect = QRectF(start_x - pad_h,
+                                        y - pad_v,
+                                        total_w + pad_h * 2.0,
+                                        row_h + pad_v * 2.0);
+
+        // Sub-rects so the glyph and the BPM number can be clicked
+        // independently.  Glyph hit-target hugs the glyph; BPM hit-target
+        // covers the " = NNN" text (the equals sign goes with the number
+        // so the clickable region looks visually balanced).
+        out_layout->tempo_glyph_rect = QRectF(start_x - pad_h,
+                                              y - pad_v,
+                                              glyph_w + pad_h,
+                                              row_h + pad_v * 2.0);
+        out_layout->tempo_bpm_rect   = QRectF(start_x + glyph_w,
+                                              y - pad_v,
+                                              text_w + pad_h,
+                                              row_h + pad_v * 2.0);
+    }
+
     painter.restore();
 }
 
@@ -126,26 +211,45 @@ void margin_renderer::paint(QPainter& painter,
 // ---------------------------------------------------------------------------
 void margin_renderer::parse_key(const std::string& key,
                                QString& letter,
-                               QString& accidental)
+                               QString& accidental,
+                               QString& suffix)
 {
+    letter     = "";
+    accidental = "";
+    suffix     = "";
+
     if (key.empty())
     {
-        letter     = "?";
-        accidental = "";
+        letter = "?";
         return;
     }
 
-    letter     = QString(QChar(key[0])).toUpper();
-    accidental = "";
+    // First character is the note letter (rendered uppercase).
+    letter = QString(QChar(key[0])).toUpper();
 
+    // If the second character is a flat or sharp marker, substitute the
+    // proper Unicode glyph; the rest of the string (if any) becomes the
+    // suffix.  This preserves nice rendering of canonical short forms like
+    // "Bb" → "B♭" or "F#min" → "F♯min" while still letting users write
+    // anything they like ("A min", "A Minor", "C dorian", …).
+    std::size_t consumed = 1;
     if (key.size() > 1)
     {
         char acc = key[1];
         if (acc == 'b' || acc == 'B')
+        {
             accidental = QString(k_flat);
+            consumed = 2;
+        }
         else if (acc == '#')
+        {
             accidental = QString(k_sharp);
+            consumed = 2;
+        }
     }
+
+    if (consumed < key.size())
+        suffix = QString::fromStdString(key.substr(consumed));
 }
 
 // ---------------------------------------------------------------------------

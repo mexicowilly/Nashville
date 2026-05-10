@@ -10,6 +10,7 @@ namespace nashville::model
 class song : public loggable
 {
 public:
+    song();
     song(const std::string& nm);
 
     bar& add_bar();
