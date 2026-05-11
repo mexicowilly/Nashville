@@ -29,4 +29,25 @@ struct line_layout
     bool has_articulation      = false;     // true if ANY chord on this line has a push/staccato
 };
 
+// Where a new bar may be inserted by clicking an empty "ghost" rectangle.
+// At most three kinds exist; at any moment the layout has 0, 1, or 2 slots:
+//   * first_bar  — empty song; appending creates the song's first bar.
+//   * same_line  — append after the last bar, on the same visual line.
+//                  Requires clearing is_eol on the previous last bar so the
+//                  new bar joins it rather than starting a new line.
+//   * next_line  — append below the last line.  Requires setting is_eol on
+//                  the previous last bar so the new bar starts a new line.
+enum class insertion_slot_kind
+{
+    first_bar,
+    same_line,
+    next_line,
+};
+
+struct insertion_slot
+{
+    QRectF rect;
+    insertion_slot_kind kind = insertion_slot_kind::first_bar;
+};
+
 } // namespace nashville::view

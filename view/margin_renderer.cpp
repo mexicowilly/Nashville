@@ -93,7 +93,41 @@ void margin_renderer::paint(QPainter& painter,
     // Empty key renders as gray "?" — placeholder for an unset field.
     painter.setFont(scaled_key_font);
     painter.setPen(QPen(key_empty ? k_placeholder_color : Qt::black, 1.0));
-    painter.drawText(QPointF(key_x, key_baseline), key_display);
+
+    // Render the three parts (letter, accidental, suffix) at distinct
+    // positions instead of one drawText call, so the accidental's
+    // baseline can be lifted to align its visual ink centre with the
+    // letter's.  Common text fonts (Georgia included) draw ♯ / ♭ with
+    // their ink centre near the x-height — well below the cap-height
+    // centre of a capital letter — so a naïve same-baseline draw makes
+    // "F#" look like "F" sitting on top of a dropped "#".  Aligning the
+    // tight-bounding-rect centres puts the accidental at the same
+    // visual elevation as the letter.
+    qreal cursor_x = key_x;
+
+    if (!key_letter.isEmpty())
+    {
+        painter.drawText(QPointF(cursor_x, key_baseline), key_letter);
+        cursor_x += scaled_key_fm.horizontalAdvance(key_letter);
+    }
+
+    if (!key_accidental.isEmpty())
+    {
+        QRectF letter_tbr = key_letter.isEmpty()
+                            ? QRectF()
+                            : scaled_key_fm.tightBoundingRect(key_letter);
+        QRectF acc_tbr    = scaled_key_fm.tightBoundingRect(key_accidental);
+        qreal letter_centre = letter_tbr.isEmpty()
+                              ? 0.0
+                              : (letter_tbr.top() + letter_tbr.bottom()) / 2.0;
+        qreal acc_centre    = (acc_tbr.top() + acc_tbr.bottom()) / 2.0;
+        qreal acc_baseline  = key_baseline + letter_centre - acc_centre;
+        painter.drawText(QPointF(cursor_x, acc_baseline), key_accidental);
+        cursor_x += scaled_key_fm.horizontalAdvance(key_accidental);
+    }
+
+    if (!key_suffix.isEmpty())
+        painter.drawText(QPointF(cursor_x, key_baseline), key_suffix);
 
     if (out_layout)
     {

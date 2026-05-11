@@ -25,6 +25,53 @@ qreal bar_renderer::width_hint(const model::bar& bar,
 }
 
 // ---------------------------------------------------------------------------
+// Public: number_row_center_y
+// ---------------------------------------------------------------------------
+// Mirrors the chord_renderer numRect computation so external callers can
+// align adornments (notably the inter-bar continuation dot) with the
+// chord-number row.  Any change to top_pad, k_plain_top_pad, or the
+// chord-slot height formula in paint() must be reflected here too — the
+// two pieces of code share the same geometry contract.
+qreal bar_renderer::number_row_center_y(const QRectF& rect,
+                                       const model::bar& bar,
+                                       const chord_renderer::Fonts& fonts,
+                                       bool line_duration_mode,
+                                       bool line_has_articulation)
+{
+    constexpr qreal top_pad         = 2.0;  // matches paint()
+    constexpr qreal k_plain_top_pad = 4.0;  // matches chord_renderer
+
+    QFontMetricsF nmFm(fonts.number);
+    QFontMetricsF artFm(fonts.articulation);
+
+    qreal num_h = nmFm.ascent() + nmFm.descent();
+    qreal art_h = line_has_articulation
+                  ? artFm.ascent() + artFm.descent()
+                  : 0.0;
+
+    // Does any chord in this bar have a diamond?  Only relevant for
+    // duration-mode bars — in plain mode the chord slot fills the bar
+    // minus top_pad, with no diamond-dependent height.
+    bool bar_has_diamond = false;
+    for (const auto& ch : bar.chords())
+        if (ch.is_diamond()) { bar_has_diamond = true; break; }
+
+    qreal chord_slot_top = line_duration_mode
+                           ? rect.top()
+                           : rect.top() + top_pad;
+    qreal chord_slot_h   = line_duration_mode
+                           ? num_h + art_h + (bar_has_diamond
+                                 ? chord_renderer::k_diamond_padding_v + 1.0 : 0.0)
+                           : rect.height() - top_pad;
+
+    qreal top_offset = line_has_articulation ? art_h : k_plain_top_pad;
+
+    qreal num_top = chord_slot_top + top_offset;
+    qreal num_h_actual = chord_slot_h - top_offset;
+    return num_top + num_h_actual / 2.0;
+}
+
+// ---------------------------------------------------------------------------
 // Public: paint
 // ---------------------------------------------------------------------------
 void bar_renderer::paint(QPainter& painter,

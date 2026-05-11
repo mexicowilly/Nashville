@@ -61,9 +61,19 @@ void song_body_widget::rebuild()
 void song_body_widget::compute_layout(const QRectF& content_rect)
 {
     lines_.clear();
+    insertion_slots_.clear();
 
     if (song_.empty())
+    {
+        // Empty song: the only insertion slot is the would-be first bar at
+        // the start of the first line.  No section column is reserved
+        // because there are no labels yet.
+        compute_insertion_slots(content_rect,
+                                /*bars_left=*/content_rect.left(),
+                                /*last_line_bottom=*/content_rect.top(),
+                                /*last_line_bar_h=*/plain_bar_height(false));
         return;
+    }
 
     const auto& bars       = song_.bars();
     const unsigned bpl_pref = song_.bars_per_line();
@@ -94,25 +104,38 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     // --- Pass 2: measure section column width ---
     // All lines share the same section column width = widest label + padding.
     // Lines without a label still reserve the column so bars stay aligned.
+    // We always reserve a minimum gutter even when no section labels exist
+    // anywhere, so the user can click into the empty space to bootstrap
+    // the very first section.  When labels exist, the gutter widens to fit
+    // the widest one.
     constexpr qreal k_label_pad_h = 6.0;   // horizontal padding inside box
     constexpr qreal k_label_pad_v = 3.0;   // vertical padding inside box
     constexpr qreal k_section_gap = 8.0;   // gap between section col and first bar
+    constexpr qreal k_min_section_col_w = 24.0;  // bootstrap gutter for label-less songs
 
     QFont label_font = fonts_.modifier;
     label_font.setBold(true);
     QFontMetricsF label_fm(label_font);
 
+    // The UI invariant is "sections live on the first bar of a line."
+    // Measure label widths from first-of-line bars only — any stray
+    // section on a non-first bar (e.g. from a malformed loaded file) is
+    // silently ignored everywhere in the layout, including here.
     qreal max_label_w = 0.0;
     for (const auto& raw : raw_lines)
-        for (const auto* b : raw.bars)
-            if (b->section())
-                max_label_w = std::max(max_label_w,
-                    label_fm.horizontalAdvance(QString::fromStdString(*b->section())));
+    {
+        if (raw.bars.empty()) continue;
+        const auto* first = raw.bars.front();
+        if (first->section())
+            max_label_w = std::max(max_label_w,
+                label_fm.horizontalAdvance(QString::fromStdString(*first->section())));
+    }
 
-    // section_col_w is 0 when there are no section labels at all.
-    qreal section_col_w = (max_label_w > 0.0)
-                          ? max_label_w + k_label_pad_h * 2.0 + k_section_gap
-                          : 0.0;
+    qreal labelled_col_w = (max_label_w > 0.0)
+                            ? max_label_w + k_label_pad_h * 2.0 + k_section_gap
+                            : 0.0;
+    qreal section_col_w = std::max(labelled_col_w,
+                                   k_min_section_col_w + k_section_gap);
 
     // Helper: does any chord on this line have an above-number articulation?
     auto line_has_articulation = [](const std::vector<const model::bar*>& bars) {
@@ -152,11 +175,12 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
     // --- Pass 3.5: determine which lines end a section ---
     // A line ends a section if the next line starts a new section and
-    // there are at least 2 sections total.
+    // there are at least 2 sections total.  Sections live only on the
+    // first bar of a line (UI invariant), so the check is a single
+    // dereference rather than a scan.
     auto line_has_section = [&](std::size_t i) {
-        for (const auto* b : raw_lines[i].bars)
-            if (b->section()) return true;
-        return false;
+        return !raw_lines[i].bars.empty()
+            && raw_lines[i].bars.front()->section().has_value();
     };
     int section_count = 0;
     for (std::size_t i = 0; i < raw_lines.size(); ++i)
@@ -180,9 +204,11 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art);
         line.has_articulation = line_has_articulation(raw.bars);
 
-        for (const auto* b : raw.bars)
-            if (b->section() && !line.section_label)
-                line.section_label = QString::fromStdString(*b->section());
+        // Section label comes from the first bar only.  Sections on
+        // non-first bars are silently ignored — see the UI invariant.
+        if (!raw.bars.empty() && raw.bars.front()->section())
+            line.section_label =
+                QString::fromStdString(*raw.bars.front()->section());
 
         // Section column: full bar height, left-aligned within content_rect.
         // Width is the label box only (without the gap).
@@ -211,7 +237,14 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             bl.is_duration_mode = !b->empty()
                                 && b->chords().front().duration().has_value();
 
-            bl.num_center_y = num_top + num_h / 2.0;
+            // Centre the continuation-dot vertically on the chord-number
+            // row by asking bar_renderer where that row will paint.  Doing
+            // it ourselves with raw font metrics drifts from the renderer
+            // (which centres the digit ink in its own numRect), producing
+            // a visible misalignment between the dot and the digits.
+            bl.num_center_y = bar_renderer::number_row_center_y(
+                bl.rect, *b, fonts_,
+                line.is_duration_mode, line.has_articulation);
 
             if (raw.bars.size() > bpl_pref
                 && j == bpl_pref - 1)
@@ -231,7 +264,163 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         y += actual_bar_h + spacing;
     }
 
-    setMinimumHeight(static_cast<int>(y + k_content_padding));
+    // Insertion slots are derived from the last line's geometry.  The
+    // next-line slot's top is the same y the next line would have used had
+    // there been one; reusing the loop's trailing spacing means slot
+    // placement matches what a freshly-typed bar will look like once
+    // re-laid-out.
+    const auto& last_line = lines_.back();
+    compute_insertion_slots(content_rect,
+                            bars_left,
+                            /*last_line_bottom=*/last_line.rect.bottom()
+                                                  + k_line_spacing_normal,
+                            /*last_line_bar_h=*/last_line.rect.height());
+
+    // The next-line slot extends below `y`; grow the minimum height so it
+    // stays visible without manual scrolling.
+    qreal slots_bottom = y;
+    for (const auto& s : insertion_slots_)
+        slots_bottom = std::max(slots_bottom, s.rect.bottom());
+
+    setMinimumHeight(static_cast<int>(slots_bottom + k_content_padding));
+}
+
+// ---------------------------------------------------------------------------
+// compute_insertion_slots
+// ---------------------------------------------------------------------------
+// The layout for new-bar insertion is intentionally simple: there are at
+// most two slots, anchored to the last line (or to the top-left of the
+// content area when the song is empty).  This matches the spec's three
+// cases under one rule:
+//   * Empty song            -> one "first_bar" slot at content top-left.
+//   * Last line not full    -> "same_line" after last bar + "next_line".
+//   * Last line at capacity -> still "same_line" (extends past bars_per_line
+//                              with a continuation dot) + "next_line".
+//
+// Slot widths are deliberately suggestive rather than precise; the real
+// bar width is computed from chord contents after the user types into the
+// editor.  Using the last bar's width (or a fixed default when empty)
+// produces a visual hint that lines up naturally with the existing bars.
+void song_body_widget::compute_insertion_slots(const QRectF& content_rect,
+                                               qreal bars_left,
+                                               qreal last_line_bottom,
+                                               qreal last_line_bar_h)
+{
+    constexpr qreal k_default_slot_w = 80.0;
+
+    if (song_.empty())
+    {
+        insertion_slot s;
+        s.kind = insertion_slot_kind::first_bar;
+        s.rect = QRectF(content_rect.left(), content_rect.top(),
+                        k_default_slot_w, last_line_bar_h);
+        insertion_slots_.push_back(s);
+        return;
+    }
+
+    // Slot widths derive from the last bar on the last line — visually it
+    // reads as "the next bar will be about this size" while the user
+    // hovers, before they've typed anything.
+    const auto& last_line = lines_.back();
+    qreal slot_w = k_default_slot_w;
+    qreal last_bar_right = bars_left;
+    if (!last_line.bars.empty())
+    {
+        const auto& last_bar = last_line.bars.back();
+        slot_w = last_bar.rect.width();
+        last_bar_right = last_bar.rect.right();
+    }
+
+    // same_line: placed immediately after the last bar, separated by the
+    // same inter-bar spacing the renderer uses elsewhere.  The bar height
+    // matches the last line so the ghost outline aligns with neighbours.
+    {
+        insertion_slot s;
+        s.kind = insertion_slot_kind::same_line;
+        s.rect = QRectF(last_bar_right + k_inter_bar_spacing,
+                        last_line.rect.top(),
+                        slot_w,
+                        last_line_bar_h);
+        insertion_slots_.push_back(s);
+    }
+
+    // next_line: placed at the bar-column left edge, on a fresh row below
+    // the last line.  We deliberately keep its width matched to the
+    // last_line slot so the two ghosts look like siblings.
+    {
+        insertion_slot s;
+        s.kind = insertion_slot_kind::next_line;
+        s.rect = QRectF(bars_left,
+                        last_line_bottom,
+                        slot_w,
+                        last_line_bar_h);
+        insertion_slots_.push_back(s);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// paint_insertion_slot
+// ---------------------------------------------------------------------------
+// Painted with a dashed gray outline.  Only the currently-hovered slot is
+// drawn — the others stay invisible to keep the chart uncluttered.
+void song_body_widget::paint_insertion_slot(QPainter& painter,
+                                            const insertion_slot& slot) const
+{
+    painter.save();
+    QPen pen(k_placeholder_color, 1.0, Qt::DashLine);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(slot.rect);
+    painter.restore();
+}
+
+int song_body_widget::hit_test_insertion_slot(const QPointF& p) const
+{
+    for (std::size_t i = 0; i < insertion_slots_.size(); ++i)
+        if (insertion_slots_[i].rect.contains(p))
+            return static_cast<int>(i);
+    return -1;
+}
+
+// ---------------------------------------------------------------------------
+// hit_test_bar
+// ---------------------------------------------------------------------------
+// Walks the laid-out lines in document order, accumulating an index into
+// song_.bars().  When a bar's rect contains the point, the accumulator is
+// the bar's position in the song's flat bar vector — which is what the
+// edit handler needs to address the bar for mutation.
+int song_body_widget::hit_test_bar(const QPointF& p, QRectF* out_rect) const
+{
+    std::size_t bar_idx = 0;
+    for (const auto& line : lines_)
+    {
+        for (const auto& bl : line.bars)
+        {
+            if (bl.rect.contains(p))
+            {
+                if (out_rect) *out_rect = bl.rect;
+                return static_cast<int>(bar_idx);
+            }
+            ++bar_idx;
+        }
+    }
+    return -1;
+}
+
+// ---------------------------------------------------------------------------
+// hit_test_section_col
+// ---------------------------------------------------------------------------
+// The section column rect is centred vertically on the bar's number row,
+// not on the full bar height — clicking the number row's left edge counts
+// as a section click, but clicking the rhythm row below it does not.
+// This matches the visual placement of the (existing) label box and keeps
+// the click target unambiguous.
+int song_body_widget::hit_test_section_col(const QPointF& p) const
+{
+    for (std::size_t i = 0; i < lines_.size(); ++i)
+        if (lines_[i].section_col_rect.contains(p))
+            return static_cast<int>(i);
+    return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +521,40 @@ void song_body_widget::paintEvent(QPaintEvent*)
     painter.setPen(QPen(Qt::black, 1.0));
     for (const auto& line : lines_)
         paint_line(painter, line);
+
+    // Only the hovered slot is painted — the others stay invisible until
+    // the cursor enters them.  Skipped while an inline editor is open
+    // because the editor visually replaces the slot for the duration of
+    // the edit, and skipped during divider drag to avoid distracting
+    // flicker.
+    if (hovered_slot_ >= 0
+        && hovered_slot_ < static_cast<int>(insertion_slots_.size())
+        && !active_editor_
+        && !dragging_divider_)
+    {
+        paint_insertion_slot(painter, insertion_slots_[hovered_slot_]);
+    }
+
+    // Empty section gutter hover: draw a dashed outline matching the
+    // would-be label box so the user can see the click target.  Lines
+    // that already carry a section label use their painted box as the
+    // affordance — no extra outline.
+    if (hovered_empty_section_line_ >= 0
+        && hovered_empty_section_line_ < static_cast<int>(lines_.size())
+        && !active_editor_
+        && !dragging_divider_)
+    {
+        const auto& col_rect = lines_[hovered_empty_section_line_].section_col_rect;
+        if (col_rect.width() > 0.0)
+        {
+            painter.save();
+            QPen pen(k_placeholder_color, 1.0, Qt::DashLine);
+            painter.setPen(pen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(col_rect);
+            painter.restore();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +712,33 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
         edit_tempo_glyph();
     else if (margin_layout_.tempo_bpm_rect.contains(p))
         edit_tempo_bpm();
+    else
+    {
+        // Existing bars take precedence over insertion slots so the
+        // user never accidentally creates a new bar by clicking on one
+        // they meant to edit.  (Their rects shouldn't actually overlap
+        // under the current layout, but the priority is the right
+        // contract regardless.)
+        QRectF bar_rect;
+        int bar_idx = hit_test_bar(p, &bar_rect);
+        if (bar_idx >= 0)
+        {
+            edit_bar(static_cast<std::size_t>(bar_idx), bar_rect);
+            return;
+        }
+        // Section column lives to the left of bars; no overlap is
+        // possible, but checking it before insertion slots keeps the
+        // dispatch ordered by "things the user can see and target."
+        int sec_line = hit_test_section_col(p);
+        if (sec_line >= 0)
+        {
+            edit_section(static_cast<std::size_t>(sec_line));
+            return;
+        }
+        int slot_idx = hit_test_insertion_slot(p);
+        if (slot_idx >= 0)
+            edit_new_bar(static_cast<std::size_t>(slot_idx));
+    }
 }
 
 void song_body_widget::mouseMoveEvent(QMouseEvent* event)
@@ -507,9 +757,21 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
+    // Helper: drop any outline-bearing hover state and repaint if needed.
+    // Used whenever the cursor enters a region where no slot/empty-section
+    // outline should be visible.
+    auto clear_outline_hover = [&]() {
+        bool changed = false;
+        if (hovered_slot_ != -1) { hovered_slot_ = -1; changed = true; }
+        if (hovered_empty_section_line_ != -1)
+            { hovered_empty_section_line_ = -1; changed = true; }
+        if (changed) update();
+    };
+
     if (near_divider(event->pos().x()))
     {
         setCursor(Qt::SplitHCursor);
+        clear_outline_hover();
         return;
     }
 
@@ -521,10 +783,49 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
         || margin_layout_.tempo_bpm_rect.contains(p))
     {
         setCursor(Qt::PointingHandCursor);
+        clear_outline_hover();
         return;
     }
 
-    setCursor(Qt::ArrowCursor);
+    // Existing bars get the pointing-hand cursor — the rectangle is
+    // already visible so no extra outline is needed.
+    if (hit_test_bar(p) >= 0)
+    {
+        setCursor(Qt::PointingHandCursor);
+        clear_outline_hover();
+        return;
+    }
+
+    // Section column hover: cursor changes always; outline is shown only
+    // when the line has no section label yet (an existing labelled box
+    // is its own affordance and an outline would clash with the box).
+    int sec_line = hit_test_section_col(p);
+    if (sec_line >= 0)
+    {
+        setCursor(Qt::PointingHandCursor);
+        bool line_has_label = lines_[sec_line].section_label.has_value();
+        int new_section_hover = line_has_label ? -1 : sec_line;
+        bool changed = false;
+        if (hovered_slot_ != -1) { hovered_slot_ = -1; changed = true; }
+        if (new_section_hover != hovered_empty_section_line_)
+            { hovered_empty_section_line_ = new_section_hover; changed = true; }
+        if (changed) update();
+        return;
+    }
+
+    // Insertion slot hover (last because the slot rects are the lowest-
+    // priority click targets).  Repaint only when the hovered slot
+    // changes, and drop any stale section-outline hover when we land
+    // on a slot.
+    int new_slot_hover = hit_test_insertion_slot(p);
+    bool changed = false;
+    if (new_slot_hover != hovered_slot_)
+        { hovered_slot_ = new_slot_hover; changed = true; }
+    if (hovered_empty_section_line_ != -1)
+        { hovered_empty_section_line_ = -1; changed = true; }
+    if (changed) update();
+
+    setCursor(new_slot_hover >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
 void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
@@ -535,6 +836,20 @@ void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
         setCursor(near_divider(event->pos().x()) ? Qt::SplitHCursor
                                                 : Qt::ArrowCursor);
     }
+}
+
+// ---------------------------------------------------------------------------
+// leaveEvent — clear hover outlines when the cursor exits the widget
+// ---------------------------------------------------------------------------
+// Without this, moving the mouse straight off the widget's edge while
+// over a slot or empty-section gutter would leave the dashed outline
+// painted indefinitely until the next paint event re-evaluated hover.
+void song_body_widget::leaveEvent(QEvent*)
+{
+    bool changed = false;
+    if (hovered_slot_ != -1)               { hovered_slot_ = -1;               changed = true; }
+    if (hovered_empty_section_line_ != -1) { hovered_empty_section_line_ = -1; changed = true; }
+    if (changed) update();
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +1016,238 @@ void song_body_widget::edit_tempo_bpm()
             rebuild();
             return true;
         });
+}
+
+// ---------------------------------------------------------------------------
+// edit_new_bar — click handler for an insertion slot
+// ---------------------------------------------------------------------------
+// Opens an inline editor over the hovered ghost rectangle.  Slot choice is
+// the source of truth about layout: clicking `same_line` *declares* that
+// the new bar continues the last visual line, and clicking `next_line`
+// *declares* that it starts a new one.  is_eol on the previous last bar
+// is then written to record that declaration — never the other way
+// around.  In particular, `same_line` is always offered even when the
+// previous bar's is_eol is already true; the UI lets the user override
+// that flag by extending the line, which simply clears is_eol on commit.
+//
+// Commit is atomic: either the new bar is appended *and* the previous
+// bar's is_eol is updated, or neither happens.  If bar::parse_user_input
+// throws on the chord text, every write performed during this commit is
+// rolled back so the chart returns to exactly its pre-click state.
+//
+// Empty input reverts — we never want to insert a chordless bar just
+// because the user clicked and pressed Enter.
+//
+// The slot's *kind* is captured by value (not its index), because the
+// layout — and therefore the insertion_slots_ vector — is rebuilt on
+// every model change.  The kind is what the user picked; the index is an
+// implementation detail of the current frame.
+void song_body_widget::edit_new_bar(std::size_t slot_index)
+{
+    if (slot_index >= insertion_slots_.size())
+        return;
+
+    const insertion_slot& slot = insertion_slots_[slot_index];
+    insertion_slot_kind kind = slot.kind;
+
+    // Widen narrow slots so there's room to type — the rendered ghost is
+    // intentionally compact, but a real bar can hold several chords.
+    QRectF r = slot.rect;
+    constexpr qreal k_min_new_bar_editor_w = 160.0;
+    if (r.width() < k_min_new_bar_editor_w)
+        r.setWidth(k_min_new_bar_editor_w);
+
+    // Clearing the hover state up front avoids a brief moment where the
+    // ghost outline and the editor frame overlap during open.
+    hovered_slot_ = -1;
+
+    open_line_editor(r, QString(),
+        [this, kind](const QString& text) -> bool
+        {
+            QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+                return false;  // revert: don't insert an empty bar
+
+            // Stage the entire edit on a copy of the bars vector so a
+            // parser exception can be cleanly aborted.  Only after the
+            // new bar parses successfully do we publish the copy to the
+            // model.  This keeps the operation atomic: either both the
+            // previous-bar is_eol write and the append take effect, or
+            // neither does.
+            std::vector<model::bar> bars = song_.bars();
+
+            // Record the UI's line-break declaration on the previous
+            // last bar.  No previous bar exists for first_bar.
+            if (kind != insertion_slot_kind::first_bar && !bars.empty())
+                bars.back().is_eol(kind == insertion_slot_kind::next_line);
+
+            // Parse into a fresh bar held off to the side; if it throws,
+            // `bars` is untouched and we return false without publishing.
+            model::bar new_bar;
+            try
+            {
+                new_bar.parse_user_input(trimmed.toStdString());
+            }
+            catch (const std::exception&)
+            {
+                return false;  // chart returns to exact pre-click state
+            }
+
+            bars.push_back(std::move(new_bar));
+            song_.bars(bars);
+            rebuild();
+            return true;
+        },
+        /*placeholder=*/tr("e.g. 1 4 5"));
+}
+
+// ---------------------------------------------------------------------------
+// edit_bar — click handler for an existing bar
+// ---------------------------------------------------------------------------
+// Opens an inline editor anchored to the clicked bar's rect, seeded with
+// the bar's to_user_input() string so the user can tweak rather than
+// retype.  On commit:
+//   * Empty input reverts — the user can't "blank out" a bar by clearing
+//     and pressing Enter.  Deletion, if added later, should be a separate
+//     gesture so the meaning of a committed-empty editor stays consistent
+//     with every other inline editor in this widget.
+//   * Parser failure reverts atomically — we stage the parse on a copy of
+//     the bar and only publish the new bars vector if parsing succeeds.
+//
+// The bar's *index* into song_.bars() is captured (not a pointer or rect):
+// the vector may reallocate on the next edit, and the layout-derived
+// pointers in bar_layout::bar become stale after every rebuild(), but
+// index-based addressing stays valid as long as nothing inserts or
+// removes bars while the editor is open — which the single-editor-at-a-
+// time invariant guarantees.  The rect is passed in by the caller
+// because it was already computed during hit-testing.
+void song_body_widget::edit_bar(std::size_t bar_index, const QRectF& bar_rect)
+{
+    const auto& bars = song_.bars();
+    if (bar_index >= bars.size())
+        return;
+
+    // Widen the editor for typing room — narrow bars (a single chord)
+    // would otherwise leave the user fighting for space mid-edit.
+    QRectF r = bar_rect;
+    constexpr qreal k_min_bar_editor_w = 160.0;
+    if (r.width() < k_min_bar_editor_w)
+        r.setWidth(k_min_bar_editor_w);
+
+    QString initial = QString::fromStdString(bars[bar_index].to_user_input());
+
+    open_line_editor(r, initial,
+        [this, bar_index](const QString& text) -> bool
+        {
+            QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+                return false;  // revert: keep the existing bar
+
+            // Bounds-recheck before reading in case some other code path
+            // mutated bars between editor open and commit.  Under the
+            // single-editor invariant this can't happen, but the check
+            // costs nothing and turns a UB into a safe no-op if the
+            // invariant is ever weakened.
+            if (bar_index >= song_.bars().size())
+                return false;
+
+            // Stage the parse on a local bar so a thrown parser exception
+            // never reaches the model.  parse_user_input is bar-level
+            // atomic on throw (chords_ is only reassigned after the new
+            // chord vector is fully built), but staging on a copy makes
+            // the atomicity visible at this layer too.
+            model::bar staged = song_.bars()[bar_index];
+            try
+            {
+                staged.parse_user_input(trimmed.toStdString());
+            }
+            catch (const std::exception&)
+            {
+                return false;  // chart returns to exact pre-click state
+            }
+
+            std::vector<model::bar> bars_copy = song_.bars();
+            bars_copy[bar_index] = std::move(staged);
+            song_.bars(bars_copy);
+            rebuild();
+            return true;
+        });
+}
+
+// ---------------------------------------------------------------------------
+// edit_section — click handler for the section column
+// ---------------------------------------------------------------------------
+// Sections live exclusively on the first bar of a line (the UI never
+// places one elsewhere, and the layout ignores any stray section that
+// somehow ended up on a non-first bar).  So this handler always targets
+// the first bar of the clicked line, regardless of whether a label is
+// currently displayed.
+//
+// Commit semantics:
+//   * Non-empty input   — assigns or renames the section on the first
+//                         bar of the line.
+//   * Empty input       — clears the section.  This is the only inline
+//                         editor in the widget where empty commit is
+//                         meaningful: bar::section("") collapses to
+//                         nullopt at the model layer, so the editor
+//                         just forwards the trimmed text through.
+void song_body_widget::edit_section(std::size_t line_index)
+{
+    if (line_index >= lines_.size())
+        return;
+
+    const auto& line = lines_[line_index];
+    if (line.bars.empty())
+        return;
+
+    // The first bar of this line is the target.  Map it to its index
+    // in song_.bars() by summing the bar counts of all preceding lines
+    // — layout order matches song-bars order, so this is just a sum.
+    std::size_t target_song_index = 0;
+    for (std::size_t li = 0; li < line_index; ++li)
+        target_song_index += lines_[li].bars.size();
+
+    const model::bar* target_bar = line.bars.front().bar;
+
+    QRectF r = line.section_col_rect;
+
+    // Widen narrow gutters so there's room to type — the painted column
+    // is sized to fit a label box, but the editor needs typing room.
+    constexpr qreal k_min_section_editor_w = 100.0;
+    if (r.width() < k_min_section_editor_w)
+        r.setWidth(k_min_section_editor_w);
+
+    QString initial = target_bar->section()
+                      ? QString::fromStdString(*target_bar->section())
+                      : QString();
+
+    // Clear any lingering hover outline so it doesn't peek out from
+    // under the editor at open.
+    hovered_empty_section_line_ = -1;
+
+    open_line_editor(r, initial,
+        [this, target_song_index](const QString& text) -> bool
+        {
+            // Note: no early-revert on empty.  The model setter treats
+            // empty string as "clear the section," which is the only
+            // gesture we offer for removing a section once assigned.
+            QString trimmed = text.trimmed();
+
+            if (target_song_index >= song_.bars().size())
+                return false;
+
+            // Stage on a copy and publish atomically, matching the
+            // pattern used by edit_bar / edit_new_bar.  Section
+            // assignment can't throw, but staging keeps the code shape
+            // consistent and leaves room for future validation without
+            // restructuring.
+            std::vector<model::bar> bars_copy = song_.bars();
+            bars_copy[target_song_index].section(trimmed.toStdString());
+            song_.bars(bars_copy);
+            rebuild();
+            return true;
+        },
+        /*placeholder=*/tr("e.g. Verse"));
 }
 
 // ---------------------------------------------------------------------------

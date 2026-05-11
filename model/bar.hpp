@@ -22,6 +22,9 @@ public:
     bar& is_eol(bool state);
     bar& parse_user_input(const std::string& str);
     const std::optional<std::string>& section() const;
+    // Assigns a section label.  Passing the empty string clears the
+    // section (the optional becomes nullopt) — the empty string is not
+    // a valid label.
     bar& section(const std::string& sec);
     const std::optional<time_signature>& time_sig() const;
     bar& time_sig(const time_signature& ts);

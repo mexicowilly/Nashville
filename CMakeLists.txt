@@ -58,18 +58,6 @@ qt_add_executable(nashville
     view/song_body_widget.hpp
     view/song_widget.cpp
     view/song_widget.hpp
-    widgets/bar.cpp
-    widgets/bar.hpp
-    widgets/bar_placeholder.cpp
-    widgets/bar_placeholder.hpp
-    widgets/chord.cpp
-    widgets/chord.hpp
-    widgets/key_column.cpp
-    widgets/key_column.hpp
-    widgets/song.cpp
-    widgets/song.hpp
-    widgets/title_text.cpp
-    widgets/title_text.hpp
 )
 
 target_link_libraries(nashville PRIVATE Qt6::Widgets Qt6::Core Qt6::PrintSupport)

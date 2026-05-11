@@ -27,6 +27,19 @@ public:
                       bool line_duration_mode,
                       bool line_has_articulation);
 
+    // Returns the y-coordinate at the vertical centre of the number row
+    // for a bar laid out into `rect`.  Match this value when placing any
+    // adornment that should sit on the chord-number line (e.g. the
+    // continuation dot painted between bars when a line exceeds
+    // bars_per_line()).  The computation mirrors chord_renderer's
+    // numRect.center().y() exactly so the adornment aligns pixel-for-
+    // pixel with the chord glyphs.
+    static qreal number_row_center_y(const QRectF& rect,
+                                     const model::bar& bar,
+                                     const chord_renderer::Fonts& fonts,
+                                     bool line_duration_mode,
+                                     bool line_has_articulation);
+
     // Vertical split ratios for duration-mode bars (public so callers can derive heights)
     static constexpr qreal k_chord_slot_ratio = 0.60;
     static constexpr qreal k_rule_thickness   = 1.0;

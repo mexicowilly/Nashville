@@ -15,9 +15,10 @@ namespace nashville::view
 {
 
 // Renders a song chart and supports click-to-edit on the title and on the
-// three margin elements (key, time signature, tempo).  The widget holds a
-// non-const reference to the song because the chart is always editable —
-// there is no read-only display mode.
+// three margin elements (key, time signature, tempo), plus click-to-insert
+// for new bars via dashed "ghost" rectangles that appear on hover.  The
+// widget holds a non-const reference to the song because the chart is
+// always editable — there is no read-only display mode.
 //
 // Editing UX (all inline, no modal dialogs):
 //   * Title          — QLineEdit overlay
@@ -27,6 +28,25 @@ namespace nashville::view
 //                      reverts on commit)
 //   * Tempo glyph    — popup menu of note values
 //   * Tempo BPM      — QLineEdit overlay (numeric, 1–400; invalid reverts)
+//   * New bar        — hover shows a dashed ghost rectangle; click opens a
+//                      QLineEdit whose text is fed to bar::parse_user_input.
+//                      At most two slots are offered (after the last bar
+//                      and at the start of a new line), reducing to one
+//                      first-bar slot when the song is empty.
+//   * Existing bar   — click opens a QLineEdit seeded with the bar's
+//                      current to_user_input() string; commit replaces
+//                      the bar via parse_user_input.  Empty input or
+//                      parser failure reverts.
+//   * Section column — click in the left gutter opens a QLineEdit
+//                      seeded with the line's section label (or empty
+//                      if none); commit assigns or replaces the
+//                      section on the first bar of the line.  Empty
+//                      commit clears the section — the one place in
+//                      this widget where empty input is not "revert"
+//                      but a meaningful action.  The gutter is always
+//                      reserved with a small minimum width so the
+//                      first section can be bootstrapped on a
+//                      label-less song.
 //
 // On commit (Enter or focus loss), validators that reject input cause the
 // edit to be silently discarded and the previous value retained.  Esc
@@ -52,6 +72,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;   // clear hover outlines
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -85,6 +106,49 @@ private:
     void edit_time_signature();
     void edit_tempo_glyph();   // popup menu of note values
     void edit_tempo_bpm();     // inline numeric editor
+
+    // Click handler for an insertion slot.  Opens an inline editor over the
+    // slot's rect; on commit, appends a new bar to the model (fixing up the
+    // previous bar's is_eol flag if needed for "same line" vs "new line")
+    // and feeds the text to bar::parse_user_input().  Empty input reverts.
+    void edit_new_bar(std::size_t slot_index);
+
+    // Click handler for an existing bar.  Opens an inline editor seeded
+    // with bar::to_user_input() and, on commit, replaces that bar via
+    // bar::parse_user_input().  Empty input or parser failure reverts.
+    void edit_bar(std::size_t bar_index, const QRectF& bar_rect);
+
+    // Click handler for the section column.  Sections live exclusively
+    // on the first bar of a line, so this always targets that bar.  The
+    // editor is seeded with the line's existing section label (or empty
+    // if none); commit assigns, renames, or — if empty — clears the
+    // section.
+    void edit_section(std::size_t line_index);
+
+    // --- Insertion slots ---
+    // Computed at the end of compute_layout from the current model state.
+    // Painted only when hovered, so the chart stays uncluttered.
+    void compute_insertion_slots(const QRectF& content_rect,
+                                 qreal bars_left,
+                                 qreal last_line_bottom,
+                                 qreal last_line_bar_h);
+    void paint_insertion_slot(QPainter& painter, const insertion_slot& slot) const;
+    int  hit_test_insertion_slot(const QPointF& p) const;  // returns index, or -1
+
+    // Returns the bar_index (into song_.bars()) under `p`, or -1 if none.
+    // Walks `lines_` looking for a bar_layout whose rect contains the
+    // point, then maps that back to an index in song_.bars() by counting
+    // bars in order — line breaks don't insert any "blank" slot in
+    // song_.bars(), so this is just an accumulator.  If `out_rect` is
+    // non-null and a bar is found, the matching rect is written through
+    // so the caller can position an editor without re-walking the
+    // layout.
+    int  hit_test_bar(const QPointF& p, QRectF* out_rect = nullptr) const;
+
+    // Returns the line index whose section_col_rect contains `p`, or -1
+    // if none.  The section column is always reserved with a minimum
+    // width so this hit-test works even for label-less songs.
+    int  hit_test_section_col(const QPointF& p) const;
 
     // --- Inline-editor plumbing ---
     // Open a line-edit overlay covering `rect`, prefilled with `initial`,
@@ -132,6 +196,17 @@ private:
     // --- Hit-test rects (populated during paintEvent, in widget coords) ---
     mutable QRectF        title_rect_;
     mutable margin_layout margin_layout_;
+
+    // --- Insertion slots (populated during compute_layout) ---
+    // 0–2 entries.  Index of currently-hovered slot, or -1 if none.
+    std::vector<insertion_slot> insertion_slots_;
+    int                         hovered_slot_ = -1;
+
+    // Line index whose section column is being hovered AND has no section
+    // label yet, or -1.  Drives a dashed outline on the empty gutter to
+    // make the click target visible.  Lines that already carry a label
+    // are not tracked here — their painted box is its own affordance.
+    int                         hovered_empty_section_line_ = -1;
 
     void init_fonts();
 };
