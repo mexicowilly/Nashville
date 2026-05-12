@@ -138,10 +138,12 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
                                    k_min_section_col_w + k_section_gap);
 
     // Helper: does any chord on this line have an above-number articulation?
+    // Ties also live in the articulation zone, so a tied chord forces the
+    // zone to be reserved even if nothing on the line is staccato or pushed.
     auto line_has_articulation = [](const std::vector<const model::bar*>& bars) {
         for (const auto* b : bars)
             for (const auto& ch : b->chords())
-                if (ch.is_pushed() || ch.is_staccato())
+                if (ch.is_pushed() || ch.is_staccato() || ch.is_tied())
                     return true;
         return false;
     };
@@ -471,27 +473,25 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
     QFontMetricsF fm(title_font);
 
     QString title = QString::fromStdString(song_.name());
-    const bool title_empty = title.isEmpty();
+    const QString placeholder = QString::fromUtf8(k_title_placeholder);
+    // Treat the title as a placeholder when the model name is empty OR when
+    // the displayed text equals the placeholder string ("Title").  Both
+    // cases mean the song effectively has no name and should render gray.
+    const bool is_placeholder = title.isEmpty() || title == placeholder;
 
-    // Empty titles render as gray placeholder text.
-    QString display_title = title_empty
-                            ? QString::fromUtf8(k_title_placeholder)
-                            : title;
+    QString display_title = title.isEmpty() ? placeholder : title;
 
     qreal text_w  = fm.horizontalAdvance(display_title);
     qreal x       = (widget_width - text_w) / 2.0;
     qreal baseline = k_title_padding + fm.ascent();
 
-    painter.setPen(QPen(title_empty ? k_placeholder_color : Qt::black, 1.0));
+    painter.setPen(QPen(is_placeholder ? k_placeholder_color : Qt::black, 1.0));
     painter.drawText(QPointF(x, baseline), display_title);
 
-    // Underline directly beneath the text — only for real titles.  An
-    // underlined placeholder reads as a real title.
-    if (!title_empty)
-    {
-        qreal underline_y = std::round(baseline + fm.descent() + 1.0);
-        painter.drawLine(QPointF(x, underline_y), QPointF(x + text_w, underline_y));
-    }
+    // Underline directly beneath the text.  Uses the pen colour set above,
+    // so placeholder titles get a gray underline and real titles get black.
+    qreal underline_y = std::round(baseline + fm.descent() + 1.0);
+    painter.drawLine(QPointF(x, underline_y), QPointF(x + text_w, underline_y));
 
     if (stash_hit_rect)
     {

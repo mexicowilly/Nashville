@@ -250,16 +250,12 @@ void chord_renderer::paint_articulations(QPainter& painter,
 
     if (ch.is_tied())
     {
-        qreal diamond_left  = -1.0;
-        qreal diamond_right = row_right;
-        if (ch.is_diamond())
-        {
-            // Tie arc endpoints need to clear the diamond — derive its bounds
-            // from the centre of artRect (approximate; diamond is on number row).
-            diamond_left  = artRect.center().x() - k_diamond_padding_h;
-            diamond_right = artRect.center().x() + k_diamond_padding_h;
-        }
-        paint_tied_arc(painter, artRect, diamond_left, diamond_right);
+        // The tie arc starts past the right edge of the full chord row
+        // (number + mode + extensions + bass note).  This is correct for
+        // both plain and diamond chords: row_right is always past the
+        // diamond's right edge since the diamond surrounds only the
+        // number glyph, which sits at the left of the row.
+        paint_tied_arc(painter, artRect, /*diamond_left=*/-1.0, /*diamond_right=*/row_right);
     }
 }
 

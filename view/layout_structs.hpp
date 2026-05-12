@@ -26,7 +26,7 @@ struct line_layout
     std::optional<QString> section_label;   // from first bar that has section_
     bool is_duration_mode      = false;     // true if ANY bar on this line is duration-mode
     bool draw_section_end_rule = false;     // draw gray rule below this line (section boundary)
-    bool has_articulation      = false;     // true if ANY chord on this line has a push/staccato
+    bool has_articulation      = false;     // true if ANY chord on this line has a push/staccato/tie
 };
 
 // Where a new bar may be inserted by clicking an empty "ghost" rectangle.

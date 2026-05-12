@@ -1,5 +1,7 @@
 enable_testing()
 
+find_package(GTest REQUIRED)
+
 add_executable(unit-test
     ../model/bar.cpp
     ../model/chord.cpp

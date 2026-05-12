@@ -22,8 +22,6 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 include_directories(${Qt6Core_INCLUDE_DIRS} ${Qt6Widgets_INCLUDE_DIRS})
 
-find_package(GTest REQUIRED)
-
 qt_add_executable(nashville
     app.cpp
     app.hpp
