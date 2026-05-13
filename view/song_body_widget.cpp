@@ -24,6 +24,11 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     : QWidget(parent), song_(song)
 {
     setMouseTracking(true);
+    // StrongFocus so the widget receives key events for Esc/clipboard
+    // shortcuts.  We also call setFocus() on every mouse press below so
+    // that clicking the chart hands keyboard focus back from any sibling
+    // widget (toolbar, sidebar) the user may have last interacted with.
+    setFocusPolicy(Qt::StrongFocus);
     init_fonts();
     rebuild();
 }
@@ -519,8 +524,14 @@ void song_body_widget::paintEvent(QPaintEvent*)
     paint_divider(painter);
 
     painter.setPen(QPen(Qt::black, 1.0));
-    for (const auto& line : lines_)
-        paint_line(painter, line);
+    {
+        std::size_t first_bar_index = 0;
+        for (const auto& line : lines_)
+        {
+            paint_line(painter, line, first_bar_index);
+            first_bar_index += line.bars.size();
+        }
+    }
 
     // Only the hovered slot is painted — the others stay invisible until
     // the cursor enters them.  Skipped while an inline editor is open
@@ -582,18 +593,43 @@ void song_body_widget::paint_divider(QPainter& painter) const
 // ---------------------------------------------------------------------------
 // paint_line
 // ---------------------------------------------------------------------------
-void song_body_widget::paint_line(QPainter& painter, const line_layout& line) const
+// The selection background is painted before the bar contents so the
+// glyphs stay sharp on top of it.  `first_bar_index` is the flat index
+// into song_.bars() of this line's first bar — accumulated by the
+// caller as it walks the lines in document order — so we can match each
+// bar_layout to its model-level index without re-walking the layout
+// from scratch.
+void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
+                                  std::size_t first_bar_index,
+                                  bool show_selection) const
 {
     if (line.section_label)
         paint_section_label(painter, *line.section_label, line.section_col_rect);
 
+    std::size_t bar_idx = first_bar_index;
     for (const auto& bl : line.bars)
     {
+        if (show_selection && selected_bars_.count(bar_idx))
+        {
+            // Light gray selection background.  Painted as a filled rect
+            // with no border so it reads as a wash behind the glyphs
+            // rather than a competing outline.  Chosen mid-light enough
+            // to be visible on white but dim enough that black chord
+            // numbers and rhythm marks still pop.
+            painter.save();
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(220, 225, 232));
+            painter.drawRect(bl.rect);
+            painter.restore();
+        }
+
         bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
                             line.has_articulation);
 
         if (bl.show_continuation_dot)
             paint_continuation_dot(painter, bl.rect, bl.num_center_y);
+
+        ++bar_idx;
     }
 
     if (line.draw_section_end_rule)
@@ -683,6 +719,11 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton)
         return;
 
+    // Take keyboard focus on every press so subsequent Ctrl+C / Ctrl+V /
+    // Esc shortcuts land here rather than on whatever sibling widget last
+    // held focus.  Cheap to call even if we already have focus.
+    setFocus(Qt::MouseFocusReason);
+
     // If an inline editor is open and the click lands outside it, commit
     // the current editor before hit-testing the new click.  This lets the
     // user hop straight from one editable element to another.  Clicks
@@ -691,9 +732,12 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
     if (active_editor_ && !active_editor_->geometry().contains(event->pos()))
         close_line_editor(/*commit_value=*/true);
 
-    // Divider drag wins over edit hit-testing.
+    // Divider drag wins over edit hit-testing.  Starting a drag clears
+    // any active bar selection — divider work is unrelated to clipboard
+    // ops and a stale selection would be visually confusing.
     if (near_divider(event->pos().x()))
     {
+        clear_selection();
         dragging_divider_ = true;
         drag_start_x_      = event->pos().x();
         drag_start_margin_ = margin_width_;
@@ -702,6 +746,44 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
     }
 
     const QPointF p = event->pos();
+    const Qt::KeyboardModifiers mods = event->modifiers();
+    const bool ctrl  = mods.testFlag(Qt::ControlModifier);
+    const bool shift = mods.testFlag(Qt::ShiftModifier);
+
+    // Existing bars: selection-only here.  Editing requires a double-
+    // click, which arrives as a separate mouseDoubleClickEvent.  Note
+    // that Qt always fires a mousePressEvent before mouseDoubleClickEvent,
+    // so the first click of a double-click first selects the bar (giving
+    // a momentary highlight) and then the double-click clears that
+    // selection and opens the editor — see mouseDoubleClickEvent.
+    QRectF bar_rect;
+    int bar_idx = hit_test_bar(p, &bar_rect);
+    if (bar_idx >= 0)
+    {
+        auto idx = static_cast<std::size_t>(bar_idx);
+        if (shift && selection_anchor_.has_value())
+            extend_selection_to(idx);
+        else if (ctrl)
+            toggle_bar_in_selection(idx);
+        else
+            select_bar_only(idx);
+        return;
+    }
+
+    // Any non-bar click without a modifier clears the current selection
+    // before processing the click.  We do this even when the click
+    // lands on title / margin / section / insertion-slot rects — the
+    // user is moving on to a different kind of edit, and a lingering
+    // selection from a previous gesture would be a distraction.
+    //
+    // Modifier-held clicks that miss every bar are a no-op for both
+    // selection and edit: the user was reaching for a bar and missed,
+    // and yanking their selection out from under them would be hostile.
+    if (ctrl || shift)
+        return;
+
+    clear_selection();
+
     if (title_rect_.contains(p))
         edit_title();
     else if (margin_layout_.key_rect.contains(p))
@@ -714,21 +796,10 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
         edit_tempo_bpm();
     else
     {
-        // Existing bars take precedence over insertion slots so the
-        // user never accidentally creates a new bar by clicking on one
-        // they meant to edit.  (Their rects shouldn't actually overlap
-        // under the current layout, but the priority is the right
-        // contract regardless.)
-        QRectF bar_rect;
-        int bar_idx = hit_test_bar(p, &bar_rect);
-        if (bar_idx >= 0)
-        {
-            edit_bar(static_cast<std::size_t>(bar_idx), bar_rect);
-            return;
-        }
-        // Section column lives to the left of bars; no overlap is
-        // possible, but checking it before insertion slots keeps the
-        // dispatch ordered by "things the user can see and target."
+        // Section column lives to the left of bars; no overlap with bar
+        // rects is possible, but checking it before insertion slots
+        // keeps the dispatch ordered by "things the user can see and
+        // target."
         int sec_line = hit_test_section_col(p);
         if (sec_line >= 0)
         {
@@ -739,6 +810,54 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
         if (slot_idx >= 0)
             edit_new_bar(static_cast<std::size_t>(slot_idx));
     }
+}
+
+// Double-click is the gesture for entering bar edit mode.  By the time
+// we arrive here, mousePressEvent has already run once (Qt's sequence is
+// press → release → doubleClick → release) and may have left the bar
+// selected; we clear the selection before opening the editor so the
+// inline QLineEdit isn't visually competing with a gray selection wash
+// underneath it.
+//
+// Modifier-held double-clicks aren't a meaningful gesture (Ctrl+double-
+// click on a bar would mean "toggle selection AND edit", which is
+// contradictory), so we treat them as a plain double-click.
+void song_body_widget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton)
+        return;
+
+    const QPointF p = event->pos();
+
+    // Only existing-bar double-clicks are special.  Everywhere else,
+    // forward to the press handler so the first-click affordances on
+    // title / margin / section / insertion-slot keep working when the
+    // user happens to double-click them.
+    QRectF bar_rect;
+    int bar_idx = hit_test_bar(p, &bar_rect);
+    if (bar_idx < 0)
+    {
+        mousePressEvent(event);
+        return;
+    }
+
+    // Take focus and (per the contract) clear selection before opening
+    // the editor.  edit_bar() will install a QLineEdit on top of the
+    // bar; with no selection background, the white editor background
+    // sits cleanly over the bar's normal rendering.
+    setFocus(Qt::MouseFocusReason);
+    clear_selection();
+
+    // If an editor was somehow already open (defensive — open editor +
+    // double-click on a different bar would arrive here after the press
+    // handler already committed it, but if that path ever changes this
+    // keeps the invariant), commit it first.  Use event->pos() (QPoint)
+    // here rather than the QPointF `p` above because QWidget::geometry()
+    // returns QRect, which has no QPointF::contains overload.
+    if (active_editor_ && !active_editor_->geometry().contains(event->pos()))
+        close_line_editor(/*commit_value=*/true);
+
+    edit_bar(static_cast<std::size_t>(bar_idx), bar_rect);
 }
 
 void song_body_widget::mouseMoveEvent(QMouseEvent* event)
@@ -850,6 +969,271 @@ void song_body_widget::leaveEvent(QEvent*)
     if (hovered_slot_ != -1)               { hovered_slot_ = -1;               changed = true; }
     if (hovered_empty_section_line_ != -1) { hovered_empty_section_line_ = -1; changed = true; }
     if (changed) update();
+}
+
+// ---------------------------------------------------------------------------
+// keyPressEvent — Esc clears selection, Ctrl+C/X/V drive the clipboard
+// ---------------------------------------------------------------------------
+// Key events only arrive here when the widget has keyboard focus, which
+// we acquire on every mouse press.  When an inline editor is open the
+// editor is a child QLineEdit and consumes its own key events (including
+// Esc, via the event filter installed in open_line_editor), so the
+// shortcuts here can't fire mid-edit — exactly the right behavior.
+void song_body_widget::keyPressEvent(QKeyEvent* event)
+{
+    // Defensive: with the editor open, route everything to the base
+    // class.  The editor's own event filter handles its Esc; we don't
+    // want a stray "Esc clears selection" running while the user is
+    // typing into a bar.
+    if (active_editor_)
+    {
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    const auto mods = event->modifiers();
+    const bool ctrl_only = (mods & ~Qt::KeypadModifier) == Qt::ControlModifier;
+
+    if (event->key() == Qt::Key_Escape)
+    {
+        if (clear_selection())
+            return;
+        // No selection to clear — let the base class see it so any
+        // future global Esc handler can act on it.
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    if (ctrl_only && event->key() == Qt::Key_C)
+    {
+        copy_selection();
+        return;
+    }
+    if (ctrl_only && event->key() == Qt::Key_X)
+    {
+        cut_selection();
+        return;
+    }
+    if (ctrl_only && event->key() == Qt::Key_V)
+    {
+        paste_clipboard();
+        return;
+    }
+
+    QWidget::keyPressEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+// Selection helpers
+// ---------------------------------------------------------------------------
+bool song_body_widget::clear_selection()
+{
+    if (selected_bars_.empty() && !selection_anchor_.has_value())
+        return false;
+    selected_bars_.clear();
+    selection_anchor_.reset();
+    update();
+    return true;
+}
+
+void song_body_widget::select_bar_only(std::size_t bar_index)
+{
+    // Replace the entire selection with just this bar and reset the
+    // anchor to it.  Even if the bar was already the sole selected one
+    // we still call update() — it's cheap and keeps the code paths
+    // uniform; the perf cost of an extra repaint at click time is
+    // negligible.
+    selected_bars_.clear();
+    selected_bars_.insert(bar_index);
+    selection_anchor_ = bar_index;
+    update();
+}
+
+void song_body_widget::toggle_bar_in_selection(std::size_t bar_index)
+{
+    auto it = selected_bars_.find(bar_index);
+    if (it != selected_bars_.end())
+    {
+        selected_bars_.erase(it);
+        // Anchor follows the toggle: if we just removed the anchor, the
+        // anchor becomes whatever bar the user most recently *added*,
+        // which we approximate as "the highest remaining selected bar"
+        // (or none, if the selection is empty).  This keeps a subsequent
+        // Shift+click from extending from a phantom anchor on a now-
+        // unselected bar.
+        if (selection_anchor_ == bar_index)
+        {
+            if (selected_bars_.empty())
+                selection_anchor_.reset();
+            else
+                selection_anchor_ = *selected_bars_.rbegin();
+        }
+    }
+    else
+    {
+        selected_bars_.insert(bar_index);
+        selection_anchor_ = bar_index;
+    }
+    update();
+}
+
+void song_body_widget::extend_selection_to(std::size_t bar_index)
+{
+    // Range select replaces the current selection with the inclusive
+    // span between the anchor and the clicked bar.  This is the
+    // file-manager idiom: Shift+click does NOT add to an existing
+    // selection — it picks a new range from the anchor.  Use Ctrl+click
+    // (toggle) or Ctrl+Shift+click (not implemented here) for additive
+    // range selection if needed later.
+    if (!selection_anchor_.has_value())
+    {
+        // No anchor — fall back to single-bar select so the user isn't
+        // stuck with a Shift+click that did nothing.
+        select_bar_only(bar_index);
+        return;
+    }
+    std::size_t lo = std::min(*selection_anchor_, bar_index);
+    std::size_t hi = std::max(*selection_anchor_, bar_index);
+    selected_bars_.clear();
+    for (std::size_t i = lo; i <= hi; ++i)
+        selected_bars_.insert(i);
+    // Anchor stays put — that's how file managers behave: repeated
+    // Shift+clicks pivot around the original anchor rather than the
+    // last endpoint.
+    update();
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard helpers
+// ---------------------------------------------------------------------------
+// Bars are stored as to_user_input() strings.  This is the same text
+// the inline editor shows, so what the user copies is exactly what
+// they'd see if they double-clicked to edit — no hidden state slips
+// across the cut/paste boundary.  Pasting goes through
+// parse_user_input() into a fresh model::bar, which round-trips
+// is_eol, time signatures, and section labels via the model's own
+// serialisation rules.
+void song_body_widget::copy_selection()
+{
+    clipboard_.clear();
+    if (selected_bars_.empty())
+        return;
+    const auto& bars = song_.bars();
+    for (std::size_t idx : selected_bars_)   // std::set iterates in order
+    {
+        if (idx < bars.size())
+            clipboard_.push_back(bars[idx].to_user_input());
+    }
+}
+
+void song_body_widget::cut_selection()
+{
+    if (selected_bars_.empty())
+        return;
+    copy_selection();
+    delete_selection();
+}
+
+// Erases every bar whose flat index is in selected_bars_.  We work on a
+// copy of the bars vector and reassign in one shot via song::bars(),
+// matching the atomic-update pattern used by edit_bar / edit_new_bar.
+//
+// One semantic gotcha worth being deliberate about: when the deleted
+// run includes the song's last bar, the new last bar should not be
+// dangling mid-line.  We don't *force* is_eol on the new last bar
+// (other Nashville-chart conventions don't require it) but we do leave
+// each surviving bar's is_eol exactly as it was — line breaks in the
+// non-deleted portions of the song stay where the user put them.
+void song_body_widget::delete_selection()
+{
+    if (selected_bars_.empty())
+        return;
+    std::vector<model::bar> bars_copy = song_.bars();
+
+    // Erase from the highest index down so each erase doesn't shift
+    // the indices we haven't reached yet.  std::set iterates in
+    // ascending order, so we walk in reverse.
+    for (auto it = selected_bars_.rbegin(); it != selected_bars_.rend(); ++it)
+    {
+        if (*it < bars_copy.size())
+            bars_copy.erase(bars_copy.begin() + static_cast<std::ptrdiff_t>(*it));
+    }
+    song_.bars(bars_copy);
+    selected_bars_.clear();
+    selection_anchor_.reset();
+    rebuild();
+}
+
+// Insert clipboard contents after the highest-indexed selected bar; if
+// nothing is selected, append at the end of the song.  After the paste
+// the selection is set to the newly inserted bars, so the user can
+// immediately cut/copy/delete the pasted run — and Shift+click can
+// extend from it.
+void song_body_widget::paste_clipboard()
+{
+    if (clipboard_.empty())
+        return;
+
+    std::vector<model::bar> bars_copy = song_.bars();
+
+    // Anchor index where the inserted bars will go (insertion happens
+    // *after* this index, so the literal insertion point is anchor+1).
+    // size_t for arithmetic, but we treat "no selection" as "append at
+    // end" by setting it to bars_copy.size() - 1 and inserting after.
+    std::size_t insert_after;
+    if (!selected_bars_.empty())
+        insert_after = *selected_bars_.rbegin();
+    else if (!bars_copy.empty())
+        insert_after = bars_copy.size() - 1;
+    else
+        insert_after = static_cast<std::size_t>(-1);  // empty song: prepend
+
+    // Build the new bars from the clipboard.  Any clipboard entry that
+    // fails to parse is silently dropped — paste should never corrupt
+    // the song with a half-formed bar, and the clipboard text came
+    // from to_user_input() so round-trip failures should be rare.
+    std::vector<model::bar> pasted;
+    pasted.reserve(clipboard_.size());
+    for (const auto& text : clipboard_)
+    {
+        model::bar staged;
+        try
+        {
+            staged.parse_user_input(text);
+        }
+        catch (const std::exception&)
+        {
+            continue;
+        }
+        pasted.push_back(std::move(staged));
+    }
+    if (pasted.empty())
+        return;
+
+    // Insertion point in the destination vector.
+    std::size_t insert_at = (insert_after == static_cast<std::size_t>(-1))
+                          ? 0
+                          : insert_after + 1;
+    bars_copy.insert(bars_copy.begin() + static_cast<std::ptrdiff_t>(insert_at),
+                     std::make_move_iterator(pasted.begin()),
+                     std::make_move_iterator(pasted.end()));
+
+    song_.bars(bars_copy);
+
+    // Select the newly pasted run so the user sees what just happened
+    // and can immediately operate on it.
+    selected_bars_.clear();
+    for (std::size_t i = 0; i < clipboard_.size(); ++i)
+    {
+        // clipboard_.size() may exceed pasted.size() if some entries
+        // failed to parse above; key the new selection off pasted.size()
+        // instead so we don't select a bar that doesn't exist.
+        if (i >= pasted.size()) break;
+        selected_bars_.insert(insert_at + i);
+    }
+    selection_anchor_ = insert_at;
+
+    rebuild();
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,6 +1483,14 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
             return true;
         },
         /*placeholder=*/tr("e.g. 1 4 5"));
+
+    // Mark this as a bar-editing session so Tab chains.  For a new-bar
+    // editor the "index" we track is *where the bar will land* after
+    // commit — i.e., the current song size.  After this editor's
+    // commit appends a bar at that position, the Tab-advance logic
+    // computes `prev + 1`, sees that equals the new bars.size(), and
+    // extends again.  Chained Tab → chained appends → rapid entry.
+    editing_bar_index_ = song_.bars().size();
 }
 
 // ---------------------------------------------------------------------------
@@ -1172,6 +1564,122 @@ void song_body_widget::edit_bar(std::size_t bar_index, const QRectF& bar_rect)
             rebuild();
             return true;
         });
+
+    // Mark this as a bar-editing session AFTER opening the editor.
+    // open_line_editor's teardown-of-any-stale-editor path runs
+    // close_line_editor, which clears editing_bar_index_; setting it
+    // here ensures the new bar editor is the one Tab will advance from.
+    editing_bar_index_ = bar_index;
+}
+
+// ---------------------------------------------------------------------------
+// edit_bar_by_index — re-open the bar editor on bar `bar_index`
+// ---------------------------------------------------------------------------
+// Used by the Tab-advance path in eventFilter after a successful commit
+// has triggered rebuild().  We re-walk the freshly-rebuilt lines_ to
+// find bar_index's current rect, then delegate to edit_bar.  Bails
+// silently if bar_index is past the end of the song — the caller
+// (eventFilter) checks for that case explicitly and routes to
+// extend_with_tab() instead, so falling through here is just a
+// defensive no-op.
+void song_body_widget::edit_bar_by_index(std::size_t bar_index)
+{
+    if (bar_index >= song_.bars().size())
+        return;
+
+    // Walk lines_ in document order, the same way hit_test_bar does, to
+    // find the bar_layout matching bar_index.  Layout was rebuilt by
+    // the commit callback so the rects we see here are the post-commit
+    // ones.
+    std::size_t flat = 0;
+    for (const auto& line : lines_)
+    {
+        for (const auto& bl : line.bars)
+        {
+            if (flat == bar_index)
+            {
+                edit_bar(bar_index, bl.rect);
+                return;
+            }
+            ++flat;
+        }
+    }
+    // If we fell through (lines_ doesn't yet contain bar_index — e.g.,
+    // rebuild hasn't repopulated for some reason), simply do nothing.
+    // No editor opens; the user is left at rest on the chart with
+    // keyboard focus, which is a tolerable failure mode.
+}
+
+// ---------------------------------------------------------------------------
+// extend_with_tab — Tab-extend when the just-committed bar was the last
+// ---------------------------------------------------------------------------
+// "Rapid input" means Tab on the last bar should keep adding bars rather
+// than stopping.  The non-trivial choice is which line the new bar
+// belongs to.  The rule, in order of precedence:
+//
+//   1. If the song is empty after commit (shouldn't happen since we
+//      arrived here from a successful bar commit, but defensive), use
+//      the lone first_bar slot.
+//   2. If the current last bar has is_eol == true, the user
+//      deliberately ended a line there — respect that and use
+//      next_line, even if the visual line isn't yet full.
+//   3. Otherwise, compare the last visual line's bar count to the
+//      song's preferred bars_per_line.  Less than the preferred number
+//      -> same_line (extend the current line).  At or over -> next_line
+//      (start a new line).  Tab is explicitly NOT allowed to push the
+//      visible line past bars_per_line — same_line clicks via the mouse
+//      can do that and produce the continuation-dot overflow, but
+//      that's a deliberate user gesture; Tab is for rapid entry of
+//      conventional charts.
+//
+// We then delegate to edit_new_bar, which holds the slot-driven commit
+// machinery (is_eol fix-up on the previous last bar, atomic stage-then-
+// publish, parse rollback).  Threading the kind through edit_new_bar
+// rather than reimplementing it here keeps a single source of truth for
+// what "insert a new bar via slot X" means.
+void song_body_widget::extend_with_tab()
+{
+    if (insertion_slots_.empty())
+        return;  // defensive: no slots laid out (shouldn't happen here)
+
+    // Pick the desired kind first, then find the slot of that kind.
+    // The slots vector is small (1 or 2 entries) so a linear search is
+    // appropriate and avoids hard-coding "slot 0 is same_line, 1 is
+    // next_line" — which is true today but would be a fragile
+    // assumption to bake in.
+    insertion_slot_kind desired;
+    if (song_.empty())
+    {
+        desired = insertion_slot_kind::first_bar;
+    }
+    else
+    {
+        const auto& last_line = lines_.back();
+        bool last_bar_is_eol =
+            !last_line.bars.empty() && last_line.bars.back().bar
+            && last_line.bars.back().bar->is_eol();
+        bool line_at_capacity =
+            last_line.bars.size() >= song_.bars_per_line();
+
+        desired = (last_bar_is_eol || line_at_capacity)
+                ? insertion_slot_kind::next_line
+                : insertion_slot_kind::same_line;
+    }
+
+    for (std::size_t i = 0; i < insertion_slots_.size(); ++i)
+    {
+        if (insertion_slots_[i].kind == desired)
+        {
+            edit_new_bar(i);
+            return;
+        }
+    }
+    // No matching slot — fall back to whatever's at index 0.  Under
+    // current compute_insertion_slots logic this branch is unreachable
+    // (the desired kind is always present), but keeping the fallback
+    // means a future change to slot layout fails open rather than
+    // dropping the Tab silently.
+    edit_new_bar(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,10 +1793,10 @@ void song_body_widget::open_line_editor(const QRectF& rect,
     });
 }
 
-void song_body_widget::close_line_editor(bool commit_value)
+bool song_body_widget::close_line_editor(bool commit_value)
 {
     if (!active_editor_)
-        return;
+        return false;
 
     QLineEdit* edit = active_editor_;
     auto commit = std::move(editor_commit_);
@@ -1298,10 +1806,16 @@ void song_body_widget::close_line_editor(bool commit_value)
     // rebuild() can repaint without the (about-to-be-deleted) editor on
     // top, and so any focus-loss noise during teardown can't re-enter us.
     active_editor_ = nullptr;
+    // Drop the bar-edit marker too — Tab-advance only makes sense while
+    // a bar editor is open, and we're about to either commit it, revert
+    // it, or both.  Any follow-up open_line_editor (e.g. from the Tab-
+    // advance path itself) will re-set this if appropriate.
+    editing_bar_index_.reset();
     edit->removeEventFilter(this);
     edit->hide();
     edit->deleteLater();
 
+    bool committed = false;
     if (commit_value && commit)
     {
         // The callback may return false to indicate validation failure;
@@ -1310,7 +1824,7 @@ void song_body_widget::close_line_editor(bool commit_value)
         // explicitly so any region the editor occupied gets restored
         // cleanly (e.g. the gray "Title" placeholder reappears in full
         // after an empty-title revert on a fresh song).
-        bool committed = commit(text);
+        committed = commit(text);
         if (!committed)
             update();
     }
@@ -1319,6 +1833,7 @@ void song_body_widget::close_line_editor(bool commit_value)
         // Esc/cancel path — no commit, but we still need a clean repaint.
         update();
     }
+    return committed;
 }
 
 bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
@@ -1329,6 +1844,57 @@ bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
         if (ke->key() == Qt::Key_Escape)
         {
             close_line_editor(/*commit_value=*/false);
+            return true;
+        }
+
+        // Tab: rapid-entry shortcut for bar editing.  We only want this
+        // when the active editor *is* a bar editor — Tab in the title /
+        // tempo / section editors should fall through to QLineEdit's
+        // default focus-traversal behavior.  editing_bar_index_ is the
+        // discriminator (set by edit_bar AND edit_new_bar; reset by
+        // close_line_editor).
+        //
+        // Shift+Tab on most platforms arrives as Qt::Key_Backtab rather
+        // than Key_Tab with the Shift modifier — we intentionally do
+        // NOT consume Backtab here so it keeps its default behavior
+        // (no "previous bar" gesture was requested).
+        if (ke->key() == Qt::Key_Tab && editing_bar_index_.has_value())
+        {
+            // Snapshot the current bar index before commit — the
+            // close_line_editor → commit callback chain will clear
+            // editing_bar_index_ as part of teardown.  For an existing
+            // bar editor this is the bar's index; for a new-bar editor
+            // it's the index the new bar will land at after commit
+            // (== song_.bars().size() at editor open time, which is
+            // also == the new bar's final index after commit appends).
+            std::size_t prev = *editing_bar_index_;
+
+            // Try to commit.  If commit fails (empty input, parser
+            // throw), do NOT advance — the user's edit was rejected and
+            // moving the editor onto a new bar would silently lose
+            // their attempt.  They're left back at the chart, free to
+            // re-click and try again.
+            bool committed = close_line_editor(/*commit_value=*/true);
+            if (committed)
+            {
+                // After a successful commit + rebuild, decide whether
+                // the "next bar" already exists or needs to be
+                // appended.  An existing-bar commit doesn't change
+                // bars.size(), so prev + 1 < size when there's a
+                // following bar.  A new-bar commit appends one, so
+                // bars.size() is now prev + 1 — same condition still
+                // distinguishes correctly between "edit existing next"
+                // and "extend the song again."
+                if (prev + 1 < song_.bars().size())
+                    edit_bar_by_index(prev + 1);
+                else
+                    extend_with_tab();
+            }
+
+            // Consume the Tab event regardless of whether we advanced
+            // (Qt would otherwise try to traverse focus out of the
+            // already-destroyed QLineEdit, which is a no-op but logs
+            // a warning in some builds).
             return true;
         }
     }
@@ -1357,8 +1923,17 @@ void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect)
                  /*stash_hit_rects=*/false);
     paint_divider(painter);
     painter.setPen(QPen(Qt::black, 1.0));
-    for (const auto& line : lines_)
-        paint_line(painter, line);
+    {
+        // Printouts: never include the selection background, even if the
+        // user had bars selected when triggering print.
+        std::size_t first_bar_index = 0;
+        for (const auto& line : lines_)
+        {
+            paint_line(painter, line, first_bar_index,
+                       /*show_selection=*/false);
+            first_bar_index += line.bars.size();
+        }
+    }
 
     painter.restore();
 }

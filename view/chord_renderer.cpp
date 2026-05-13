@@ -13,6 +13,27 @@ static constexpr const char* kFlat     = "\u266D"; // ♭
 static constexpr const char* kSharp    = "\u266F"; // ♯
 static constexpr const char* kDiminish = "\u00B0"; // °
 
+// Returns the extension string rendered with proper sharp/flat glyphs
+// substituted for the ASCII 'b' and '#' the user types.  Nashville
+// notation uses scale degrees (numbers) rather than note letters in
+// extensions, so a literal 'b' inside extensions is unambiguously
+// "flat" — there's no chance of colliding with a note name.  The
+// substitution is rendering-only: the model still stores the raw
+// ASCII the user typed, so to_user_input() round-trips cleanly and the
+// inline editor still seeds with ASCII the user can type easily.
+//
+// Two passes is fine — extension strings are tiny (typically a handful
+// of characters like "b9" or "7#11") so the linear walk is trivially
+// cheap, and there's no order-dependence between '#' and 'b' (neither
+// substitution introduces or destroys instances of the other).
+static QString prettify_extensions(const std::string& ext_str)
+{
+    QString s = QString::fromStdString(ext_str);
+    s.replace(QLatin1Char('#'), QChar(0x266F));  // ♯
+    s.replace(QLatin1Char('b'), QChar(0x266D));  // ♭
+    return s;
+}
+
 // ---------------------------------------------------------------------------
 // Public: size_hint
 // ---------------------------------------------------------------------------
@@ -44,7 +65,7 @@ QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
 
     if (!ch.extensions().empty())
         row_width += modFm.horizontalAdvance(
-                        QString::fromStdString(ch.extensions())) + k_element_spacing;
+                        prettify_extensions(ch.extensions())) + k_element_spacing;
 
     if (ch.bass_note())
     {
@@ -284,7 +305,7 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
         total_width += modFm.horizontalAdvance("+") + k_element_spacing;
     if (!ch.extensions().empty())
         total_width += modFm.horizontalAdvance(
-                          QString::fromStdString(ch.extensions())) + k_element_spacing;
+                          prettify_extensions(ch.extensions())) + k_element_spacing;
     if (ch.bass_note())
     {
         total_width += modFm.horizontalAdvance("/") + k_element_spacing;
@@ -394,8 +415,74 @@ qreal chord_renderer::paint_extensions(QPainter& painter,
 
     painter.setFont(fonts.modifier);
     QFontMetricsF fm(fonts.modifier);
-    QString ext = QString::fromStdString(ch.extensions());
-    painter.drawText(QPointF(x, baseline), ext);
+    QString ext = prettify_extensions(ch.extensions());
+
+    // Fast path: no accidentals to nudge — draw the whole string in one
+    // shot.  Avoids any chance of per-glyph drift from kerning/shaping
+    // disagreeing with horizontalAdvance().
+    const QChar kFlatCh(0x266D);
+    const QChar kSharpCh(0x266F);
+    if (!ext.contains(kFlatCh) && !ext.contains(kSharpCh))
+    {
+        painter.drawText(QPointF(x, baseline), ext);
+        return fm.horizontalAdvance(ext) + k_element_spacing;
+    }
+
+    // Common text fonts draw ♯ / ♭ with their visual ink centre near
+    // the x-height — well below the cap-height centre of a digit — so
+    // a naïve same-baseline draw makes "7♯9" look like "7" and "9"
+    // sitting astride a dropped "♯".  Same problem the margin renderer
+    // solves for "F#" in the key circle; same fix here.  Compute each
+    // glyph's tight-bounding-rect centre and shift the accidental's
+    // baseline so its ink centre lands at the digit's ink centre.
+    //
+    // The reference glyph is a digit — "0" is fine, any digit has
+    // ~identical vertical metrics — because extension strings are
+    // digit-dominated ("b9", "#11", "7b9").  Even when the extension
+    // contains letters like "maj7", the digit-aligned accidental still
+    // reads correctly: it's the digits and the accidental that are the
+    // visually heavy elements; the letters fade between them.
+    QRectF ref_tbr   = fm.tightBoundingRect(QStringLiteral("0"));
+    QRectF flat_tbr  = fm.tightBoundingRect(QString(kFlatCh));
+    QRectF sharp_tbr = fm.tightBoundingRect(QString(kSharpCh));
+
+    qreal ref_centre   = (ref_tbr.top()   + ref_tbr.bottom())   / 2.0;
+    qreal flat_centre  = (flat_tbr.top()  + flat_tbr.bottom())  / 2.0;
+    qreal sharp_centre = (sharp_tbr.top() + sharp_tbr.bottom()) / 2.0;
+
+    const qreal flat_baseline  = baseline + ref_centre - flat_centre;
+    const qreal sharp_baseline = baseline + ref_centre - sharp_centre;
+
+    // Walk character by character so each glyph gets its own y.  This
+    // matters because painter.drawText takes a single baseline per call.
+    // Advances come from horizontalAdvance() per glyph, which is what
+    // the layout passes also use (size_hint / paint_number_row both
+    // call horizontalAdvance on the whole prettified string), so the
+    // running x stays consistent with the reserved bar width.
+    qreal cur_x = x;
+    for (int i = 0; i < ext.size(); ++i)
+    {
+        QChar c = ext.at(i);
+        qreal y;
+        if (c == kSharpCh)
+            y = sharp_baseline;
+        else if (c == kFlatCh)
+            y = flat_baseline;
+        else
+            y = baseline;
+
+        QString one(c);
+        painter.drawText(QPointF(cur_x, y), one);
+        cur_x += fm.horizontalAdvance(one);
+    }
+
+    // Total width consumed matches what the layout passes computed for
+    // the whole string — fonts can have subtle differences between
+    // "advance of full string" and "sum of per-char advances" due to
+    // shaping, but for the BMP digits/letters/accidentals we deal with
+    // here those differences are sub-pixel.  Use the whole-string
+    // advance for the return so the running x in paint_number_row
+    // exactly matches what size_hint reserved.
     return fm.horizontalAdvance(ext) + k_element_spacing;
 }
 

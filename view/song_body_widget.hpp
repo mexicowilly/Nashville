@@ -8,6 +8,9 @@
 #include <QWidget>
 #include <vector>
 #include <functional>
+#include <set>
+#include <string>
+#include <optional>
 
 class QLineEdit;
 
@@ -33,10 +36,24 @@ namespace nashville::view
 //                      At most two slots are offered (after the last bar
 //                      and at the start of a new line), reducing to one
 //                      first-bar slot when the song is empty.
-//   * Existing bar   — click opens a QLineEdit seeded with the bar's
-//                      current to_user_input() string; commit replaces
-//                      the bar via parse_user_input.  Empty input or
-//                      parser failure reverts.
+//   * Existing bar   — single click selects the bar (light-gray fill);
+//                      Ctrl+click toggles inclusion in the selection;
+//                      Shift+click extends from the selection anchor.
+//                      Double-click clears the selection and opens an
+//                      inline QLineEdit seeded with the bar's current
+//                      to_user_input() string; commit replaces the bar
+//                      via parse_user_input.  Empty input or parser
+//                      failure reverts.  Selection enables clipboard
+//                      operations (Ctrl+C / Ctrl+X / Ctrl+V); Esc or a
+//                      click on empty chart space clears the selection.
+//                      In bar edit mode, Enter commits in place and
+//                      Tab commits then advances the editor onto the
+//                      next bar in song order — appending a new bar
+//                      if there is no next, with the new bar going on
+//                      the same visual line when there's room (per
+//                      bars_per_line) or on a fresh line otherwise.
+//                      User-set is_eol on the current bar is respected
+//                      (Tab will not erase a manual line break).
 //   * Section column — click in the left gutter opens a QLineEdit
 //                      seeded with the line's section label (or empty
 //                      if none); commit assigns or replaces the
@@ -70,8 +87,10 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     void leaveEvent(QEvent* event) override;   // clear hover outlines
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -91,7 +110,9 @@ private:
     void paint_margin(QPainter& painter, const QRectF& margin_rect,
                       bool stash_hit_rects = true) const;
     void paint_divider(QPainter& painter) const;
-    void paint_line(QPainter& painter, const line_layout& line) const;
+    void paint_line(QPainter& painter, const line_layout& line,
+                    std::size_t first_bar_index,
+                    bool show_selection = true) const;
     void paint_section_label(QPainter& painter,
                            const QString& label,
                            const QRectF& col_rect) const;
@@ -161,10 +182,37 @@ private:
                           const QString& initial,
                           std::function<bool(const QString&)> commit,
                           const QString& placeholder = QString());
-    void close_line_editor(bool commit_value);
+    // Returns true iff the commit callback was both invoked AND returned
+    // true.  Esc/cancel and validation-rejected commits both return
+    // false.  The return is consulted by the Tab-advance path so a
+    // rejected commit doesn't silently move the editor onto a different
+    // bar — the user would lose their input without realising it.
+    bool close_line_editor(bool commit_value);
 
     QLineEdit* active_editor_      = nullptr;
     std::function<bool(const QString&)> editor_commit_;
+
+    // Set by edit_bar before opening the editor, cleared by
+    // close_line_editor.  When set, Tab in the editor (intercepted in
+    // eventFilter) commits and then opens an editor on bar index+1 if
+    // one exists.  Other inline editors (title, key, time-sig, tempo,
+    // new-bar, section) leave this unset so Tab falls back to its
+    // normal QLineEdit focus-traversal behavior there.
+    std::optional<std::size_t> editing_bar_index_;
+
+    // Helper for the Tab-advance path: looks up the bar at `bar_index`
+    // in the just-rebuilt layout and, if found, opens the bar editor on
+    // it.  Called from eventFilter after a successful Tab-commit.
+    void edit_bar_by_index(std::size_t bar_index);
+
+    // Helper for the Tab-advance path when the just-committed bar was
+    // the song's last: opens a new-bar editor on the appropriate
+    // insertion slot, picking same_line vs. next_line so that the next
+    // bar respects the song's preferred bars_per_line (and any
+    // user-set is_eol on the current last bar).  Reuses edit_new_bar's
+    // commit machinery — only the choice of slot is the Tab-specific
+    // bit.
+    void extend_with_tab();
 
     // --- Draggable divider ---
     bool near_divider(int x) const;
@@ -207,6 +255,44 @@ private:
     // make the click target visible.  Lines that already carry a label
     // are not tracked here — their painted box is its own affordance.
     int                         hovered_empty_section_line_ = -1;
+
+    // --- Selection ---
+    // Selected bars by flat index into song_.bars().  A click on a bar
+    // (without modifiers) replaces the selection; Ctrl+click toggles a
+    // single bar; Shift+click extends from selection_anchor_ to the
+    // clicked bar.  Esc clears the selection; so does any non-bar click
+    // on chart whitespace.  Selected bars are painted with a light-gray
+    // fill behind the bar contents.
+    //
+    // selection_anchor_ is the most recently single- or Ctrl-clicked bar;
+    // it's the pivot for Shift+click range extension.  Range selections
+    // do not move the anchor, matching the file-manager idiom (the
+    // anchor only changes when the user "starts a new selection").
+    std::set<std::size_t>      selected_bars_;
+    std::optional<std::size_t> selection_anchor_;
+
+    // Clears selected_bars_/selection_anchor_ and repaints if anything
+    // was selected.  Returns true if the selection actually changed.
+    bool clear_selection();
+
+    // Selection-mutating click helpers.  Each repaints as needed.
+    void select_bar_only(std::size_t bar_index);
+    void toggle_bar_in_selection(std::size_t bar_index);
+    void extend_selection_to(std::size_t bar_index);
+
+    // --- Clipboard ---
+    // Bars are serialised via bar::to_user_input() (the same round-
+    // trippable text form used by edit_bar) so a paste is just a
+    // parse_user_input() into a fresh bar.  Storing as strings — not
+    // as live model::bar objects — keeps the clipboard immune to model
+    // changes (renames, reparses) between copy and paste.
+    std::vector<std::string> clipboard_;
+
+    void copy_selection();      // populates clipboard_ from selection
+    void cut_selection();       // copy + delete selected bars
+    void delete_selection();    // remove selected bars from the song
+    void paste_clipboard();     // insert clipboard after last selected bar
+                                // (or at song end if no selection)
 
     void init_fonts();
 };
