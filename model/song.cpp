@@ -50,4 +50,16 @@ song& song::time_sig(const time_signature& t)
     return *this;
 }
 
+std::map<unsigned, std::vector<unsigned>> song::voltas() const
+{
+    std::map<unsigned, std::vector<unsigned>> all;
+    for (unsigned i = 0; i < bars_.size(); i++)
+    {
+        for (auto bar_volta : bars_[i].voltas())
+            all[bar_volta].push_back(i);
+    }
+    lgr()->debug("Found {} voltas in song '{}'", all.size(), name_);
+    return all;
+}
+
 }

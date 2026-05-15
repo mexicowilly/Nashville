@@ -100,6 +100,8 @@ protected:
         EXPECT_EQ(lhs.time_sig(), rhs.time_sig());
         EXPECT_EQ(lhs.is_eol(), rhs.is_eol());
         EXPECT_EQ(lhs.section(), rhs.section());
+        EXPECT_EQ(lhs.repeat(), rhs.repeat());
+        EXPECT_EQ(lhs.voltas(), rhs.voltas());
     }
 
     void expect_chord(const model::chord& lhs, const model::chord& rhs)
@@ -221,6 +223,8 @@ TEST_F(db_test, all_bar_attrs)
     b.is_eol(true)
      .section("doggies")
      .time_sig(model::time_signature().count(8).kind(model::time_signature::beat_type::EIGHTH))
+     .repeat(model::bar::repeat_status::END)
+     .add_volta(0)
      .add_chord();
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;

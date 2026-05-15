@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS bar
     time_sig_id INTEGER,
     is_eol BOOLEAN,
     section TEXT,
+    repeat INTEGER,
+    voltas TEXT,
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -142,15 +144,17 @@ const char* SELECT_BAR_SQL = R"(
 SELECT bar.is_eol,
        bar.section,
        time_signature.beat_type,
-       time_signature.count
+       time_signature.count,
+       bar.repeat,
+       bar.voltas
 FROM bar
 LEFT JOIN time_signature ON time_signature.id = bar.time_sig_id
 WHERE bar.id = ?1;
 )";
 
 const char* INSERT_BAR_SQL = R"(
-INSERT INTO bar (time_sig_id, is_eol, section)
-VALUES (?1, ?2, ?3)
+INSERT INTO bar (time_sig_id, is_eol, section, repeat, voltas)
+VALUES (?1, ?2, ?3, ?4, ?5)
 RETURNING id;
 )";
 
@@ -448,6 +452,16 @@ std::uint64_t database::insert_bar(const model::bar& b)
     sqlite3_bind_int(raw, 2, b.is_eol());
     if (b.section())
         sqlite3_bind_text(raw, 3, b.section()->c_str(), b.section()->length(), SQLITE_STATIC);
+    sqlite3_bind_int(raw, 4, static_cast<int>(b.repeat()));
+    if (!b.voltas().empty())
+    {
+        std::ostringstream out;
+        for (auto v : b.voltas())
+            out << v << ',';
+        auto vtext = out.str();
+        vtext.pop_back();
+        sqlite3_bind_text(raw, 5, vtext.c_str(), vtext.length(), SQLITE_STATIC);
+    }
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar: "s + sqlite3_errstr(rc));
@@ -842,6 +856,19 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
             assert(sqlite3_column_type(sel_b->ptr(), 2) == SQLITE_NULL &&
                    sqlite3_column_type(sel_b->ptr(), 3) == SQLITE_NULL);
         }
+        bar.repeat(static_cast<model::bar::repeat_status>(sqlite3_column_int(sel_b->ptr(), 4)));
+        if (sqlite3_column_type(sel_b->ptr(), 5) == SQLITE_TEXT)
+        {
+            std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(sel_b->ptr(), 5)));
+            std::string idx;
+            while (std::getline(in, idx, ','))
+                bar.add_volta(std::stoi(idx));
+        }
+        else
+        {
+            assert(sqlite3_column_type(sel_b->ptr(), 5) == SQLITE_NULL);
+        }
+
         bar.chords(select_chords(bar_id));
         bars.push_back(bar);
         rc = sqlite3_step(raw);

@@ -13,13 +13,13 @@ public:
 
     loggable(const std::string& name);
 
-    std::shared_ptr<spdlog::logger> lgr();
+    std::shared_ptr<spdlog::logger> lgr() const;
 
 private:
     std::shared_ptr<spdlog::logger> lgr_;
 };
 
-inline std::shared_ptr<spdlog::logger> loggable::lgr()
+inline std::shared_ptr<spdlog::logger> loggable::lgr() const
 {
     return lgr_;
 }

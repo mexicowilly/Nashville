@@ -23,7 +23,7 @@ bar& bar::is_eol(bool state)
 
 bar& bar::parse_user_input(const std::string& str)
 {
-    lgr()->debug("Parsing bar input: '{}'");
+    lgr()->debug("Parsing bar input: '{}'", str);
     std::string src(str);
     std::vector<chord> new_chords;
     auto token = std::strtok(const_cast<char*>(src.c_str()), " ");
@@ -39,8 +39,7 @@ bar& bar::parse_user_input(const std::string& str)
     // the source so callers everywhere — view, file loader, tests —
     // share one consistent invariant.
     if (new_chords.empty())
-        throw std::invalid_argument(
-            "A bar must contain at least one chord");
+        throw std::invalid_argument("A bar must contain at least one chord");
     chords_ = new_chords;
     lgr()->debug("Done");
     return *this;

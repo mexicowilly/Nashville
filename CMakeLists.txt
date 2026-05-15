@@ -29,8 +29,6 @@ qt_add_executable(nashville
     database.hpp
     loggable.cpp
     loggable.hpp
-    measures.cpp
-    measures.hpp
     model/bar.cpp
     model/bar.hpp
     model/chord.cpp
