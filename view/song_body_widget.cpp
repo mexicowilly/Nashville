@@ -1,15 +1,20 @@
 #include "song_body_widget.hpp"
 #include "margin_renderer.hpp"
 #include <QPainter>
+#include <QPainterPath>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QContextMenuEvent>
 #include <QFontDatabase>
 #include <QApplication>
 #include <QLineEdit>
 #include <QMenu>
 #include <QAction>
+#include <QActionGroup>
+#include <QInputDialog>
 #include <stdexcept>
 #include <cmath>
+#include <map>
 
 namespace nashville::view
 {
@@ -61,6 +66,181 @@ void song_body_widget::rebuild()
 }
 
 // ---------------------------------------------------------------------------
+// compute_repeat_flags
+// ---------------------------------------------------------------------------
+// Walks the song's bars once to determine which bars should paint a
+// begin-repeat sign at their left edge and which should paint an
+// end-repeat at their right.  Two sources contribute:
+//   1. The model's bar::repeat() flag (BEGIN / END / NONE) — explicit
+//      author intent, painted verbatim.
+//   2. Voltas — every non-final volta within a repeat section ends with
+//      an *implicit* end-repeat, even when the bar's repeat() is NONE.
+//      This matches standard music-notation practice (and the spec the
+//      user laid out): the player loops back after each non-final
+//      ending, then falls through after the final one.
+//
+// "Repeat section": the half-open span from a BEGIN bar up through the
+// matching END bar.  Sections may NEST — an inner BEGIN inside an
+// already-open section pushes a new section without closing the outer,
+// and the matching inner END pops back to the outer.  A volta belongs
+// to its INNERMOST enclosing section: whether its bracket needs an
+// implicit end-repeat depends only on what other voltas appear inside
+// that same innermost section, not on any outer enclosing section.
+//
+// "Final volta of a section": the volta span(s) within that section
+// containing the highest volta *number* used anywhere in the section.
+// Non-final spans get an implicit end-repeat at their last bar; final
+// spans do not.  In well-formed input the final span is also the
+// rightmost; even if a user inverts the order (a {2} span before a
+// {1} span), the {2} span still wins — playback semantics readers
+// expect, regardless of authoring order.
+//
+// Implementation: a stack of "open section" keys, where each key is
+// the index of that section's BEGIN bar (uniquely identifying it
+// even across nesting and re-entry).  Voltas are tagged with the
+// stack's top at the time they're seen; final-volta determination
+// then groups by that key.
+std::vector<std::pair<bool, bool>> song_body_widget::compute_repeat_flags() const
+{
+    const auto& bars = song_.bars();
+    std::vector<std::pair<bool, bool>> flags(bars.size(), {false, false});
+
+    // Step 1: explicit repeat flags from the model.
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        if (bars[i].repeat() == model::bar::repeat_status::BEGIN)
+            flags[i].first = true;
+        else if (bars[i].repeat() == model::bar::repeat_status::END)
+            flags[i].second = true;
+    }
+
+    // Step 2: collect contiguous volta spans across the whole song,
+    // each tagged with the section_key of its innermost enclosing
+    // repeat section.
+    struct global_span
+    {
+        std::size_t first_bar_index = 0;
+        std::size_t last_bar_index  = 0;
+        unsigned    max_number      = 0;
+        std::size_t section_key     = 0;
+    };
+    std::vector<global_span> spans;
+
+    auto max_in = [](const std::set<unsigned>& s) -> unsigned {
+        // set<unsigned> sorts ascending, so the last element is the max.
+        // Empty handled by caller; we never call this on empty sets.
+        return *s.rbegin();
+    };
+
+    // Open-section stack.  Pushed on BEGIN, popped on END.  A sentinel
+    // value distinct from any real bar index is needed so we can detect
+    // "no section open" without the stack being empty — handy because
+    // the UI guarantees voltas only appear inside an open section, so
+    // hitting the sentinel is a sign of malformed input, not a normal
+    // path.  We use static_cast<size_t>(-1) since real bar indices are
+    // non-negative and < bars.size().
+    constexpr std::size_t k_no_section = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> section_stack;
+
+    auto current_section = [&]() -> std::size_t {
+        return section_stack.empty() ? k_no_section : section_stack.back();
+    };
+
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        // Section-stack updates must precede volta accumulation for
+        // BEGIN (the new section is in effect *at* its own bar) but
+        // must follow it for END (the closing bar can itself carry a
+        // volta belonging to the section it closes — common when the
+        // last volta is a single-bar ending that also bears the END
+        // mark).
+        if (bars[i].repeat() == model::bar::repeat_status::BEGIN)
+            section_stack.push_back(i);
+
+        const auto& vs = bars[i].voltas();
+        if (!vs.empty())
+        {
+            std::size_t key = current_section();
+
+            // Extend the previous span if this bar is adjacent, shares
+            // the same volta set, AND lives in the same section.  The
+            // section check matters under nesting: two voltas with
+            // identical numbers in different sections must NOT merge.
+            // (Without nesting it's also still required — sections
+            // separated by an END/BEGIN pair could otherwise collapse.)
+            if (!spans.empty()
+                && spans.back().last_bar_index + 1 == i
+                && bars[spans.back().last_bar_index].voltas() == vs
+                && spans.back().section_key == key)
+            {
+                spans.back().last_bar_index = i;
+                spans.back().max_number = std::max(spans.back().max_number,
+                                                  max_in(vs));
+            }
+            else
+            {
+                global_span gs;
+                gs.first_bar_index = i;
+                gs.last_bar_index  = i;
+                gs.max_number      = max_in(vs);
+                gs.section_key     = key;
+                spans.push_back(gs);
+            }
+        }
+
+        if (bars[i].repeat() == model::bar::repeat_status::END)
+        {
+            // Pop the innermost section.  If the stack is empty here,
+            // the input has more ENDs than BEGINs — defensively ignore
+            // the extra END's effect on section bookkeeping (its visual
+            // mark from step 1 still paints), since there's nothing
+            // sensible to pop.
+            if (!section_stack.empty())
+                section_stack.pop_back();
+        }
+    }
+
+    // Step 3: per section, find the max volta number across all spans
+    // in that section.  Any span whose own max_number equals that
+    // section-wide max is "final" and does NOT carry an implicit end-
+    // repeat.  Every other span ends with one.
+    //
+    // Spans tagged k_no_section (malformed input — voltas with no
+    // enclosing BEGIN) participate normally; they form their own
+    // synthetic "section" keyed by k_no_section, and the same
+    // final-volta logic applies.  The UI guarantees this won't happen
+    // in practice, but the logic stays well-defined regardless.
+    std::map<std::size_t, unsigned> section_max;
+    for (const auto& s : spans)
+    {
+        auto it = section_max.find(s.section_key);
+        if (it == section_max.end() || it->second < s.max_number)
+            section_max[s.section_key] = s.max_number;
+    }
+
+    for (const auto& s : spans)
+    {
+        unsigned section_top = section_max[s.section_key];
+        bool is_final = (s.max_number == section_top);
+        if (!is_final)
+        {
+            // Implicit end-repeat at the last bar of this non-final
+            // volta span.  Additive — an explicit END flag on the same
+            // bar is preserved; we never *clear* a model-sourced flag
+            // here.  When the same bar already has draw_end_repeat
+            // from step 1, this is a no-op; the visual outcome is one
+            // repeat mark either way, which matches the convention of
+            // not stacking two repeat signs at the same location even
+            // when conceptually two loops close together.
+            if (s.last_bar_index < flags.size())
+                flags[s.last_bar_index].second = true;
+        }
+    }
+
+    return flags;
+}
+
+// ---------------------------------------------------------------------------
 // compute_layout
 // ---------------------------------------------------------------------------
 void song_body_widget::compute_layout(const QRectF& content_rect)
@@ -83,16 +263,27 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     const auto& bars       = song_.bars();
     const unsigned bpl_pref = song_.bars_per_line();
 
+    // Repeat flags (one entry per bar in song order).  Computed once
+    // up front because the analysis spans multiple visual lines: a
+    // repeat section's "final volta" determination needs the whole
+    // section in view, and the section may start on line N and end on
+    // line N+M.  Indexed by flat song-bar index.
+    const auto repeat_flags = compute_repeat_flags();
+
     // --- Pass 1: group bars into lines ---
-    struct raw_line { std::vector<const model::bar*> bars; };
+    // We also stash the flat song index of each bar so per-bar layout
+    // below can consult repeat_flags without re-deriving "which bar of
+    // the song is this?" via a second walk.
+    struct raw_bar  { const model::bar* bar; std::size_t song_index; };
+    struct raw_line { std::vector<raw_bar> bars; };
     std::vector<raw_line> raw_lines;
     raw_line current;
 
-    for (const auto& b : bars)
+    for (std::size_t i = 0; i < bars.size(); ++i)
     {
-        current.bars.push_back(&b);
+        current.bars.push_back({&bars[i], i});
 
-        if (b.is_eol())
+        if (bars[i].is_eol())
         {
             raw_lines.push_back(std::move(current));
             current.bars.clear();
@@ -130,7 +321,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     for (const auto& raw : raw_lines)
     {
         if (raw.bars.empty()) continue;
-        const auto* first = raw.bars.front();
+        const auto* first = raw.bars.front().bar;
         if (first->section())
             max_label_w = std::max(max_label_w,
                 label_fm.horizontalAdvance(QString::fromStdString(*first->section())));
@@ -145,18 +336,29 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     // Helper: does any chord on this line have an above-number articulation?
     // Ties also live in the articulation zone, so a tied chord forces the
     // zone to be reserved even if nothing on the line is staccato or pushed.
-    auto line_has_articulation = [](const std::vector<const model::bar*>& bars) {
-        for (const auto* b : bars)
-            for (const auto& ch : b->chords())
+    auto line_has_articulation = [](const std::vector<raw_bar>& bars) {
+        for (const auto& rb : bars)
+            for (const auto& ch : rb.bar->chords())
                 if (ch.is_pushed() || ch.is_staccato() || ch.is_tied())
                     return true;
         return false;
     };
 
-    auto line_bar_height = [&](const std::vector<const model::bar*>& bars) -> qreal {
+    // Helper: does any bar on this line carry a volta number?  When true,
+    // compute_layout reserves k_volta_zone_height above the chord row so
+    // the volta bracket has somewhere to sit without overlapping the
+    // chords.
+    auto line_has_voltas = [](const std::vector<raw_bar>& bars) {
+        for (const auto& rb : bars)
+            if (!rb.bar->voltas().empty())
+                return true;
+        return false;
+    };
+
+    auto line_bar_height = [&](const std::vector<raw_bar>& bars) -> qreal {
         bool has_art = line_has_articulation(bars);
-        for (const auto* b : bars)
-            if (!b->empty() && b->chords().front().duration().has_value())
+        for (const auto& rb : bars)
+            if (!rb.bar->empty() && rb.bar->chords().front().duration().has_value())
                 return has_art ? duration_h_art : duration_h_bare;
         return has_art ? plain_h_art : plain_h_bare;
     };
@@ -172,7 +374,15 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
         for (std::size_t j = 0; j < raw.bars.size(); ++j)
         {
-            qreal w = bar_renderer::width_hint(*raw.bars[j], bar_h, fonts_) + k_bar_padding;
+            // Width must include the repeat-mark slots when present:
+            // they sit outside the chord row and consume real horizontal
+            // space.  Looking up the flags by song_index keeps this in
+            // sync with what paint() will eventually draw.
+            const auto& rb = raw.bars[j];
+            bool begin_r = repeat_flags[rb.song_index].first;
+            bool end_r   = repeat_flags[rb.song_index].second;
+            qreal w = bar_renderer::width_hint(*rb.bar, bar_h, fonts_,
+                                              begin_r, end_r) + k_bar_padding;
             if (j >= col_widths.size())
                 col_widths.push_back(w);
             else
@@ -187,7 +397,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     // dereference rather than a scan.
     auto line_has_section = [&](std::size_t i) {
         return !raw_lines[i].bars.empty()
-            && raw_lines[i].bars.front()->section().has_value();
+            && raw_lines[i].bars.front().bar->section().has_value();
     };
     int section_count = 0;
     for (std::size_t i = 0; i < raw_lines.size(); ++i)
@@ -210,24 +420,35 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         qreal actual_bar_h = line_bar_height(raw.bars);
         line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art);
         line.has_articulation = line_has_articulation(raw.bars);
+        line.has_voltas       = line_has_voltas(raw.bars);
+
+        // Reserve a volta zone above the bar row when needed.  The bars
+        // themselves get pushed down by this amount; line.rect covers
+        // the whole stack (volta zone + bars) so callers that need a
+        // line-bounding rect (insertion-slot placement, section-end
+        // rules, hit-testing whitespace) see the true vertical extent.
+        qreal volta_zone_h = line.has_voltas ? k_volta_zone_height : 0.0;
+        qreal bar_top_y    = y + volta_zone_h;
 
         // Section label comes from the first bar only.  Sections on
         // non-first bars are silently ignored — see the UI invariant.
-        if (!raw.bars.empty() && raw.bars.front()->section())
+        if (!raw.bars.empty() && raw.bars.front().bar->section())
             line.section_label =
-                QString::fromStdString(*raw.bars.front()->section());
+                QString::fromStdString(*raw.bars.front().bar->section());
 
         // Section column: full bar height, left-aligned within content_rect.
         // Width is the label box only (without the gap).
         qreal box_w = section_col_w > 0.0 ? section_col_w - k_section_gap : 0.0;
         // The section label should centre on the number row, not the full bar height.
         // Number row starts at: top_pad(2px) + art_zone (if any) + k_plain_top_pad(4px).
+        // Offset by the volta zone so the label tracks the chord row
+        // when a bracket pushes the bars down.
         constexpr qreal k_bar_top_pad   = 2.0;   // matches bar_renderer fixed top_pad
         constexpr qreal k_plain_top_pad = 4.0;   // matches chord_renderer k_plain_top_pad
         qreal art_zone = line.has_articulation
             ? [&]{ QFontMetricsF a(fonts_.articulation); return a.ascent() + a.descent(); }()
             : 0.0;
-        qreal num_top = y + k_bar_top_pad + (art_zone > 0.0 ? art_zone : k_plain_top_pad);
+        qreal num_top = bar_top_y + k_bar_top_pad + (art_zone > 0.0 ? art_zone : k_plain_top_pad);
         QFontMetricsF num_fm(fonts_.number);
         qreal num_h   = num_fm.ascent() + num_fm.descent();
         line.section_col_rect = QRectF(content_rect.left(), num_top, box_w, num_h);
@@ -235,14 +456,17 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         qreal x = bars_left;
         for (std::size_t j = 0; j < raw.bars.size(); ++j)
         {
-            const model::bar* b = raw.bars[j];
+            const auto& rb = raw.bars[j];
+            const model::bar* b = rb.bar;
             qreal bar_w = col_widths[j];
 
             bar_layout bl;
             bl.bar              = b;
-            bl.rect             = QRectF(x, y, bar_w, actual_bar_h);
+            bl.rect             = QRectF(x, bar_top_y, bar_w, actual_bar_h);
             bl.is_duration_mode = !b->empty()
                                 && b->chords().front().duration().has_value();
+            bl.draw_begin_repeat = repeat_flags[rb.song_index].first;
+            bl.draw_end_repeat   = repeat_flags[rb.song_index].second;
 
             // Centre the continuation-dot vertically on the chord-number
             // row by asking bar_renderer where that row will paint.  Doing
@@ -263,12 +487,79 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             x += bar_w + k_inter_bar_spacing;
         }
 
+        // --- Volta spans for this line ---
+        // Group consecutive bars whose voltas() sets are equal and
+        // non-empty.  Adjacency alone isn't sufficient under nested or
+        // back-to-back repeats: two bars can be adjacent on screen and
+        // carry the same volta numbers yet belong to different repeat
+        // sections (e.g. an END bar followed by a BEGIN bar that also
+        // has its own volta).  We respect the section boundary by
+        // refusing to extend across a BEGIN (which opens a new section
+        // at the current bar) or across a previous-bar END (which
+        // closed the prior section, putting the current bar into a
+        // different one).  This mirrors the section-key check used by
+        // compute_repeat_flags for the same reason.
+        //
+        // The closed/open flag mirrors the implicit-end-repeat decision
+        // made by compute_repeat_flags: a span is closed iff its last
+        // bar carries draw_end_repeat (either explicit from the model
+        // or implicit from being a non-final volta).  This keeps the
+        // bracket hook and the repeat-sign dots in perfect agreement
+        // — there's exactly one source of truth for "is this a closing
+        // volta?", consulted in two visual forms.
+        if (line.has_voltas)
+        {
+            for (std::size_t j = 0; j < raw.bars.size(); ++j)
+            {
+                const auto& vs = raw.bars[j].bar->voltas();
+                if (vs.empty()) continue;
+
+                bool can_extend = false;
+                if (!line.volta_spans.empty()
+                    && line.volta_spans.back().last_bar_index + 1 == j
+                    && raw.bars[line.volta_spans.back().last_bar_index]
+                           .bar->voltas() == vs)
+                {
+                    // Same volta set and adjacent; now verify no
+                    // section boundary lies between the previous bar
+                    // and this one.  draw_begin_repeat on j means a new
+                    // section starts here; draw_end_repeat on j-1
+                    // means the previous section closed there.
+                    bool starts_new_section = line.bars[j].draw_begin_repeat;
+                    bool prev_ended_section = line.bars[j - 1].draw_end_repeat;
+                    can_extend = !starts_new_section && !prev_ended_section;
+                }
+
+                if (can_extend)
+                {
+                    line.volta_spans.back().last_bar_index = j;
+                }
+                else
+                {
+                    volta_span vsn;
+                    vsn.first_bar_index = j;
+                    vsn.last_bar_index  = j;
+                    vsn.numbers         = vs;
+                    line.volta_spans.push_back(vsn);
+                }
+            }
+            // Closed-flag pass: a span is closed iff its last bar has
+            // draw_end_repeat set.  Done as a second pass so the
+            // grouping logic above stays focused on adjacency.
+            for (auto& vsn : line.volta_spans)
+                vsn.closed = line.bars[vsn.last_bar_index].draw_end_repeat;
+        }
+
         line.draw_section_end_rule = ends_section[line_idx];
-        line.rect = QRectF(content_rect.left(), y, content_rect.width(), actual_bar_h);
+        // line.rect covers the volta zone + bar row so hit-tests and
+        // insertion-slot anchors see the full visual height.
+        line.rect = QRectF(content_rect.left(), y,
+                          content_rect.width(),
+                          volta_zone_h + actual_bar_h);
         lines_.push_back(std::move(line));
 
         qreal spacing = ends_section[line_idx] ? k_line_spacing : k_line_spacing_normal;
-        y += actual_bar_h + spacing;
+        y += volta_zone_h + actual_bar_h + spacing;
     }
 
     // Insertion slots are derived from the last line's geometry.  The
@@ -276,12 +567,26 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     // there been one; reusing the loop's trailing spacing means slot
     // placement matches what a freshly-typed bar will look like once
     // re-laid-out.
+    //
+    // Note: last_line.rect.height() includes any volta zone, which a
+    // freshly-typed bar wouldn't carry.  Subtract the volta zone (when
+    // present) so the slot reads as "an empty bar like the others"
+    // rather than "an empty bar plus a phantom volta gap."
     const auto& last_line = lines_.back();
+    qreal last_bar_h = last_line.rect.height()
+                       - (last_line.has_voltas ? k_volta_zone_height : 0.0);
+    // The "same line" slot sits at bar height starting at the bars'
+    // top, not the line top; use last_line.rect.bottom() - last_bar_h
+    // as the y-anchor inside compute_insertion_slots via its line.rect
+    // already-correct top.  We keep last_line_bottom positioning as the
+    // y where the *next* line would land, which already factors in the
+    // current line's full height including the volta zone — exactly
+    // right: the next line starts below everything we just drew.
     compute_insertion_slots(content_rect,
                             bars_left,
                             /*last_line_bottom=*/last_line.rect.bottom()
                                                   + k_line_spacing_normal,
-                            /*last_line_bar_h=*/last_line.rect.height());
+                            /*last_line_bar_h=*/last_bar_h);
 
     // The next-line slot extends below `y`; grow the minimum height so it
     // stays visible without manual scrolling.
@@ -341,11 +646,17 @@ void song_body_widget::compute_insertion_slots(const QRectF& content_rect,
     // same_line: placed immediately after the last bar, separated by the
     // same inter-bar spacing the renderer uses elsewhere.  The bar height
     // matches the last line so the ghost outline aligns with neighbours.
+    // We use last_bar.rect.top() rather than last_line.rect.top() so the
+    // ghost lines up with the bars even on a volta-bearing line (where
+    // line.rect.top() sits above the volta bracket, not above the bars).
     {
         insertion_slot s;
         s.kind = insertion_slot_kind::same_line;
+        qreal slot_top = last_line.bars.empty()
+                         ? last_line.rect.top()
+                         : last_line.bars.back().rect.top();
         s.rect = QRectF(last_bar_right + k_inter_bar_spacing,
-                        last_line.rect.top(),
+                        slot_top,
                         slot_w,
                         last_line_bar_h);
         insertion_slots_.push_back(s);
@@ -624,13 +935,21 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
         }
 
         bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
-                            line.has_articulation);
+                            line.has_articulation,
+                            bl.draw_begin_repeat, bl.draw_end_repeat);
 
         if (bl.show_continuation_dot)
             paint_continuation_dot(painter, bl.rect, bl.num_center_y);
 
         ++bar_idx;
     }
+
+    // Volta brackets sit in the zone reserved above the bars by
+    // compute_layout.  Painted after the bars so the bracket's leftmost
+    // edge cleanly overrides any antialiasing fringe from the bar
+    // glyphs below it.
+    if (line.has_voltas)
+        paint_volta_brackets(painter, line);
 
     if (line.draw_section_end_rule)
     {
@@ -695,6 +1014,132 @@ void song_body_widget::paint_continuation_dot(QPainter& painter,
     painter.setBrush(Qt::black);
     painter.setPen(Qt::NoPen);
     painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
+// paint_volta_brackets
+// ---------------------------------------------------------------------------
+// One labelled horizontal bracket per volta_span on the line.  The
+// bracket sits in the volta zone (height k_volta_zone_height) reserved
+// above the bar row by compute_layout.  Geometry per bracket:
+//
+//   top_y ─── ┌────────── 1., 2. ──────────────┐ ─── top_y
+//             │                                │
+//             │ left hook (always present)     │ right hook (only if
+//             │                                │  span.closed — i.e.,
+//             │                                │  this volta ends with
+//             │                                │  a repeat back, not
+//             │                                │  fall-through)
+//   bottom_y─ ┘                                └ ─── bottom_y
+//             │                                │
+//             ▼ bar's left edge                ▼ bar's right edge
+//
+// The horizontal line tracks the top of the bracket; the hooks
+// descend from there down to the BASELINE of the volta label — so
+// the label digit ("1.", "2.", etc.) visually "sits on" the bottom
+// edge of each hook.  The hook's vertical extent is therefore
+// determined by the label font's ascent, not by any chord-row
+// geometry; the entire bracket lives in the volta zone above the
+// bars.
+//
+// "Open" final volta: the right hook is omitted but the horizontal
+// line still extends to the same x — visually the bracket trails off
+// over the music, matching the convention readers expect.
+void song_body_widget::paint_volta_brackets(QPainter& painter,
+                                            const line_layout& line) const
+{
+    if (line.volta_spans.empty())
+        return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen bracket_pen(Qt::black, 1.2);
+    painter.setPen(bracket_pen);
+    painter.setBrush(Qt::NoBrush);
+
+    // Volta-zone vertical bounds: the zone occupies the top
+    // k_volta_zone_height of the line rect.  Bracket line sits a few
+    // pixels below the top edge so the label has room above the
+    // descender of glyphs like "1.".
+    qreal zone_top    = line.rect.top();
+    qreal bracket_y   = zone_top + 1.0;
+
+    // Font for the volta label — a small bold rendering so a 1., 2.,
+    // 3. reads as a label rather than as part of the chord row.
+    QFont label_font = fonts_.modifier;
+    label_font.setBold(false);
+    QFontMetricsF label_fm(label_font);
+    painter.setFont(label_font);
+
+    // Hooks descend to the BASELINE of the volta label glyphs ("1.",
+    // "2.", etc.).  This visually anchors each hook to the label that
+    // sits inside the bracket — the hook and the label digit feel
+    // like they belong to the same shape, rather than the hook being
+    // a short disconnected stub above the chord row.  Note: this is
+    // the LABEL's baseline, not the chord number's — the bracket lives
+    // entirely in the volta zone, separate from the chord row below.
+    // label_fm.ascent() + 1.0 mirrors how the label itself is placed
+    // below; the hook ends exactly where the label's digits "sit."
+    qreal hook_bot_y = bracket_y + label_fm.ascent() + 1.0;
+
+    for (const auto& vs : line.volta_spans)
+    {
+        // Bracket horizontal extent: from the first bar's left edge to
+        // the last bar's right edge.  These bars include their repeat-
+        // mark slots, so the bracket naturally encloses any begin/end
+        // repeat that sits at the boundary.
+        if (vs.first_bar_index >= line.bars.size()
+            || vs.last_bar_index  >= line.bars.size())
+            continue;
+
+        const auto& first_bl = line.bars[vs.first_bar_index];
+        const auto& last_bl  = line.bars[vs.last_bar_index];
+        qreal left_x  = first_bl.rect.left();
+        qreal right_x = last_bl.rect.right();
+
+        // Build the label string from the numbers set.  std::set is
+        // ordered, so iteration produces "1., 2." rather than "2., 1.".
+        // The model indexes voltas from 0 internally but they're shown
+        // to readers as 1-based, so we +1 each number for display.
+        QString label;
+        bool first = true;
+        for (unsigned n : vs.numbers)
+        {
+            if (!first) label += ", ";
+            label += QString::number(n + 1) + ".";
+            first = false;
+        }
+
+        // Horizontal top stroke.
+        painter.drawLine(QPointF(left_x, bracket_y),
+                         QPointF(right_x, bracket_y));
+
+        // Left hook — always present.  Reaches down to the baseline
+        // of the volta label, visually connecting the bracket's
+        // vertical stroke to the digit that names this ending.
+        painter.drawLine(QPointF(left_x, bracket_y),
+                         QPointF(left_x, hook_bot_y));
+
+        // Right hook — only on closed brackets.  An open bracket lets
+        // the eye glide rightward into the following music, signalling
+        // "this is the final pass."
+        if (vs.closed)
+        {
+            painter.drawLine(QPointF(right_x, bracket_y),
+                             QPointF(right_x, hook_bot_y));
+        }
+
+        // Label.  Inset from the left hook by a small gap so it's not
+        // jammed against the hook stroke.  The label's baseline
+        // coincides with hook_bot_y by construction — both derive from
+        // bracket_y + label_fm.ascent() + 1.0 — so the digit visually
+        // "sits on" the hook's bottom edge.
+        constexpr qreal k_label_x_inset = 4.0;
+        painter.drawText(QPointF(left_x + k_label_x_inset, hook_bot_y),
+                         label);
+    }
+
     painter.restore();
 }
 
@@ -1936,6 +2381,483 @@ void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect)
     }
 
     painter.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Selection-driven bar attribute edits
+// ---------------------------------------------------------------------------
+// Mutate every bar in selected_bars_ through the standard "copy → mutate →
+// publish" pattern used by edit_bar / edit_section.  Doing the bulk apply
+// on a single copy keeps each call to song_.bars() (which itself copies
+// the vector internally) to exactly one, and keeps the model atomically
+// consistent: if a future setter ever throws, none of the selected bars
+// are left half-modified in song_'s storage.
+//
+// Bounds-check each index against the current bars vector so a stale
+// selection (which shouldn't happen under the single-editor invariant
+// but could if the surface area grows) can't index past the end.
+void song_body_widget::apply_repeat_to_selection(model::bar::repeat_status st)
+{
+    if (selected_bars_.empty())
+        return;
+
+    std::vector<model::bar> bars_copy = song_.bars();
+    bool any_changed = false;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars_copy.size())
+            continue;
+        if (bars_copy[idx].repeat() == st)
+            continue;
+        bars_copy[idx].repeat(st);
+        any_changed = true;
+    }
+    if (!any_changed)
+        return;
+    song_.bars(bars_copy);
+    rebuild();
+}
+
+void song_body_widget::apply_voltas_to_selection(const std::set<unsigned>& voltas)
+{
+    if (selected_bars_.empty())
+        return;
+
+    std::vector<model::bar> bars_copy = song_.bars();
+    bool any_changed = false;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars_copy.size())
+            continue;
+        if (bars_copy[idx].voltas() == voltas)
+            continue;
+        bars_copy[idx].clear_voltas();
+        for (unsigned v : voltas)
+            bars_copy[idx].add_volta(v);
+        any_changed = true;
+    }
+    if (!any_changed)
+        return;
+    song_.bars(bars_copy);
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
+// apply_end_line_to_selection
+// ---------------------------------------------------------------------------
+// Sets is_eol = true on every selected bar.  Same copy-mutate-publish
+// pattern as the other selection-driven setters.  Idempotent: if every
+// selected bar already ends a line, the early-return on any_changed
+// skips the publish/rebuild cycle entirely.
+//
+// Applying this to the song's last bar is a harmless no-op visually —
+// there's no following line for a break to introduce — but the flag
+// is still set in the model, matching the existing behaviour of
+// parse_user_input and other code paths that touch is_eol uniformly
+// regardless of bar position.
+void song_body_widget::apply_end_line_to_selection()
+{
+    if (selected_bars_.empty())
+        return;
+
+    std::vector<model::bar> bars_copy = song_.bars();
+    bool any_changed = false;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars_copy.size())
+            continue;
+        if (bars_copy[idx].is_eol())
+            continue;
+        bars_copy[idx].is_eol(true);
+        any_changed = true;
+    }
+    if (!any_changed)
+        return;
+    song_.bars(bars_copy);
+    rebuild();
+}
+
+std::optional<model::bar::repeat_status>
+song_body_widget::common_repeat_of_selection() const
+{
+    if (selected_bars_.empty())
+        return std::nullopt;
+
+    const auto& bars = song_.bars();
+    std::optional<model::bar::repeat_status> shared;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars.size())
+            continue;
+        if (!shared)
+            shared = bars[idx].repeat();
+        else if (*shared != bars[idx].repeat())
+            return std::nullopt;
+    }
+    return shared;
+}
+
+std::optional<std::set<unsigned>>
+song_body_widget::common_voltas_of_selection() const
+{
+    if (selected_bars_.empty())
+        return std::nullopt;
+
+    const auto& bars = song_.bars();
+    std::optional<std::set<unsigned>> shared;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars.size())
+            continue;
+        if (!shared)
+            shared = bars[idx].voltas();
+        else if (*shared != bars[idx].voltas())
+            return std::nullopt;
+    }
+    return shared;
+}
+
+// ---------------------------------------------------------------------------
+// insert_bar_relative_to_selection
+// ---------------------------------------------------------------------------
+// Inserts a new bar adjacent to the current selection.  The actual model
+// insert happens inside the commit callback so an empty or unparseable
+// input leaves the song untouched — identical to edit_new_bar's "no
+// empty bars in the model" guarantee.  Until commit succeeds, the bar
+// exists only as text inside the inline editor.
+//
+// Anchor position:
+//   * "before" → at the lowest selected index N.  After commit, the new
+//     bar takes position N and everything from the old N onward shifts
+//     up by one.
+//   * "after"  → one past the highest selected index M.  The new bar
+//     lands at position M+1.  If M was the song's last bar, the new
+//     bar is simply appended.
+//
+// Line-break preservation: menu-driven insertion respects the song's
+// preferred bars_per_line.  If the line that receives the new bar would
+// be pushed over that count, we set is_eol on whichever bar is now the
+// bars_per_line'th from the start of that line, pushing the rest of
+// the line onto a new line.  Inserting after a bar that already ended
+// a line (or after the song's last bar) lands the new bar at the start
+// of the next line, and that line's count is checked separately.
+// Mouse-extended lines (which intentionally run past bars_per_line via
+// the hover-slot affordance) get the same cap applied — menu insertion
+// is the structural, count-respecting path, while line-extension stays
+// exclusively a mouse gesture.  No line *other* than the one the new
+// bar lands on is touched, so unrelated existing extensions elsewhere
+// in the song are preserved.
+//
+// Editor anchor rect: we use the visual rect of the bar that defines
+// the insertion point (the lowest selected for "before", the highest
+// for "after").  The new bar will visually appear adjacent to that
+// rect post-commit, so anchoring the editor here keeps the gesture
+// readable: the user's eye is already on the selected bar(s).
+void song_body_widget::insert_bar_relative_to_selection(bool after)
+{
+    if (selected_bars_.empty())
+        return;
+
+    // Anchor bar = first selected (for "before") or last selected (for
+    // "after").  selected_bars_ is a std::set so begin/rbegin give those
+    // in O(1).
+    const std::size_t anchor_song_idx = after ? *selected_bars_.rbegin()
+                                              : *selected_bars_.begin();
+    const std::size_t insert_at       = after ? anchor_song_idx + 1
+                                              : anchor_song_idx;
+
+    if (anchor_song_idx >= song_.bars().size())
+        return;   // stale selection; defensive
+
+    // Find the anchor bar's current rect in the layout.  This is the
+    // same walk hit_test_bar / edit_bar_by_index do.
+    QRectF anchor_rect;
+    bool   anchor_found = false;
+    {
+        std::size_t flat = 0;
+        for (const auto& line : lines_)
+        {
+            for (const auto& bl : line.bars)
+            {
+                if (flat == anchor_song_idx)
+                {
+                    anchor_rect  = bl.rect;
+                    anchor_found = true;
+                    break;
+                }
+                ++flat;
+            }
+            if (anchor_found) break;
+        }
+    }
+    if (!anchor_found)
+        return;   // layout doesn't currently contain the anchor
+
+    // Widen narrow rects so there's room to type — matches the editor
+    // sizing rule in edit_bar / edit_new_bar.
+    QRectF r = anchor_rect;
+    constexpr qreal k_min_editor_w = 160.0;
+    if (r.width() < k_min_editor_w)
+        r.setWidth(k_min_editor_w);
+
+    // Drop the existing selection: once the user has chosen "insert
+    // before/after", the selection is no longer the focus — the new
+    // bar is.  We'll re-select the new bar on successful commit.
+    clear_selection();
+
+    open_line_editor(r, QString(),
+        [this, insert_at](const QString& text) -> bool
+        {
+            QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+                return false;   // revert: no empty bars in the model
+
+            // Stage on a fresh bar so a parser throw never escapes
+            // into the model.  Same pattern as edit_new_bar.
+            model::bar new_bar;
+            try
+            {
+                new_bar.parse_user_input(trimmed.toStdString());
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+
+            std::vector<model::bar> bars = song_.bars();
+            // Clamp insert_at: if the model has changed underneath us
+            // (shouldn't happen under the single-editor invariant, but
+            // defensive), append rather than throwing.
+            const std::size_t pos = std::min(insert_at, bars.size());
+            bars.insert(bars.begin() + pos, std::move(new_bar));
+
+            // Enforce the bars_per_line cap on the line that received
+            // the new bar.  First, locate that line in the new vector:
+            // walk forward from index 0 tracking line-starts, and pick
+            // the line whose [first, last] inclusive range contains
+            // `pos`.  Then count its bars; if the count exceeds bpl,
+            // set is_eol on the bar at first + bpl - 1.  The old
+            // line-tail (which had is_eol=true to terminate the line
+            // in the first place, unless it was the song's last bar)
+            // keeps its flag — pushing it to the next line where it
+            // continues to end that next line.
+            //
+            // Special case: if the new bar lands on a brand-new line
+            // (because its predecessor had is_eol=true, or pos==0 and
+            // the predecessor doesn't exist), the "owner line" starts
+            // at pos.  Same algorithm handles this uniformly — we
+            // scan for the first line-start <= pos.
+            const unsigned bpl = song_.bars_per_line();
+            if (bpl > 0 && pos < bars.size())
+            {
+                std::size_t first = 0;
+                for (std::size_t i = 0; i < pos; ++i)
+                {
+                    if (bars[i].is_eol())
+                        first = i + 1;
+                }
+                // Walk forward from `first` to find the line's end
+                // (the bar with is_eol, or the song's last bar).
+                std::size_t last = bars.size() - 1;
+                for (std::size_t i = first; i < bars.size(); ++i)
+                {
+                    if (bars[i].is_eol())
+                    {
+                        last = i;
+                        break;
+                    }
+                }
+                const std::size_t line_count = last - first + 1;
+                if (line_count > bpl)
+                {
+                    // Bar at position (first + bpl - 1) becomes the
+                    // new line-tail.  If that index equals `last`, we
+                    // were going to set is_eol on the bar that already
+                    // has it — harmless no-op.  Otherwise this splits
+                    // the line, with the original line-tail moving to
+                    // a new next line where it still ends that line
+                    // (its own is_eol is unchanged).
+                    const std::size_t new_tail = first + bpl - 1;
+                    bars[new_tail].is_eol(true);
+                }
+            }
+
+            song_.bars(bars);
+            rebuild();
+
+            // Leave the newly inserted bar selected so follow-up Bar
+            // menu actions (e.g. Repeat or Voltas...) act on it without
+            // requiring an extra click.
+            select_bar_only(pos);
+            return true;
+        },
+        /*placeholder=*/tr("e.g. 1 4 5"));
+
+    // We're inserting at index insert_at, so Tab-advance after a
+    // successful commit will continue onto insert_at + 1 — the bar
+    // that used to live at insert_at and got pushed up by one.  That
+    // matches the natural "keep going" expectation.
+    editing_bar_index_ = insert_at;
+}
+
+// ---------------------------------------------------------------------------
+// prompt_voltas_for_selection
+// ---------------------------------------------------------------------------
+// Modal prompt for a comma-separated list of 1-indexed volta numbers.
+// Empty input is a deliberate "clear all voltas" gesture — symmetric
+// with edit_section's empty-clears-the-label behaviour.  Non-numeric
+// or zero tokens silently abort the apply: the user already had a
+// chance to fix typos in the dialog, and re-prompting would be noisy.
+//
+// Each accepted number is decremented before storage to match the
+// model's 0-indexed convention (see bar.hpp's voltas_ comment).
+void song_body_widget::prompt_voltas_for_selection()
+{
+    if (!has_selection())
+        return;
+
+    // Prefill from the selection iff every selected bar carries the
+    // same volta set.  Mixed selections leave the field empty — there
+    // is no single right answer to show, and prefilling one bar's
+    // values would silently overwrite the others on accept.
+    QString initial;
+    if (auto shared = common_voltas_of_selection())
+    {
+        QStringList parts;
+        for (unsigned v : *shared)
+            parts << QString::number(v + 1);   // 0-indexed → 1-indexed
+        initial = parts.join(", ");
+    }
+
+    bool ok = false;
+    QString text = QInputDialog::getText(
+        this, tr("Voltas"),
+        tr("Volta numbers (comma-separated, 1-indexed; empty to clear):"),
+        QLineEdit::Normal, initial, &ok);
+    if (!ok)
+        return;   // user cancelled — leave the model untouched
+
+    std::set<unsigned> parsed;
+    const QStringList tokens = text.split(',', Qt::SkipEmptyParts);
+    for (const QString& tok : tokens)
+    {
+        QString t = tok.trimmed();
+        if (t.isEmpty())
+            continue;   // tolerate "1, ,2" — common typo
+        bool num_ok = false;
+        unsigned n = t.toUInt(&num_ok);
+        if (!num_ok || n == 0)
+            return;     // invalid token: silently abort the whole apply
+        parsed.insert(n - 1);  // store 0-indexed
+    }
+
+    apply_voltas_to_selection(parsed);
+}
+
+// ---------------------------------------------------------------------------
+// show_bar_context_menu
+// ---------------------------------------------------------------------------
+// Builds the Bar context menu fresh each call so the checked-states on
+// the Repeat submenu always reflect the current selection.  Sharing a
+// long-lived QMenu would force us to either re-sync those states before
+// every popup or accept stale checks — building fresh is simpler and
+// the menu is tiny.
+//
+// The Repeat items are mutually exclusive via a QActionGroup.  When the
+// selection is homogeneous, exactly one is checked; when it's mixed,
+// none are — clicking any item still applies that choice to every
+// selected bar, collapsing the mix.
+void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
+{
+    using repeat_status = model::bar::repeat_status;
+
+    QMenu menu(this);
+
+    // Insertion items come first, separated from the attribute-edit
+    // items (Repeat / Voltas).  The separator is the standard visual
+    // cue that the two groups are distinct kinds of action: structural
+    // changes to the song above, attribute tweaks below.  "End line"
+    // sits with the insertion group because it, too, changes the
+    // song's structural shape — it forces a line break at the selected
+    // bar(s) rather than tweaking an attribute.
+    QAction* insert_before_act = menu.addAction(tr("Insert 1 before"));
+    connect(insert_before_act, &QAction::triggered, this, [this]() {
+        insert_bar_relative_to_selection(/*after=*/false);
+    });
+    QAction* insert_after_act = menu.addAction(tr("Insert 1 after"));
+    connect(insert_after_act, &QAction::triggered, this, [this]() {
+        insert_bar_relative_to_selection(/*after=*/true);
+    });
+    QAction* end_line_act = menu.addAction(tr("End line"));
+    connect(end_line_act, &QAction::triggered, this, [this]() {
+        apply_end_line_to_selection();
+    });
+    menu.addSeparator();
+
+    QMenu* repeat_menu = menu.addMenu(tr("Repeat"));
+    auto* repeat_group = new QActionGroup(&menu);
+    repeat_group->setExclusive(true);
+
+    struct entry { const char* label; repeat_status value; };
+    static const entry entries[] = {
+        { "None",  repeat_status::NONE  },
+        { "Begin", repeat_status::BEGIN },
+        { "End",   repeat_status::END   },
+    };
+
+    const auto shared = common_repeat_of_selection();
+    for (const auto& e : entries)
+    {
+        QAction* a = repeat_menu->addAction(tr(e.label));
+        a->setCheckable(true);
+        a->setActionGroup(repeat_group);
+        a->setChecked(shared.has_value() && *shared == e.value);
+        repeat_status v = e.value;
+        connect(a, &QAction::triggered, this, [this, v]() {
+            apply_repeat_to_selection(v);
+        });
+    }
+
+    QAction* voltas_act = menu.addAction(tr("Voltas..."));
+    connect(voltas_act, &QAction::triggered, this, [this]() {
+        prompt_voltas_for_selection();
+    });
+
+    menu.exec(global_pos);
+}
+
+// ---------------------------------------------------------------------------
+// contextMenuEvent — right-click on a bar
+// ---------------------------------------------------------------------------
+// Right-clicking a bar that's already in the selection leaves the
+// selection alone (so users can right-click a multi-bar selection to
+// edit them all).  Right-clicking outside the current selection replaces
+// the selection with just the clicked bar — the file-manager idiom.
+// Right-clicking on chart whitespace does nothing: there's no bar to
+// act on, and silently popping up a menu with no target would be
+// confusing.
+void song_body_widget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // If a left-click inline editor is open, commit it before showing
+    // the menu — mirrors the behaviour of left-clicking elsewhere in
+    // the chart while editing.
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/true);
+
+    const QPointF p = event->pos();
+    int bar_idx = hit_test_bar(p);
+    if (bar_idx < 0)
+    {
+        event->ignore();
+        return;
+    }
+
+    auto idx = static_cast<std::size_t>(bar_idx);
+    if (selected_bars_.find(idx) == selected_bars_.end())
+        select_bar_only(idx);
+
+    show_bar_context_menu(event->globalPos());
+    event->accept();
 }
 
 } // namespace nashville::view

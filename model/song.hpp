@@ -27,10 +27,6 @@ public:
     song& tempo(const std::tuple<unsigned, chord::time>& t);
     const time_signature& time_sig() const;
     song& time_sig(const time_signature& t);
-    // Each key of the map corresponds to the index of
-    // a volta in the song. The vector contains the bar
-    // indexes that appear in that volta.
-    std::map<unsigned, std::vector<unsigned>> voltas() const;
 
 private:
     std::vector<bar> bars_;

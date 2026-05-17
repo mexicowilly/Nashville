@@ -15,7 +15,6 @@ add_executable(unit-test
     chord.cpp
     database.cpp
     main.cpp
-    song.cpp
     time_signature.cpp
 )
 

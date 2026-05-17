@@ -13,6 +13,7 @@
 #include <optional>
 
 class QLineEdit;
+class QContextMenuEvent;
 
 namespace nashville::view
 {
@@ -83,6 +84,67 @@ public:
 
     int margin_width() const { return margin_width_; }
 
+    // --- Selection-driven bar attribute edits ---
+    // These operate on the currently-selected bars (selected_bars_) and
+    // are no-ops when nothing is selected.  Exposed so the main-window
+    // "Bar" menu in app.cpp can act on the same selection the user sees
+    // highlighted in the chart, without app.cpp poking at our internals.
+    // Both rebuild() on success.
+    bool has_selection() const { return !selected_bars_.empty(); }
+    void apply_repeat_to_selection(model::bar::repeat_status st);
+    // `voltas` is the set of 0-indexed volta numbers to assign to every
+    // selected bar (replacing any existing voltas on those bars).  Pass
+    // an empty set to clear.  The "1-indexed in the UI" convention is
+    // handled by callers (app.cpp, the right-click handler) — by the
+    // time we reach this method we're already in storage coordinates.
+    void apply_voltas_to_selection(const std::set<unsigned>& voltas);
+
+    // Opens a modal QInputDialog prompting for a comma-separated list of
+    // 1-indexed volta numbers, prefilled from the current selection iff
+    // every selected bar carries the same volta set.  On accept, parses
+    // the text (whitespace tolerant, blanks ignored) and applies the
+    // result to every selected bar via apply_voltas_to_selection.
+    // Invalid tokens (non-numeric, zero, or out-of-range) silently abort
+    // the apply — the dialog already gave the user a chance to fix
+    // typos and re-confirming would be noisy.  An empty string is a
+    // valid input meaning "clear all voltas on the selection."  Public
+    // because both the right-click context menu and the menubar's
+    // "Bar > Voltas..." action invoke it.
+    void prompt_voltas_for_selection();
+
+    // Returns the shared repeat_status across all selected bars iff they
+    // all agree, nullopt otherwise (mixed selection or empty selection).
+    // Used by app.cpp to drive the checkmark state on the "Repeat"
+    // submenu items: exactly one item checked when the selection is
+    // homogeneous, none checked when it's mixed.
+    std::optional<model::bar::repeat_status> common_repeat_of_selection() const;
+    // Same idea for the volta set.  When all selected bars carry the
+    // same volta set (including all empty), returns that set; otherwise
+    // nullopt.  The "Voltas..." dialog uses this to prefill its text
+    // input only when there's an unambiguous starting value to show.
+    std::optional<std::set<unsigned>> common_voltas_of_selection() const;
+
+    // Inserts a new bar adjacent to the selection: at the position of
+    // the lowest selected index when `after` is false ("Insert 1
+    // before"), or one past the highest selected index when `after` is
+    // true ("Insert 1 after").  Opens an inline editor anchored to the
+    // selected-bar rect that defines the anchor; the bar is only
+    // actually appended to the model if the user commits non-empty,
+    // parseable input — matching edit_new_bar's "no empty bars in the
+    // model" rule.  Honours the song's bars_per_line preference: if
+    // the line that receives the new bar would exceed bars_per_line,
+    // an is_eol is planted at the bars_per_line'th bar of that line,
+    // pushing the rest onto a new line.  No-op when the selection is
+    // empty.
+    void insert_bar_relative_to_selection(bool after);
+
+    // Sets is_eol = true on every selected bar.  Idempotent — bars
+    // that already end a line are unchanged.  No-op when the selection
+    // is empty.  Public for the same reason as the other selection-
+    // driven actions: both the right-click context menu and the
+    // menubar's "Bar > End line" action invoke it.
+    void apply_end_line_to_selection();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -92,6 +154,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void leaveEvent(QEvent* event) override;   // clear hover outlines
+    void contextMenuEvent(QContextMenuEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -119,6 +182,28 @@ private:
     void paint_continuation_dot(QPainter& painter,
                                const QRectF& preceding_bar_rect,
                                qreal num_center_y) const;
+    // Paints all volta brackets on a single line.  Bracket positions are
+    // derived from the per-bar rects in `line` plus the precomputed
+    // line.volta_spans; the bracket sits just above the line at a fixed
+    // vertical offset (see k_volta_zone_height) reserved by
+    // compute_layout when any bar on the line carries a volta number.
+    void paint_volta_brackets(QPainter& painter,
+                              const line_layout& line) const;
+
+    // Returns a per-song-bar pair {draw_begin_repeat, draw_end_repeat}
+    // derived from each bar's repeat() flag PLUS the implicit end-repeat
+    // sign at the right edge of every non-final volta.  Called once per
+    // layout pass, before per-line geometry is computed, because the
+    // analysis is global (repeat sections, and the volta groups within
+    // them, can span multiple visual lines).
+    //
+    // The "final volta" of a repeat section is the volta span containing
+    // the highest volta number used in that section.  In well-formed
+    // input that's the last (rightmost) span; pathological inputs where
+    // a high-numbered volta appears before a low-numbered one still get
+    // a sensible answer — the higher number wins, matching the playback
+    // semantics expected by readers.
+    std::vector<std::pair<bool, bool>> compute_repeat_flags() const;
 
     // --- Edit handlers ---
     // All four field editors open inline overlays.
@@ -145,6 +230,13 @@ private:
     // if none); commit assigns, renames, or — if empty — clears the
     // section.
     void edit_section(std::size_t line_index);
+
+    // Pops up the bar context menu (Repeat submenu + Voltas...) anchored
+    // at `global_pos`.  Shared between contextMenuEvent (right-click on
+    // a bar) and any other path that wants the same affordance.  The
+    // menu's actions operate on the current selection, so callers are
+    // responsible for ensuring the selection is correct before calling.
+    void show_bar_context_menu(const QPoint& global_pos);
 
     // --- Insertion slots ---
     // Computed at the end of compute_layout from the current model state.
@@ -225,6 +317,11 @@ private:
     static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
     static constexpr qreal k_line_spacing_normal = 10.0;  // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
+    // Vertical zone reserved above the bar row when a line carries any
+    // volta numbers.  Houses the labelled volta bracket (label text + a
+    // small downward hook).  Lines without voltas don't reserve this so
+    // the rest of the chart packs as densely as before.
+    static constexpr qreal k_volta_zone_height   = 18.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;
     static constexpr int   k_min_margin_width   = 60;

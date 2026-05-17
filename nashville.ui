@@ -14,13 +14,14 @@
    <string>MainWindow</string>
   </property>
   <widget class="QScrollArea" name="central_widget"/>
+  <widget class="QStatusBar" name="statusbar"/>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>21</height>
+     <height>30</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -29,12 +30,86 @@
     </property>
     <addaction name="actionExit"/>
    </widget>
+   <widget class="QMenu" name="menuSong">
+    <property name="title">
+     <string>Song</string>
+    </property>
+   </widget>
+   <widget class="QMenu" name="menuBar">
+    <property name="title">
+     <string>Bar</string>
+    </property>
+    <widget class="QMenu" name="menuRepeat">
+     <property name="title">
+      <string>Repeat</string>
+     </property>
+     <addaction name="actionNone"/>
+     <addaction name="actionBegin"/>
+     <addaction name="actionEnd"/>
+    </widget>
+    <addaction name="actionInsertBefore"/>
+    <addaction name="actionInsertAfter"/>
+    <addaction name="actionEndLine"/>
+    <addaction name="separator"/>
+    <addaction name="menuRepeat"/>
+    <addaction name="actionVoltas"/>
+   </widget>
    <addaction name="menuFile"/>
+   <addaction name="menuSong"/>
+   <addaction name="menuBar"/>
   </widget>
-  <widget class="QStatusBar" name="statusbar"/>
   <action name="actionExit">
    <property name="text">
     <string>Exit</string>
+   </property>
+  </action>
+  <action name="actionRepeat">
+   <property name="text">
+    <string>Repeat</string>
+   </property>
+  </action>
+  <action name="actionNone">
+   <property name="text">
+    <string>None</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionBegin">
+   <property name="text">
+    <string>Begin</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionEnd">
+   <property name="text">
+    <string>End</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionVoltas">
+   <property name="text">
+    <string>Voltas...</string>
+   </property>
+  </action>
+  <action name="actionInsertBefore">
+   <property name="text">
+    <string>Insert 1 before</string>
+   </property>
+  </action>
+  <action name="actionInsertAfter">
+   <property name="text">
+    <string>Insert 1 after</string>
+   </property>
+  </action>
+  <action name="actionEndLine">
+   <property name="text">
+    <string>End line</string>
    </property>
   </action>
  </widget>

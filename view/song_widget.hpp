@@ -24,6 +24,12 @@ public:
     // Call when song data changes from outside the widget.
     void refresh();
 
+    // The body widget renders and owns the bar selection; expose it so
+    // the main-window menus (defined in app.cpp) can drive bar-attribute
+    // edits against whichever bars the user has selected in the chart.
+    // Stable for the lifetime of this song_widget.
+    song_body_widget* body() const { return body_; }
+
 private:
     model::song&       song_;
     song_body_widget*  body_   = nullptr;
