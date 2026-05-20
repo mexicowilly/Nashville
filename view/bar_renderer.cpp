@@ -36,7 +36,22 @@ qreal bar_renderer::width_hint(const model::bar& bar,
                               bool draw_end_repeat)
 {
     if (bar.empty())
-        return 0.0;
+    {
+        // Empty bars are produced by the "Insert 1 before/after" menu
+        // actions, which add a chord-less bar to the model so the user
+        // can see the layout settle before they choose to edit it.
+        // Reporting 0 here would collapse the slot to its k_bar_padding
+        // sliver — visible only as a thin gap — which doesn't read as
+        // "a bar landed here."  Reserve the time-sig slot plus one
+        // chord's worth of width so the new bar occupies a recognisable
+        // column.  Repeat-mark slots still grow the width when set, in
+        // case the empty bar inherits a BEGIN/END flag from a follow-up
+        // edit.
+        qreal w = k_time_sig_slot_w + k_empty_bar_chord_slot_w;
+        if (draw_begin_repeat) w += k_repeat_slot_w;
+        if (draw_end_repeat)   w += k_repeat_slot_w;
+        return w;
+    }
 
     qreal total_width = 0.0;
     for (const auto& ch : bar.chords())

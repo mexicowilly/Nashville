@@ -12,6 +12,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <stdexcept>
 #include <cmath>
 #include <map>
@@ -562,26 +563,18 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         y += volta_zone_h + actual_bar_h + spacing;
     }
 
-    // Insertion slots are derived from the last line's geometry.  The
-    // next-line slot's top is the same y the next line would have used had
-    // there been one; reusing the loop's trailing spacing means slot
-    // placement matches what a freshly-typed bar will look like once
-    // re-laid-out.
-    //
-    // Note: last_line.rect.height() includes any volta zone, which a
-    // freshly-typed bar wouldn't carry.  Subtract the volta zone (when
-    // present) so the slot reads as "an empty bar like the others"
-    // rather than "an empty bar plus a phantom volta gap."
+    // Insertion slots: a same_line slot per line (computed inside
+    // compute_insertion_slots from each line's own geometry), plus a
+    // single next_line slot below the song's last line.  We pass in
+    // the next_line slot's parameters here — its top y (one
+    // k_line_spacing_normal below the last line's bottom, matching
+    // what a freshly laid-out next line would use) and its bar height
+    // (the last line's bar-row height, ie. excluding any volta zone
+    // above the bars so the ghost reads as "an empty bar like the
+    // others" rather than "an empty bar plus a phantom volta gap").
     const auto& last_line = lines_.back();
     qreal last_bar_h = last_line.rect.height()
                        - (last_line.has_voltas ? k_volta_zone_height : 0.0);
-    // The "same line" slot sits at bar height starting at the bars'
-    // top, not the line top; use last_line.rect.bottom() - last_bar_h
-    // as the y-anchor inside compute_insertion_slots via its line.rect
-    // already-correct top.  We keep last_line_bottom positioning as the
-    // y where the *next* line would land, which already factors in the
-    // current line's full height including the volta zone — exactly
-    // right: the next line starts below everything we just drew.
     compute_insertion_slots(content_rect,
                             bars_left,
                             /*last_line_bottom=*/last_line.rect.bottom()
@@ -600,19 +593,30 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 // ---------------------------------------------------------------------------
 // compute_insertion_slots
 // ---------------------------------------------------------------------------
-// The layout for new-bar insertion is intentionally simple: there are at
-// most two slots, anchored to the last line (or to the top-left of the
-// content area when the song is empty).  This matches the spec's three
-// cases under one rule:
+// Generates the dashed-ghost hover affordances for new-bar insertion.
+// Three flavours:
 //   * Empty song            -> one "first_bar" slot at content top-left.
-//   * Last line not full    -> "same_line" after last bar + "next_line".
-//   * Last line at capacity -> still "same_line" (extends past bars_per_line
-//                              with a continuation dot) + "next_line".
+//   * Every line            -> a "same_line" slot at the right edge of
+//                              that line, allowing the line to be
+//                              extended by one bar.  Extension growing
+//                              past bars_per_line is allowed by design —
+//                              the mouse gesture is the explicit way to
+//                              author an extended line.
+//   * Last line of the song -> additionally, a "next_line" slot below
+//                              the line, starting a fresh row.  Middle
+//                              lines don't need this because the next
+//                              line already exists in the layout.
 //
 // Slot widths are deliberately suggestive rather than precise; the real
 // bar width is computed from chord contents after the user types into the
-// editor.  Using the last bar's width (or a fixed default when empty)
-// produces a visual hint that lines up naturally with the existing bars.
+// editor.  Using the host line's last bar width (or a fixed default when
+// empty) produces a visual hint that lines up naturally with that line.
+//
+// Vertical anchoring: each same_line slot uses its line's last bar's
+// rect.top() and the line's bar-row height (which excludes the volta
+// zone above the bars).  This keeps the ghost aligned with the bars
+// even on volta-bearing lines — the bracket lives in the zone above,
+// the slot lives in the bar row.
 void song_body_widget::compute_insertion_slots(const QRectF& content_rect,
                                                qreal bars_left,
                                                qreal last_line_bottom,
@@ -623,57 +627,65 @@ void song_body_widget::compute_insertion_slots(const QRectF& content_rect,
     if (song_.empty())
     {
         insertion_slot s;
-        s.kind = insertion_slot_kind::first_bar;
-        s.rect = QRectF(content_rect.left(), content_rect.top(),
-                        k_default_slot_w, last_line_bar_h);
+        s.kind      = insertion_slot_kind::first_bar;
+        s.rect      = QRectF(content_rect.left(), content_rect.top(),
+                             k_default_slot_w, last_line_bar_h);
+        s.insert_at = 0;
         insertion_slots_.push_back(s);
         return;
     }
 
-    // Slot widths derive from the last bar on the last line — visually it
-    // reads as "the next bar will be about this size" while the user
-    // hovers, before they've typed anything.
+    // Per-line same_line slots.  Walk every line, accumulating a flat
+    // song-bar index so each slot knows where its commit should insert
+    // the new bar.
+    std::size_t song_idx_cursor = 0;
+    for (std::size_t li = 0; li < lines_.size(); ++li)
+    {
+        const auto& line = lines_[li];
+        if (line.bars.empty())
+        {
+            // Defensive: a line with no bars produces no extension
+            // affordance.  This shouldn't happen under the layout
+            // invariants but staying tolerant keeps the renderer
+            // crash-free if it ever does.
+            continue;
+        }
+
+        const auto& last_bar = line.bars.back();
+        // Bar-row height: exclude the volta zone if this line has one.
+        // The slot represents an empty bar that would join this line,
+        // and an empty bar doesn't carry a phantom volta gap.
+        const qreal bar_row_h = line.rect.height()
+                              - (line.has_voltas ? k_volta_zone_height : 0.0);
+
+        insertion_slot s;
+        s.kind      = insertion_slot_kind::same_line;
+        s.rect      = QRectF(last_bar.rect.right() + k_inter_bar_spacing,
+                             last_bar.rect.top(),
+                             last_bar.rect.width(),
+                             bar_row_h);
+        // Insert position: one past this line's last bar in the flat
+        // song vector.
+        s.insert_at = song_idx_cursor + line.bars.size();
+        insertion_slots_.push_back(s);
+
+        song_idx_cursor += line.bars.size();
+    }
+
+    // next_line slot — only for the song's last line.  Anchored at the
+    // bar-column left edge, on a fresh row below the last line.  Width
+    // matches the last line's same_line slot so the two ghosts look
+    // like siblings to the eye when both are visible (e.g. moving the
+    // mouse from one to the other).
     const auto& last_line = lines_.back();
-    qreal slot_w = k_default_slot_w;
-    qreal last_bar_right = bars_left;
-    if (!last_line.bars.empty())
-    {
-        const auto& last_bar = last_line.bars.back();
-        slot_w = last_bar.rect.width();
-        last_bar_right = last_bar.rect.right();
-    }
-
-    // same_line: placed immediately after the last bar, separated by the
-    // same inter-bar spacing the renderer uses elsewhere.  The bar height
-    // matches the last line so the ghost outline aligns with neighbours.
-    // We use last_bar.rect.top() rather than last_line.rect.top() so the
-    // ghost lines up with the bars even on a volta-bearing line (where
-    // line.rect.top() sits above the volta bracket, not above the bars).
-    {
-        insertion_slot s;
-        s.kind = insertion_slot_kind::same_line;
-        qreal slot_top = last_line.bars.empty()
-                         ? last_line.rect.top()
-                         : last_line.bars.back().rect.top();
-        s.rect = QRectF(last_bar_right + k_inter_bar_spacing,
-                        slot_top,
-                        slot_w,
-                        last_line_bar_h);
-        insertion_slots_.push_back(s);
-    }
-
-    // next_line: placed at the bar-column left edge, on a fresh row below
-    // the last line.  We deliberately keep its width matched to the
-    // last_line slot so the two ghosts look like siblings.
-    {
-        insertion_slot s;
-        s.kind = insertion_slot_kind::next_line;
-        s.rect = QRectF(bars_left,
-                        last_line_bottom,
-                        slot_w,
-                        last_line_bar_h);
-        insertion_slots_.push_back(s);
-    }
+    qreal slot_w = last_line.bars.empty()
+                   ? k_default_slot_w
+                   : last_line.bars.back().rect.width();
+    insertion_slot ns;
+    ns.kind      = insertion_slot_kind::next_line;
+    ns.rect      = QRectF(bars_left, last_line_bottom, slot_w, last_line_bar_h);
+    ns.insert_at = song_.bars().size();
+    insertion_slots_.push_back(ns);
 }
 
 // ---------------------------------------------------------------------------
@@ -1850,27 +1862,46 @@ void song_body_widget::edit_tempo_bpm()
 // ---------------------------------------------------------------------------
 // edit_new_bar — click handler for an insertion slot
 // ---------------------------------------------------------------------------
-// Opens an inline editor over the hovered ghost rectangle.  Slot choice is
-// the source of truth about layout: clicking `same_line` *declares* that
-// the new bar continues the last visual line, and clicking `next_line`
-// *declares* that it starts a new one.  is_eol on the previous last bar
-// is then written to record that declaration — never the other way
-// around.  In particular, `same_line` is always offered even when the
-// previous bar's is_eol is already true; the UI lets the user override
-// that flag by extending the line, which simply clears is_eol on commit.
+// Opens an inline editor over the hovered ghost rectangle.  Slot choice
+// is the source of truth about layout: the kind decides *what kind of
+// edit* (start the song, extend a line, start a new line below the
+// last), and the slot's insert_at tells the commit handler *where* in
+// the flat bars vector the new bar lands.
 //
-// Commit is atomic: either the new bar is appended *and* the previous
-// bar's is_eol is updated, or neither happens.  If bar::parse_user_input
-// throws on the chord text, every write performed during this commit is
-// rolled back so the chart returns to exactly its pre-click state.
+// Commit is atomic: either the new bar is inserted *and* the surrounding
+// is_eol flags update consistently, or neither happens.  If
+// bar::parse_user_input throws on the chord text, every write performed
+// during this commit is rolled back so the chart returns to exactly its
+// pre-click state.
 //
 // Empty input reverts — we never want to insert a chordless bar just
 // because the user clicked and pressed Enter.
 //
-// The slot's *kind* is captured by value (not its index), because the
-// layout — and therefore the insertion_slots_ vector — is rebuilt on
-// every model change.  The kind is what the user picked; the index is an
-// implementation detail of the current frame.
+// The slot's kind and insert_at are captured by value (not its index),
+// because the layout — and therefore the insertion_slots_ vector — is
+// rebuilt on every model change.  What the user picked is durable; the
+// vector index is an implementation detail of the current frame.
+//
+// same_line semantics across the slot's two flavours:
+//   * Mid-line slot (insert_at points to a non-end-of-song position):
+//     the bar at insert_at - 1 was the line's tail (is_eol == true).
+//     On commit we transfer that flag to the new bar — the new bar
+//     becomes the line's new tail, and the previous tail becomes an
+//     interior bar of the same line.  Result: the line grows by one,
+//     and the bar that *follows* the line in song order still starts
+//     a fresh line as it did before.
+//   * Last-line slot (insert_at == bars.size()): the bar at insert_at -
+//     1 is the song's last bar.  Same transfer applies — whatever its
+//     is_eol bit was, it moves to the new bar.  Visually the bit's
+//     value is irrelevant on a song-tail bar (there's nothing after
+//     it), but keeping a single rule for both flavours keeps the
+//     logic uniform and side-effect-free.
+//
+// next_line: the new bar starts a fresh line below the last.  We set
+// is_eol on the previous last bar so that's where the break lives.  The
+// new bar's own is_eol stays false (it's the song's new last bar).
+//
+// first_bar: empty song, no neighbours to touch.  Append and done.
 void song_body_widget::edit_new_bar(std::size_t slot_index)
 {
     if (slot_index >= insertion_slots_.size())
@@ -1878,6 +1909,7 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
 
     const insertion_slot& slot = insertion_slots_[slot_index];
     insertion_slot_kind kind = slot.kind;
+    const std::size_t insert_at = slot.insert_at;
 
     // Widen narrow slots so there's room to type — the rendered ghost is
     // intentionally compact, but a real bar can hold several chords.
@@ -1891,7 +1923,7 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
     hovered_slot_ = -1;
 
     open_line_editor(r, QString(),
-        [this, kind](const QString& text) -> bool
+        [this, kind, insert_at](const QString& text) -> bool
         {
             QString trimmed = text.trimmed();
             if (trimmed.isEmpty())
@@ -1900,18 +1932,11 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
             // Stage the entire edit on a copy of the bars vector so a
             // parser exception can be cleanly aborted.  Only after the
             // new bar parses successfully do we publish the copy to the
-            // model.  This keeps the operation atomic: either both the
-            // previous-bar is_eol write and the append take effect, or
-            // neither does.
+            // model.  This keeps the operation atomic.
             std::vector<model::bar> bars = song_.bars();
 
-            // Record the UI's line-break declaration on the previous
-            // last bar.  No previous bar exists for first_bar.
-            if (kind != insertion_slot_kind::first_bar && !bars.empty())
-                bars.back().is_eol(kind == insertion_slot_kind::next_line);
-
-            // Parse into a fresh bar held off to the side; if it throws,
-            // `bars` is untouched and we return false without publishing.
+            // Parse the new bar first; if it throws, `bars` is
+            // untouched and we return false without publishing.
             model::bar new_bar;
             try
             {
@@ -1922,20 +1947,51 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
                 return false;  // chart returns to exact pre-click state
             }
 
-            bars.push_back(std::move(new_bar));
+            // Apply per-kind is_eol bookkeeping, then insert.  Clamp
+            // insert_at defensively in case the model changed under us
+            // (shouldn't happen under the single-editor invariant).
+            const std::size_t pos = std::min(insert_at, bars.size());
+
+            if (kind == insertion_slot_kind::first_bar)
+            {
+                // Empty song — nothing to fix up.
+            }
+            else if (kind == insertion_slot_kind::same_line)
+            {
+                // Extend a line.  The bar immediately before pos is the
+                // line's old tail.  Transfer its is_eol to the new bar:
+                // the new bar becomes the tail, the old tail becomes an
+                // interior bar of the same line.  This rule is identical
+                // for mid-line and last-line same_line slots.
+                if (pos > 0)
+                {
+                    bool was_eol = bars[pos - 1].is_eol();
+                    bars[pos - 1].is_eol(false);
+                    new_bar.is_eol(was_eol);
+                }
+            }
+            else  // next_line
+            {
+                // Start a new line below the last.  Mark the previous
+                // last bar as a line-ender; the new bar's own is_eol
+                // stays false (it's the song's new last bar).
+                if (!bars.empty())
+                    bars.back().is_eol(true);
+            }
+
+            bars.insert(bars.begin() + pos, std::move(new_bar));
             song_.bars(bars);
             rebuild();
             return true;
         },
         /*placeholder=*/tr("e.g. 1 4 5"));
 
-    // Mark this as a bar-editing session so Tab chains.  For a new-bar
-    // editor the "index" we track is *where the bar will land* after
-    // commit — i.e., the current song size.  After this editor's
-    // commit appends a bar at that position, the Tab-advance logic
-    // computes `prev + 1`, sees that equals the new bars.size(), and
-    // extends again.  Chained Tab → chained appends → rapid entry.
-    editing_bar_index_ = song_.bars().size();
+    // Mark this as a bar-editing session so Tab chains.  The "index"
+    // we track is where the bar will land after commit — i.e., the
+    // slot's insert_at.  After commit, Tab-advance computes prev + 1
+    // and either extends or, when we're past the song's end, kicks
+    // back to extend_with_tab for another append.
+    editing_bar_index_ = insert_at;
 }
 
 // ---------------------------------------------------------------------------
@@ -2087,11 +2143,11 @@ void song_body_widget::extend_with_tab()
     if (insertion_slots_.empty())
         return;  // defensive: no slots laid out (shouldn't happen here)
 
-    // Pick the desired kind first, then find the slot of that kind.
-    // The slots vector is small (1 or 2 entries) so a linear search is
-    // appropriate and avoids hard-coding "slot 0 is same_line, 1 is
-    // next_line" — which is true today but would be a fragile
-    // assumption to bake in.
+    // Pick the desired kind first, then find the matching slot whose
+    // insert_at points to the song's end.  There are now multiple
+    // same_line slots — one per line — so kind alone is no longer
+    // unique; Tab always means "append at the song's end", which
+    // restricts us to slots with insert_at == bars.size().
     insertion_slot_kind desired;
     if (song_.empty())
     {
@@ -2111,6 +2167,22 @@ void song_body_widget::extend_with_tab()
                 : insertion_slot_kind::same_line;
     }
 
+    const std::size_t song_end = song_.bars().size();
+    for (std::size_t i = 0; i < insertion_slots_.size(); ++i)
+    {
+        const auto& s = insertion_slots_[i];
+        if (s.kind == desired && s.insert_at == song_end)
+        {
+            edit_new_bar(i);
+            return;
+        }
+    }
+    // No matching slot — fall back to the first slot of the desired
+    // kind regardless of insert_at, then to slot 0.  Under current
+    // compute_insertion_slots logic the song-end branch above always
+    // hits (the desired kind is always present at the song end), but
+    // the fallback keeps a future layout change from silently
+    // dropping the Tab.
     for (std::size_t i = 0; i < insertion_slots_.size(); ++i)
     {
         if (insertion_slots_[i].kind == desired)
@@ -2119,11 +2191,6 @@ void song_body_widget::extend_with_tab()
             return;
         }
     }
-    // No matching slot — fall back to whatever's at index 0.  Under
-    // current compute_insertion_slots logic this branch is unreachable
-    // (the desired kind is always present), but keeping the fallback
-    // means a future change to slot layout fails open rather than
-    // dropping the Tab silently.
     edit_new_bar(0);
 }
 
@@ -2309,9 +2376,12 @@ bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
             // close_line_editor → commit callback chain will clear
             // editing_bar_index_ as part of teardown.  For an existing
             // bar editor this is the bar's index; for a new-bar editor
-            // it's the index the new bar will land at after commit
-            // (== song_.bars().size() at editor open time, which is
-            // also == the new bar's final index after commit appends).
+            // it's the slot's insert_at — the index the new bar will
+            // occupy after commit.  For end-of-song slots that equals
+            // bars.size() at editor-open time; for mid-line slots it's
+            // somewhere inside the existing vector.  In either case,
+            // after a successful insert the new bar is at exactly
+            // this index in the post-commit vector.
             std::size_t prev = *editing_bar_index_;
 
             // Try to commit.  If commit fails (empty input, parser
@@ -2325,11 +2395,14 @@ bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
                 // After a successful commit + rebuild, decide whether
                 // the "next bar" already exists or needs to be
                 // appended.  An existing-bar commit doesn't change
-                // bars.size(), so prev + 1 < size when there's a
-                // following bar.  A new-bar commit appends one, so
-                // bars.size() is now prev + 1 — same condition still
-                // distinguishes correctly between "edit existing next"
-                // and "extend the song again."
+                // bars.size().  A new-bar commit grows bars.size() by
+                // one: if the bar landed mid-song (mid-line slot),
+                // prev + 1 lands inside the existing vector; if it
+                // landed at the song's end (last-line slot or
+                // next_line slot), prev + 1 == bars.size().  In all
+                // cases the same condition correctly distinguishes
+                // "edit existing next bar" from "extend the song
+                // again with a fresh slot."
                 if (prev + 1 < song_.bars().size())
                     edit_bar_by_index(prev + 1);
                 else
@@ -2520,39 +2593,43 @@ song_body_widget::common_voltas_of_selection() const
 // ---------------------------------------------------------------------------
 // insert_bar_relative_to_selection
 // ---------------------------------------------------------------------------
-// Inserts a new bar adjacent to the current selection.  The actual model
-// insert happens inside the commit callback so an empty or unparseable
-// input leaves the song untouched — identical to edit_new_bar's "no
-// empty bars in the model" guarantee.  Until commit succeeds, the bar
-// exists only as text inside the inline editor.
+// Inserts a new (empty) bar adjacent to the current selection.  The bar
+// is added to the model immediately — *not* gated on a follow-up commit
+// in an inline editor — so the user sees the new column land in the
+// layout as soon as the menu item is invoked.  This matches the
+// expectation that a "Insert 1 before/after" menu action behaves like a
+// structural-change command (akin to Delete or End line) rather than an
+// edit-affordance opener: the action either succeeds visibly, or
+// nothing changes.  The new bar is left selected so a follow-up click
+// (or any Bar-menu action) acts on it without an extra step; clicking
+// it opens the inline editor via the existing double-click path.  An
+// empty bar carries a small reserved chord-slot width
+// (bar_renderer::k_empty_bar_chord_slot_w) so it reads as a recognisable
+// column even before chords are entered.
 //
 // Anchor position:
-//   * "before" → at the lowest selected index N.  After commit, the new
-//     bar takes position N and everything from the old N onward shifts
-//     up by one.
+//   * "before" → at the lowest selected index N.  After insertion the
+//     new bar takes position N and everything from the old N onward
+//     shifts up by one.
 //   * "after"  → one past the highest selected index M.  The new bar
 //     lands at position M+1.  If M was the song's last bar, the new
 //     bar is simply appended.
 //
 // Line-break preservation: menu-driven insertion respects the song's
-// preferred bars_per_line.  If the line that receives the new bar would
-// be pushed over that count, we set is_eol on whichever bar is now the
-// bars_per_line'th from the start of that line, pushing the rest of
-// the line onto a new line.  Inserting after a bar that already ended
-// a line (or after the song's last bar) lands the new bar at the start
-// of the next line, and that line's count is checked separately.
-// Mouse-extended lines (which intentionally run past bars_per_line via
-// the hover-slot affordance) get the same cap applied — menu insertion
-// is the structural, count-respecting path, while line-extension stays
-// exclusively a mouse gesture.  No line *other* than the one the new
-// bar lands on is touched, so unrelated existing extensions elsewhere
-// in the song are preserved.
-//
-// Editor anchor rect: we use the visual rect of the bar that defines
-// the insertion point (the lowest selected for "before", the highest
-// for "after").  The new bar will visually appear adjacent to that
-// rect post-commit, so anchoring the editor here keeps the gesture
-// readable: the user's eye is already on the selected bar(s).
+// preferred bars_per_line, but only on lines that aren't already
+// extended past it.  An "extended line" is one whose original count
+// (before this insertion) was already > bars_per_line — those were
+// authored deliberately past the cap (e.g. via the mouse-driven
+// extension affordance), and inserting onto such a line should honour
+// that intent and extend the extension further, not split it.  When
+// the line *wasn't* extended (original count <= bpl) and the insertion
+// would push it over the cap, we set is_eol on whichever bar is now
+// the bars_per_line'th from the start of that line, pushing the rest
+// onto a new line.  Inserting after a bar that already ended a line
+// (or after the song's last bar) lands the new bar at the start of
+// the next line, and that line's count is checked separately.  No
+// line *other* than the one the new bar lands on is touched, so
+// unrelated existing extensions elsewhere in the song are preserved.
 void song_body_widget::insert_bar_relative_to_selection(bool after)
 {
     if (selected_bars_.empty())
@@ -2569,135 +2646,91 @@ void song_body_widget::insert_bar_relative_to_selection(bool after)
     if (anchor_song_idx >= song_.bars().size())
         return;   // stale selection; defensive
 
-    // Find the anchor bar's current rect in the layout.  This is the
-    // same walk hit_test_bar / edit_bar_by_index do.
-    QRectF anchor_rect;
-    bool   anchor_found = false;
+    // If an inline editor happens to be open (defensive — menu actions
+    // typically take focus away from any editor first), commit before
+    // we mutate the model out from under it.
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/true);
+
+    std::vector<model::bar> bars = song_.bars();
+    const std::size_t pos = std::min(insert_at, bars.size());
+
+    // The new bar is a default-constructed empty bar — no chords, no
+    // section, no voltas, is_eol == false.  The renderer handles
+    // chord-less bars (see bar_renderer::width_hint / paint), giving
+    // them a reserved chord-slot width so they're visible in the
+    // layout while waiting for the user's first edit.
+    bars.insert(bars.begin() + pos, model::bar{});
+
+    // Enforce the bars_per_line cap on the line that received the new
+    // bar — but only if that line wasn't already extended past the
+    // cap.  An already-extended line was authored deliberately, and
+    // the user's intent on a further insert is to extend it further,
+    // not split it.
+    //
+    // Locate the owner line in the new vector: walk forward from index
+    // 0 tracking line-starts, and pick the line whose [first, last]
+    // inclusive range contains `pos`.  Then count its bars.  The
+    // original (pre-insertion) count is line_count - 1 because exactly
+    // one of the bars in the owner line is the one we just inserted.
+    // If orig_count <= bpl and line_count > bpl, set is_eol on the bar
+    // at first + bpl - 1.  The old line-tail (which had is_eol=true to
+    // terminate the line in the first place, unless it was the song's
+    // last bar) keeps its flag — pushing it to the next line where it
+    // continues to end that next line.
+    //
+    // Special case: if the new bar lands on a brand-new line (because
+    // its predecessor had is_eol=true, or pos==0 and the predecessor
+    // doesn't exist), the owner line starts at pos.  Same algorithm
+    // handles this uniformly — we scan for the first line-start <= pos.
+    const unsigned bpl = song_.bars_per_line();
+    if (bpl > 0 && pos < bars.size())
     {
-        std::size_t flat = 0;
-        for (const auto& line : lines_)
+        std::size_t first = 0;
+        for (std::size_t i = 0; i < pos; ++i)
         {
-            for (const auto& bl : line.bars)
+            if (bars[i].is_eol())
+                first = i + 1;
+        }
+        // Walk forward from `first` to find the line's end (the bar
+        // with is_eol, or the song's last bar).
+        std::size_t last = bars.size() - 1;
+        for (std::size_t i = first; i < bars.size(); ++i)
+        {
+            if (bars[i].is_eol())
             {
-                if (flat == anchor_song_idx)
-                {
-                    anchor_rect  = bl.rect;
-                    anchor_found = true;
-                    break;
-                }
-                ++flat;
+                last = i;
+                break;
             }
-            if (anchor_found) break;
+        }
+        const std::size_t line_count = last - first + 1;
+        const std::size_t orig_count = line_count - 1;
+        if (orig_count <= bpl && line_count > bpl)
+        {
+            // Bar at position (first + bpl - 1) becomes the new
+            // line-tail.  If that index equals `last`, we were going
+            // to set is_eol on the bar that already has it — harmless
+            // no-op.  Otherwise this splits the line, with the
+            // original line-tail moving to a new next line where it
+            // still ends that line (its own is_eol is unchanged).
+            const std::size_t new_tail = first + bpl - 1;
+            bars[new_tail].is_eol(true);
         }
     }
-    if (!anchor_found)
-        return;   // layout doesn't currently contain the anchor
 
-    // Widen narrow rects so there's room to type — matches the editor
-    // sizing rule in edit_bar / edit_new_bar.
-    QRectF r = anchor_rect;
-    constexpr qreal k_min_editor_w = 160.0;
-    if (r.width() < k_min_editor_w)
-        r.setWidth(k_min_editor_w);
+    song_.bars(bars);
+    rebuild();
 
-    // Drop the existing selection: once the user has chosen "insert
-    // before/after", the selection is no longer the focus — the new
-    // bar is.  We'll re-select the new bar on successful commit.
-    clear_selection();
-
-    open_line_editor(r, QString(),
-        [this, insert_at](const QString& text) -> bool
-        {
-            QString trimmed = text.trimmed();
-            if (trimmed.isEmpty())
-                return false;   // revert: no empty bars in the model
-
-            // Stage on a fresh bar so a parser throw never escapes
-            // into the model.  Same pattern as edit_new_bar.
-            model::bar new_bar;
-            try
-            {
-                new_bar.parse_user_input(trimmed.toStdString());
-            }
-            catch (const std::exception&)
-            {
-                return false;
-            }
-
-            std::vector<model::bar> bars = song_.bars();
-            // Clamp insert_at: if the model has changed underneath us
-            // (shouldn't happen under the single-editor invariant, but
-            // defensive), append rather than throwing.
-            const std::size_t pos = std::min(insert_at, bars.size());
-            bars.insert(bars.begin() + pos, std::move(new_bar));
-
-            // Enforce the bars_per_line cap on the line that received
-            // the new bar.  First, locate that line in the new vector:
-            // walk forward from index 0 tracking line-starts, and pick
-            // the line whose [first, last] inclusive range contains
-            // `pos`.  Then count its bars; if the count exceeds bpl,
-            // set is_eol on the bar at first + bpl - 1.  The old
-            // line-tail (which had is_eol=true to terminate the line
-            // in the first place, unless it was the song's last bar)
-            // keeps its flag — pushing it to the next line where it
-            // continues to end that next line.
-            //
-            // Special case: if the new bar lands on a brand-new line
-            // (because its predecessor had is_eol=true, or pos==0 and
-            // the predecessor doesn't exist), the "owner line" starts
-            // at pos.  Same algorithm handles this uniformly — we
-            // scan for the first line-start <= pos.
-            const unsigned bpl = song_.bars_per_line();
-            if (bpl > 0 && pos < bars.size())
-            {
-                std::size_t first = 0;
-                for (std::size_t i = 0; i < pos; ++i)
-                {
-                    if (bars[i].is_eol())
-                        first = i + 1;
-                }
-                // Walk forward from `first` to find the line's end
-                // (the bar with is_eol, or the song's last bar).
-                std::size_t last = bars.size() - 1;
-                for (std::size_t i = first; i < bars.size(); ++i)
-                {
-                    if (bars[i].is_eol())
-                    {
-                        last = i;
-                        break;
-                    }
-                }
-                const std::size_t line_count = last - first + 1;
-                if (line_count > bpl)
-                {
-                    // Bar at position (first + bpl - 1) becomes the
-                    // new line-tail.  If that index equals `last`, we
-                    // were going to set is_eol on the bar that already
-                    // has it — harmless no-op.  Otherwise this splits
-                    // the line, with the original line-tail moving to
-                    // a new next line where it still ends that line
-                    // (its own is_eol is unchanged).
-                    const std::size_t new_tail = first + bpl - 1;
-                    bars[new_tail].is_eol(true);
-                }
-            }
-
-            song_.bars(bars);
-            rebuild();
-
-            // Leave the newly inserted bar selected so follow-up Bar
-            // menu actions (e.g. Repeat or Voltas...) act on it without
-            // requiring an extra click.
-            select_bar_only(pos);
-            return true;
-        },
-        /*placeholder=*/tr("e.g. 1 4 5"));
-
-    // We're inserting at index insert_at, so Tab-advance after a
-    // successful commit will continue onto insert_at + 1 — the bar
-    // that used to live at insert_at and got pushed up by one.  That
-    // matches the natural "keep going" expectation.
-    editing_bar_index_ = insert_at;
+    // Leave the newly inserted bar selected so follow-up Bar-menu
+    // actions (e.g. Repeat or Voltas...) act on it without requiring
+    // an extra click, and so the selection background visibly marks
+    // where the bar landed.  Deliberately *do not* open an inline
+    // editor here: the user invoked a structural-change menu item, not
+    // an edit affordance, and forcing them into edit mode would steal
+    // focus from the menu they were just using.  Clicking (or
+    // double-clicking) the new bar opens the editor via the existing
+    // mouse path.
+    select_bar_only(pos);
 }
 
 // ---------------------------------------------------------------------------
@@ -2791,6 +2824,17 @@ void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
     QAction* end_line_act = menu.addAction(tr("End line"));
     connect(end_line_act, &QAction::triggered, this, [this]() {
         apply_end_line_to_selection();
+    });
+    // Delete sits with the other structural-change items.  Mirrors the
+    // shortcut text on the menubar copy so users learn the keystroke
+    // from either path.  Qt only displays a single sequence in menu
+    // text; we pick Delete as the canonical one and leave Backspace as
+    // the unadvertised-but-functional alternate (also bound on the
+    // menubar action — both paths reach the same slot).
+    QAction* delete_act = menu.addAction(tr("Delete"));
+    delete_act->setShortcut(QKeySequence(Qt::Key_Delete));
+    connect(delete_act, &QAction::triggered, this, [this]() {
+        apply_delete_to_selection();
     });
     menu.addSeparator();
 

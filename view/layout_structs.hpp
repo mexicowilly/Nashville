@@ -58,13 +58,24 @@ struct line_layout
 };
 
 // Where a new bar may be inserted by clicking an empty "ghost" rectangle.
-// At most three kinds exist; at any moment the layout has 0, 1, or 2 slots:
+// Slots are placed by compute_insertion_slots; their kind determines what
+// the click does, their insert_at gives the song-bar index where the new
+// bar lands on commit.
 //   * first_bar  — empty song; appending creates the song's first bar.
-//   * same_line  — append after the last bar, on the same visual line.
-//                  Requires clearing is_eol on the previous last bar so the
-//                  new bar joins it rather than starting a new line.
-//   * next_line  — append below the last line.  Requires setting is_eol on
-//                  the previous last bar so the new bar starts a new line.
+//                  insert_at is 0.
+//   * same_line  — extend a specific line by one bar.  The line is the
+//                  one whose last bar lives at insert_at - 1 in the song
+//                  vector.  Commit transfers is_eol from that previous
+//                  tail to the new bar (so the line still ends in the
+//                  right place, just with one more bar in it).  Slots of
+//                  this kind appear at the right edge of every line —
+//                  not only the last line of the song — so any line can
+//                  be extended via the mouse.
+//   * next_line  — append below the last line of the song.  insert_at is
+//                  bars.size().  Requires setting is_eol on the previous
+//                  last bar so the new bar starts a new line.  Only ever
+//                  generated for the last line — middle lines already
+//                  have a next line, so no affordance is needed.
 enum class insertion_slot_kind
 {
     first_bar,
@@ -76,6 +87,10 @@ struct insertion_slot
 {
     QRectF rect;
     insertion_slot_kind kind = insertion_slot_kind::first_bar;
+    // Song-bar index where the new bar lands on commit.  For first_bar
+    // this is 0; for next_line this is bars.size(); for same_line this
+    // is (line's last bar's song index) + 1.
+    std::size_t insert_at = 0;
 };
 
 } // namespace nashville::view

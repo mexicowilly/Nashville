@@ -50,6 +50,7 @@
     <addaction name="actionInsertBefore"/>
     <addaction name="actionInsertAfter"/>
     <addaction name="actionEndLine"/>
+    <addaction name="actionDelete"/>
     <addaction name="separator"/>
     <addaction name="menuRepeat"/>
     <addaction name="actionVoltas"/>
@@ -110,6 +111,11 @@
   <action name="actionEndLine">
    <property name="text">
     <string>End line</string>
+   </property>
+  </action>
+  <action name="actionDelete">
+   <property name="text">
+    <string>Delete</string>
    </property>
   </action>
  </widget>

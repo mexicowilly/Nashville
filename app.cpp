@@ -4,6 +4,8 @@
 #include "view/song_body_widget.hpp"
 #include <QVBoxLayout>
 #include <QActionGroup>
+#include <QKeySequence>
+#include <QList>
 
 namespace nashville
 {
@@ -86,6 +88,33 @@ void app::wire_bar_menu()
     QObject::connect(nashville_win_.actionEndLine, &QAction::triggered,
         [body]() { body->apply_end_line_to_selection(); });
 
+    // Delete responds to either the Del or Backspace key — both read as
+    // "remove selection" to most users, and they're equally common on
+    // different keyboards (Mac laptops lack a dedicated forward-Delete).
+    // QAction takes a *list* of shortcuts; the .ui's single <shortcut>
+    // tag can only carry one sequence, so we assign the list in code.
+    // Action is parented to the main window with WindowShortcut context
+    // (the QAction default) so the shortcut fires from anywhere in the
+    // window — including the chart widget, which holds focus while the
+    // user is selecting bars — but is suppressed while an inline editor
+    // has focus, because that editor's QLineEdit consumes its own key
+    // events.
+    //
+    // Deliberately NOT gated by has_selection() in the aboutToShow
+    // sync below: the keyboard shortcut should fire any time the user
+    // presses Del/Backspace with a bar selected, but a QAction's
+    // shortcut is suppressed when the action is disabled.  Gating it
+    // lazily on menu-show would leave the shortcut dead between
+    // selection changes that don't pass through the menu.  Instead the
+    // action stays enabled and apply_delete_to_selection() early-
+    // returns on empty selection — same pattern as Ctrl+C/X/V, which
+    // are no-ops without a selection rather than disabled outright.
+    nashville_win_.actionDelete->setShortcuts(
+        QList<QKeySequence>{ QKeySequence(Qt::Key_Delete),
+                             QKeySequence(Qt::Key_Backspace) });
+    QObject::connect(nashville_win_.actionDelete, &QAction::triggered,
+        [body]() { body->apply_delete_to_selection(); });
+
     // Sync the Repeat submenu's checkmarks and the "Bar" menu's overall
     // enabled state whenever the menus are about to appear.  Doing the
     // sync lazily (on aboutToShow rather than on every selection change)
@@ -100,6 +129,10 @@ void app::wire_bar_menu()
             nashville_win_.actionInsertBefore->setEnabled(sel);
             nashville_win_.actionInsertAfter->setEnabled(sel);
             nashville_win_.actionEndLine->setEnabled(sel);
+            // actionDelete is intentionally NOT gated here — see
+            // its setShortcuts site above for the reasoning.  Its
+            // menu item still shows "Delete" with no selection; a
+            // click on it is harmlessly a no-op.
             nashville_win_.menuRepeat->setEnabled(sel);
             nashville_win_.actionVoltas->setEnabled(sel);
         });

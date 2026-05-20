@@ -132,10 +132,13 @@ public:
     // actually appended to the model if the user commits non-empty,
     // parseable input — matching edit_new_bar's "no empty bars in the
     // model" rule.  Honours the song's bars_per_line preference: if
-    // the line that receives the new bar would exceed bars_per_line,
-    // an is_eol is planted at the bars_per_line'th bar of that line,
-    // pushing the rest onto a new line.  No-op when the selection is
-    // empty.
+    // the line that receives the new bar wasn't already extended past
+    // bars_per_line and the insertion would push it over, an is_eol is
+    // planted at the bars_per_line'th bar of that line, pushing the
+    // rest onto a new line.  Lines already extended past bars_per_line
+    // (authored deliberately) keep extending — the insert grows the
+    // extension by one rather than splitting it.  No-op when the
+    // selection is empty.
     void insert_bar_relative_to_selection(bool after);
 
     // Sets is_eol = true on every selected bar.  Idempotent — bars
@@ -144,6 +147,14 @@ public:
     // driven actions: both the right-click context menu and the
     // menubar's "Bar > End line" action invoke it.
     void apply_end_line_to_selection();
+
+    // Removes every selected bar from the song.  No-op when the
+    // selection is empty.  Public so the menubar's "Bar > Delete"
+    // action (and its Del/Backspace shortcut) and the right-click
+    // context menu can both invoke it on the same selection the user
+    // sees highlighted.  The internal cut_selection() path also routes
+    // through this — there's one delete implementation.
+    void apply_delete_to_selection() { delete_selection(); }
 
 protected:
     void paintEvent(QPaintEvent* event) override;

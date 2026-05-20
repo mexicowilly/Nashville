@@ -85,6 +85,16 @@ private:
     // Bars without a time sig leave this space empty so chord columns stay aligned.
     static constexpr qreal k_time_sig_slot_w = 20.0;
 
+    // Width given to the (otherwise zero-width) chord row of an empty
+    // bar — i.e. one with no chords yet, as produced by the "Insert 1
+    // before/after" menu actions.  Sized to roughly one chord-glyph
+    // worth of horizontal space so the new bar reads as a recognisable
+    // column in the layout and is comfortably click-able once the user
+    // decides to edit it.  A genuinely zero-width slot would only show
+    // through k_bar_padding as a thin gap, which isn't enough visual
+    // signal that a bar landed there.
+    static constexpr qreal k_empty_bar_chord_slot_w = 20.0;
+
     // Horizontal gap between chords within a bar
     static constexpr qreal k_inter_chord_spacing = 6.0;
 };
