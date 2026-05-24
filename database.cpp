@@ -2,6 +2,14 @@
 #include <cassert>
 #include <cstdlib>
 #include <algorithm>
+#include <map>
+// Annotation binding/reading uses these directly; they're pulled in
+// transitively via model/annotations.hpp, but listing them explicitly
+// documents the dependency.
+#include <QPointF>
+#include <QRectF>
+#include <QString>
+#include <QByteArray>
 
 using namespace std::string_literals;
 
@@ -99,6 +107,53 @@ CREATE TABLE IF NOT EXISTS playlist_songs
 );
 
 CREATE INDEX IF NOT EXISTS playlist_id_index ON playlist_songs(playlist_id, song_index);
+
+CREATE TABLE IF NOT EXISTS text_box
+(
+    id INTEGER PRIMARY KEY,
+    song_id INTEGER NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    w REAL NOT NULL,
+    h REAL NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(song_id) REFERENCES song(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS text_box_song_id_index ON text_box(song_id);
+
+CREATE TABLE IF NOT EXISTS connector
+(
+    id INTEGER PRIMARY KEY,
+    song_id INTEGER NOT NULL,
+    -- Free-endpoint coordinates.  Used only when the corresponding
+    -- start_text_box_id / end_text_box_id is NULL; otherwise these
+    -- still get persisted (as the last-known resolved position) so
+    -- a defensive read can fall back if the referenced text box has
+    -- somehow gone missing, but they're authoritative only for
+    -- free endpoints.
+    x1 REAL NOT NULL,
+    y1 REAL NOT NULL,
+    x2 REAL NOT NULL,
+    y2 REAL NOT NULL,
+    arrow_start INTEGER NOT NULL DEFAULT 0,
+    arrow_end   INTEGER NOT NULL DEFAULT 1,
+    -- Anchor references.  NULL means "this endpoint is free; use the
+    -- xN/yN coordinates."  NOT NULL means "glued to this text box's
+    -- nth anchor (0..7)."  The FK uses ON DELETE SET NULL so that
+    -- when a text box is removed at the database level (e.g. via
+    -- some path that bypasses the in-memory annotations layer), the
+    -- connector survives with the endpoint converted to free.
+    start_text_box_id INTEGER,
+    start_anchor_index INTEGER,
+    end_text_box_id INTEGER,
+    end_anchor_index INTEGER,
+    FOREIGN KEY(song_id) REFERENCES song(id) ON DELETE CASCADE,
+    FOREIGN KEY(start_text_box_id) REFERENCES text_box(id) ON DELETE SET NULL,
+    FOREIGN KEY(end_text_box_id)   REFERENCES text_box(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS connector_song_id_index ON connector(song_id);
 )";
 
 const char* SELECT_CHORD_SQL = R"(
@@ -274,6 +329,39 @@ const char* REMOVE_PLAYLIST_SQL = R"(
 DELETE FROM playlist WHERE name = ?1;
 )";
 
+// --- Annotation persistence -------------------------------------------------
+// One row per text box / connector, FK'd to song with ON DELETE CASCADE.
+// Coordinates are stored in song-local space (see annotation_layer for
+// the convention) as REAL.  Connectors' arrow_* flags are stored as
+// INTEGER booleans (0/1), same convention as bar.is_eol etc.
+
+const char* INSERT_TEXT_BOX_SQL = R"(
+INSERT INTO text_box (song_id, x, y, w, h, text)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+RETURNING id;
+)";
+
+const char* SELECT_SONG_TEXT_BOXES_SQL = R"(
+SELECT id, x, y, w, h, text FROM text_box WHERE song_id = ?1 ORDER BY id;
+)";
+
+const char* INSERT_CONNECTOR_SQL = R"(
+INSERT INTO connector
+    (song_id, x1, y1, x2, y2, arrow_start, arrow_end,
+     start_text_box_id, start_anchor_index,
+     end_text_box_id,   end_anchor_index)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+RETURNING id;
+)";
+
+const char* SELECT_SONG_CONNECTORS_SQL = R"(
+SELECT id, x1, y1, x2, y2, arrow_start, arrow_end,
+       start_text_box_id, start_anchor_index,
+       end_text_box_id,   end_anchor_index
+FROM connector
+WHERE song_id = ?1 ORDER BY id;
+)";
+
 }
 
 namespace nashville
@@ -413,6 +501,10 @@ database::database(const std::filesystem::path& file_name)
             { statement::REMOVE_BAR,             REMOVE_BAR_SQL },
             { statement::REMOVE_SONG,            REMOVE_SONG_SQL },
             { statement::REMOVE_PLAYLIST,        REMOVE_PLAYLIST_SQL },
+            { statement::INSERT_TEXT_BOX,        INSERT_TEXT_BOX_SQL },
+            { statement::SELECT_SONG_TEXT_BOXES, SELECT_SONG_TEXT_BOXES_SQL },
+            { statement::INSERT_CONNECTOR,       INSERT_CONNECTOR_SQL },
+            { statement::SELECT_SONG_CONNECTORS, SELECT_SONG_CONNECTORS_SQL },
         };
 
         for (const auto& d : defs)
@@ -647,6 +739,135 @@ void database::insert_song(const model::song& s)
         }
         insert_song_bar(song_id, bar_id, i);
     }
+
+    // --- Annotations ---
+    // Same transaction, so a half-written annotation set won't leave a
+    // partially-saved song.  Text boxes first then connectors —
+    // connectors may have endpoints glued to text boxes, so we need
+    // the text-box rows (and their RETURNING-assigned database ids)
+    // before we can bind anchor references on the connector rows.
+    // FK to song(id) is in place by this point (song_id came from the
+    // INSERT above), so no FK violations are possible.
+    //
+    // text_box_id_map maps in-memory annotation ids to the database
+    // rowids SQLite assigns on RETURNING.  These will usually differ
+    // (the in-memory ids come from annotations::next_id_, which is
+    // session-local; the database picks its own).  We only need the
+    // map within this transaction, and connectors that reference
+    // text-box ids read from this map.
+    std::map<std::uint64_t, std::uint64_t> text_box_id_map;
+    {
+        auto& ins_tb = prepared_statements_[statement::INSERT_TEXT_BOX];
+        for (const auto& tb : s.annotations().text_boxes())
+        {
+            ins_tb->reset();
+            auto tb_raw = ins_tb->ptr();
+            sqlite3_bind_int64 (tb_raw, 1, song_id);
+            sqlite3_bind_double(tb_raw, 2, tb.rect.x());
+            sqlite3_bind_double(tb_raw, 3, tb.rect.y());
+            sqlite3_bind_double(tb_raw, 4, tb.rect.width());
+            sqlite3_bind_double(tb_raw, 5, tb.rect.height());
+            const QByteArray txt = tb.text.toUtf8();
+            // SQLITE_TRANSIENT because the QByteArray dies at end of
+            // scope; SQLite copies the bytes for us.
+            sqlite3_bind_text  (tb_raw, 6, txt.constData(), txt.size(),
+                                SQLITE_TRANSIENT);
+            auto rc_tb = sqlite3_step(tb_raw);
+            if (rc_tb != SQLITE_ROW)
+                throw std::runtime_error(
+                    "Could not insert text_box for song '"s + s.name()
+                    + "': " + sqlite3_errstr(rc_tb));
+            const std::uint64_t db_id = sqlite3_column_int64(tb_raw, 0);
+            text_box_id_map[tb.id] = db_id;
+        }
+    }
+    {
+        auto& ins_c = prepared_statements_[statement::INSERT_CONNECTOR];
+        for (const auto& c : s.annotations().connectors())
+        {
+            ins_c->reset();
+            auto c_raw = ins_c->ptr();
+            sqlite3_bind_int64 (c_raw, 1, song_id);
+
+            // For each endpoint: write the resolved free-position
+            // coordinates (so a defensive reader has a fallback) plus
+            // the anchor reference if applicable.  Resolved positions
+            // for glued endpoints come from the model's
+            // resolver-of-record — which is the same lambda the view
+            // installed on the model at startup, executed via
+            // anchor_resolver.  But the database layer doesn't have
+            // that lambda in scope; the natural place to compute the
+            // fallback xN/yN for glued endpoints is the model itself.
+            // We do it here inline because the geometry is trivial
+            // (the 8 anchor positions on a known QRectF) — duplicating
+            // it across two layers is cheaper than plumbing a callback.
+            auto fallback_xy =
+                [&](const model::connector_endpoint& ep) -> QPointF {
+                    if (ep.k == model::connector_endpoint::kind::free)
+                        return ep.free_pos;
+                    const auto* tb = s.annotations().find_text_box(ep.text_box_id);
+                    if (!tb || ep.anchor_index >= 8)
+                        return QPointF(0, 0);
+                    const QRectF& r = tb->rect;
+                    const qreal cx = r.center().x(), cy = r.center().y();
+                    switch (ep.anchor_index)
+                    {
+                    case 0: return { r.left(),  r.top()    };
+                    case 1: return { cx,        r.top()    };
+                    case 2: return { r.right(), r.top()    };
+                    case 3: return { r.right(), cy         };
+                    case 4: return { r.right(), r.bottom() };
+                    case 5: return { cx,        r.bottom() };
+                    case 6: return { r.left(),  r.bottom() };
+                    case 7: return { r.left(),  cy         };
+                    }
+                    return QPointF(0, 0);
+                };
+            const QPointF s_xy = fallback_xy(c.start);
+            const QPointF e_xy = fallback_xy(c.end);
+            sqlite3_bind_double(c_raw, 2, s_xy.x());
+            sqlite3_bind_double(c_raw, 3, s_xy.y());
+            sqlite3_bind_double(c_raw, 4, e_xy.x());
+            sqlite3_bind_double(c_raw, 5, e_xy.y());
+            sqlite3_bind_int   (c_raw, 6, c.arrow_at_start ? 1 : 0);
+            sqlite3_bind_int   (c_raw, 7, c.arrow_at_end   ? 1 : 0);
+
+            // Anchor references: bind NULL for free endpoints, the
+            // mapped DB id and anchor index for glued ones.  If a
+            // glued endpoint references a text box we didn't insert
+            // (defensive — every glued endpoint's box should be in
+            // the same annotations set), we treat it as free.  Both
+            // text_box_id and anchor_index columns go together — we
+            // either bind both or NULL both.
+            auto bind_anchor_ref =
+                [&](int id_col, int idx_col,
+                    const model::connector_endpoint& ep) {
+                    if (ep.k == model::connector_endpoint::kind::text_box_anchor)
+                    {
+                        auto it = text_box_id_map.find(ep.text_box_id);
+                        if (it != text_box_id_map.end())
+                        {
+                            sqlite3_bind_int64(c_raw, id_col,
+                                               static_cast<sqlite3_int64>(it->second));
+                            sqlite3_bind_int  (c_raw, idx_col,
+                                               static_cast<int>(ep.anchor_index));
+                            return;
+                        }
+                    }
+                    sqlite3_bind_null(c_raw, id_col);
+                    sqlite3_bind_null(c_raw, idx_col);
+                };
+            bind_anchor_ref(8, 9, c.start);
+            bind_anchor_ref(10, 11, c.end);
+
+            auto rc_c = sqlite3_step(c_raw);
+            if (rc_c != SQLITE_ROW)
+                throw std::runtime_error(
+                    "Could not insert connector for song '"s + s.name()
+                    + "': " + sqlite3_errstr(rc_c));
+        }
+    }
+
     tx.commit();
     if (inserted_new)
         lgr()->debug("Inserted new song '{}'", s.name());
@@ -1012,14 +1233,84 @@ model::song database::select_song(const std::string& name)
     auto rc = sqlite3_step(raw);
     if (rc == SQLITE_ROW)
     {
+        const std::uint64_t song_id = sqlite3_column_int64(raw, 0);
         found.key(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
         found.bars_per_line(sqlite3_column_int(raw, 2));
         found.tempo(std::make_tuple(sqlite3_column_int(raw, 3), static_cast<model::chord::time>(sqlite3_column_int(raw, 4))));
-        found.bars(select_bars(sqlite3_column_int64(raw, 0)));
+        found.bars(select_bars(song_id));
         model::time_signature ts;
         ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(raw, 5)))
           .count(sqlite3_column_int(raw, 6));
         found.time_sig(ts);
+
+        // --- Annotations ---
+        // Pulled into local vectors first because annotations::load()
+        // takes them by value and reseeds next_id_ in a single shot.
+        // Handing rows in piecemeal would force us to manage next_id_
+        // here, duplicating logic that already lives in the model.
+        std::vector<model::text_box>  tbs;
+        std::vector<model::connector> conns;
+        {
+            auto& sel_tb = prepared_statements_[statement::SELECT_SONG_TEXT_BOXES];
+            sel_tb->reset();
+            auto tb_raw = sel_tb->ptr();
+            sqlite3_bind_int64(tb_raw, 1, song_id);
+            while (sqlite3_step(tb_raw) == SQLITE_ROW)
+            {
+                model::text_box tb;
+                tb.id   = sqlite3_column_int64(tb_raw, 0);
+                tb.rect = QRectF(sqlite3_column_double(tb_raw, 1),
+                                 sqlite3_column_double(tb_raw, 2),
+                                 sqlite3_column_double(tb_raw, 3),
+                                 sqlite3_column_double(tb_raw, 4));
+                tb.text = QString::fromUtf8(
+                    reinterpret_cast<const char*>(sqlite3_column_text(tb_raw, 5)));
+                tbs.push_back(std::move(tb));
+            }
+        }
+        {
+            auto& sel_c = prepared_statements_[statement::SELECT_SONG_CONNECTORS];
+            sel_c->reset();
+            auto c_raw = sel_c->ptr();
+            sqlite3_bind_int64(c_raw, 1, song_id);
+            while (sqlite3_step(c_raw) == SQLITE_ROW)
+            {
+                model::connector c;
+                c.id = sqlite3_column_int64(c_raw, 0);
+
+                // Free-endpoint fallback positions; for glued
+                // endpoints these are also written (as the last-known
+                // resolved position), but we use them only when the
+                // anchor refs are NULL or the referenced text box
+                // doesn't exist in the just-loaded set.
+                const QPointF s_xy(sqlite3_column_double(c_raw, 1),
+                                   sqlite3_column_double(c_raw, 2));
+                const QPointF e_xy(sqlite3_column_double(c_raw, 3),
+                                   sqlite3_column_double(c_raw, 4));
+                c.arrow_at_start = sqlite3_column_int(c_raw, 5) != 0;
+                c.arrow_at_end   = sqlite3_column_int(c_raw, 6) != 0;
+
+                // Reconstruct each endpoint.  Columns 7/8 are start
+                // anchor (text_box_id, anchor_index), columns 9/10
+                // are end.  NULL in either of the pair means "free."
+                auto rebuild_endpoint =
+                    [&](int id_col, int idx_col, const QPointF& fallback) {
+                        if (sqlite3_column_type(c_raw, id_col)  == SQLITE_NULL ||
+                            sqlite3_column_type(c_raw, idx_col) == SQLITE_NULL)
+                        {
+                            return model::connector_endpoint::make_free(fallback);
+                        }
+                        const std::uint64_t tb_id = sqlite3_column_int64(c_raw, id_col);
+                        const unsigned idx = static_cast<unsigned>(
+                            sqlite3_column_int(c_raw, idx_col));
+                        return model::connector_endpoint::make_anchor(tb_id, idx);
+                    };
+                c.start = rebuild_endpoint(7, 8, s_xy);
+                c.end   = rebuild_endpoint(9, 10, e_xy);
+                conns.push_back(c);
+            }
+        }
+        found.annotations().load(std::move(tbs), std::move(conns));
     }
     else
     {

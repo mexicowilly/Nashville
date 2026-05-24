@@ -34,6 +34,9 @@
     <property name="title">
      <string>Song</string>
     </property>
+    <addaction name="actionInsertTextBox"/>
+    <addaction name="actionInsertLine"/>
+    <addaction name="actionInsertArrow"/>
    </widget>
    <widget class="QMenu" name="menuBar">
     <property name="title">
@@ -116,6 +119,21 @@
   <action name="actionDelete">
    <property name="text">
     <string>Delete</string>
+   </property>
+  </action>
+  <action name="actionInsertTextBox">
+   <property name="text">
+    <string>Insert text box</string>
+   </property>
+  </action>
+  <action name="actionInsertLine">
+   <property name="text">
+    <string>Insert line</string>
+   </property>
+  </action>
+  <action name="actionInsertArrow">
+   <property name="text">
+    <string>Insert arrow</string>
    </property>
   </action>
  </widget>

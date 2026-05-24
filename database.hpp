@@ -56,7 +56,15 @@ private:
         REMOVE_BAR,
         REMOVE_CHORD,
         SELECT_CHORD_NOT_IN_BAR,
-        REMOVE_PLAYLIST
+        REMOVE_PLAYLIST,
+        // Annotation persistence: text boxes and straight-line
+        // connectors live in their own tables that cascade-delete on
+        // song removal (ON DELETE CASCADE in the schema).  See the
+        // INSERT_* / SELECT_SONG_* SQL constants in database.cpp.
+        INSERT_TEXT_BOX,
+        SELECT_SONG_TEXT_BOXES,
+        INSERT_CONNECTOR,
+        SELECT_SONG_CONNECTORS
     };
 
     class prepared

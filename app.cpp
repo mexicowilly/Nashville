@@ -32,6 +32,7 @@ app::app(int argc, char* argv[])
     song_widget_ = new view::song_widget(*s);
     vl->addWidget(song_widget_);
     wire_bar_menu();
+    wire_song_menu();
     main_win_.setFocus();
     main_win_.show();
 }
@@ -159,6 +160,41 @@ void app::wire_bar_menu()
 int app::run()
 {
     return qapp_.exec();
+}
+
+// ---------------------------------------------------------------------------
+// wire_song_menu
+// ---------------------------------------------------------------------------
+// The Song menu carries three Insert actions: Insert text box, Insert
+// line, Insert arrow.  Each puts the body widget into a non-default
+// click-handling mode where dragging on the canvas creates the
+// corresponding annotation, after which the tool returns to bar mode
+// automatically.  This is one-shot, not a sticky toggle: clicking
+// "Insert line" arms the line tool, the user draws one line (or
+// cancels with Esc), and the tool deactivates without leaving a
+// persistent checkmark in the menu.  The actions are *not* in a
+// QActionGroup and *not* checkable — there's no "I'm in line mode
+// now" state to display.  The one-shot reset itself happens in
+// annotation_layer::mouse_release and ::key_press (Esc) — they call
+// set_tool(tool::none) after a successful drop or a cancel.
+//
+// Line and Arrow are separate tool modes that share a single drag
+// state machine inside annotation_layer.  They produce different
+// connector geometry: Line yields a connector with no arrowheads,
+// Arrow yields one with arrow_at_end=true.  The model::connector
+// struct already stores both flags, so this is a tool-level
+// distinction with no model changes required.
+void app::wire_song_menu()
+{
+    using tool = view::annotation_layer::tool;
+    auto* body = song_widget_->body();
+
+    QObject::connect(nashville_win_.actionInsertTextBox, &QAction::triggered,
+        [body]() { body->set_annotation_tool(tool::text_box); });
+    QObject::connect(nashville_win_.actionInsertLine, &QAction::triggered,
+        [body]() { body->set_annotation_tool(tool::line); });
+    QObject::connect(nashville_win_.actionInsertArrow, &QAction::triggered,
+        [body]() { body->set_annotation_tool(tool::arrow); });
 }
 
 }

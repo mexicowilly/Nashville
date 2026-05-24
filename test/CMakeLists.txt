@@ -3,6 +3,8 @@ enable_testing()
 find_package(GTest REQUIRED)
 
 add_executable(unit-test
+    ../model/annotations.cpp
+    ../model/annotations.hpp
     ../model/bar.cpp
     ../model/chord.cpp
     ../model/song.cpp
@@ -11,6 +13,7 @@ add_executable(unit-test
     ../sqlite3.c
     ../loggable.cpp
     ../loggable.hpp
+    annotations.cpp
     bar.cpp
     chord.cpp
     database.cpp

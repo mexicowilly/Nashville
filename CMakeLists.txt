@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 #if (CMAKE_COMPILER_ID STREQUAL Clang AND CMAKE_SYSTEM_NAME STREQUAL Linux)
-    #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")   
+    #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
 #endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -29,6 +29,8 @@ qt_add_executable(nashville
     database.hpp
     loggable.cpp
     loggable.hpp
+    model/annotations.cpp
+    model/annotations.hpp
     model/bar.cpp
     model/bar.hpp
     model/chord.cpp
@@ -43,6 +45,8 @@ qt_add_executable(nashville
     nashville.ui
     sqlite3.c
     sqlite3.h
+    view/annotation_layer.cpp
+    view/annotation_layer.hpp
     view/bar_renderer.cpp
     view/bar_renderer.hpp
     view/chord_renderer.cpp

@@ -24,6 +24,11 @@ private:
     // QActionGroup / aboutToShow plumbing in one place.
     void wire_bar_menu();
 
+    // Wires the three Insert actions in the "Song" menu (text box,
+    // line, arrow) to the body widget's annotation tool mode.  Same
+    // one-place rationale as wire_bar_menu.
+    void wire_song_menu();
+
     QApplication qapp_;
     QMainWindow main_win_;
     Ui::window nashville_win_;

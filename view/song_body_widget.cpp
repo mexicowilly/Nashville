@@ -8,6 +8,7 @@
 #include <QFontDatabase>
 #include <QApplication>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QMenu>
 #include <QAction>
 #include <QActionGroup>
@@ -27,7 +28,25 @@ static const QColor k_placeholder_color(150, 150, 150);
 // Construction
 // ---------------------------------------------------------------------------
 song_body_widget::song_body_widget(model::song& song, QWidget* parent)
-    : QWidget(parent), song_(song)
+    : QWidget(parent),
+      song_(song),
+      // annotation_layer_ must follow song_ in the init list because it
+      // captures song_.annotations() by reference.  The chart-content
+      // rect supplier re-derives the rect on each call using current
+      // widget metrics — the same expression rebuild() uses below — so
+      // we automatically track resize and margin-drag without any
+      // signal/slot plumbing.
+      annotation_layer_(
+          song.annotations(),
+          lines_,
+          [this]() {
+              const qreal th = title_height();
+              return QRectF(
+                  margin_width_ + k_content_padding,
+                  th + k_content_padding,
+                  std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
+                  std::max(0.0, height() - th - k_content_padding * 2));
+          })
 {
     setMouseTracking(true);
     // StrongFocus so the widget receives key events for Esc/clipboard
@@ -36,6 +55,57 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     // widget (toolbar, sidebar) the user may have last interacted with.
     setFocusPolicy(Qt::StrongFocus);
     init_fonts();
+
+    // Wire the annotation layer's text-editing requests through to our
+    // existing inline-editor plumbing.  We don't give the layer its own
+    // QLineEdit — sharing the widget's lets Esc/focus/Tab behaviour stay
+    // consistent across every editable surface in the chart.
+    annotation_layer_.set_edit_text_callback(
+        [this](std::uint64_t id, const QRectF& rect) {
+            edit_text_box(id, rect);
+        });
+    // Pick a font for text-box contents that reads as "annotative" next
+    // to the chart: smaller than the chord-number font but in the same
+    // family, so annotations look native rather than imported.  75%
+    // size matches the section-label convention elsewhere; clamp at 8pt
+    // because Qt's font hinting falls apart below that.
+    QFont tb_font = fonts_.number;
+    tb_font.setPointSize(std::max(8, int(tb_font.pointSize() * 0.75)));
+    annotation_layer_.set_text_font(tb_font);
+
+    // Install an anchor resolver on the annotations model.  The model
+    // needs this when a text box is removed: any connector endpoints
+    // glued to that box are converted to free endpoints at the
+    // anchor's last-known position, which requires the same anchor
+    // geometry the view uses for painting.  We compute the position
+    // in song-local coords (because annotation endpoints store song-
+    // local positions when free), but the resolver runs through the
+    // view's text_box_anchors() helper which returns widget coords,
+    // so we sub off the chart-content origin to convert.
+    song.annotations().set_anchor_resolver(
+        [this](std::uint64_t tb_id, unsigned idx) -> QPointF {
+            const auto* tb = song_.annotations().find_text_box(tb_id);
+            if (!tb || idx >= 8)
+                return QPointF(0, 0);
+            // Compute the anchor in song-local coords directly from
+            // tb->rect: same 8-point formula as text_box_anchors but
+            // in song space, no widget-coord conversion needed.
+            const QRectF& r = tb->rect;
+            const qreal cx = r.center().x(), cy = r.center().y();
+            switch (idx)
+            {
+            case 0: return QPointF(r.left(),  r.top());     // NW
+            case 1: return QPointF(cx,        r.top());     // N
+            case 2: return QPointF(r.right(), r.top());     // NE
+            case 3: return QPointF(r.right(), cy);          // E
+            case 4: return QPointF(r.right(), r.bottom()); // SE
+            case 5: return QPointF(cx,        r.bottom()); // S
+            case 6: return QPointF(r.left(),  r.bottom()); // SW
+            case 7: return QPointF(r.left(),  cy);          // W
+            }
+            return QPointF(0, 0);
+        });
+
     rebuild();
 }
 
@@ -860,11 +930,15 @@ void song_body_widget::paintEvent(QPaintEvent*)
     // the cursor enters them.  Skipped while an inline editor is open
     // because the editor visually replaces the slot for the duration of
     // the edit, and skipped during divider drag to avoid distracting
-    // flicker.
+    // flicker.  Also skipped while an annotation tool is active: the
+    // user is placing annotations, and a dashed bar-insertion ghost
+    // would compete visually with the rubber-band / anchor dots.
+    const bool tool_active = annotation_layer_.tool_active();
     if (hovered_slot_ >= 0
         && hovered_slot_ < static_cast<int>(insertion_slots_.size())
         && !active_editor_
-        && !dragging_divider_)
+        && !dragging_divider_
+        && !tool_active)
     {
         paint_insertion_slot(painter, insertion_slots_[hovered_slot_]);
     }
@@ -872,11 +946,13 @@ void song_body_widget::paintEvent(QPaintEvent*)
     // Empty section gutter hover: draw a dashed outline matching the
     // would-be label box so the user can see the click target.  Lines
     // that already carry a section label use their painted box as the
-    // affordance — no extra outline.
+    // affordance — no extra outline.  Same suppression when a tool is
+    // active.
     if (hovered_empty_section_line_ >= 0
         && hovered_empty_section_line_ < static_cast<int>(lines_.size())
         && !active_editor_
-        && !dragging_divider_)
+        && !dragging_divider_
+        && !tool_active)
     {
         const auto& col_rect = lines_[hovered_empty_section_line_].section_col_rect;
         if (col_rect.width() > 0.0)
@@ -889,6 +965,18 @@ void song_body_widget::paintEvent(QPaintEvent*)
             painter.restore();
         }
     }
+
+    // Annotation overlay sits on top of bar chrome but below the inline
+    // editor (which Qt paints as a child widget, automatically on top).
+    // Two passes:
+    //   * paint() draws committed annotations — text boxes first, then
+    //     connectors above them so an arrow that lands on a text box's
+    //     border has its tip visible at the boundary.
+    //   * paint_overlay() draws live drag visuals: the rubber-band line
+    //     or box, anchor dots on text boxes / line edges (only during
+    //     an endpoint drag), and the hovered-anchor highlight.
+    annotation_layer_.paint(painter);
+    annotation_layer_.paint_overlay(painter);
 }
 
 // ---------------------------------------------------------------------------
@@ -1202,6 +1290,27 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // Annotation layer gets first crack at the click.  It claims:
+    //   * any click while a non-none tool is active (creating new
+    //     annotations or initiating drags on empty canvas);
+    //   * clicks that land on an existing annotation, even in bar mode,
+    //     so the user can interact with annotations they previously
+    //     placed without first switching tools (matches Google
+    //     Drawings — you can grab a line you drew earlier regardless
+    //     of which tool's selected).
+    // When the layer takes a selection on an annotation we also clear
+    // the bar selection so the two systems don't both highlight at
+    // once.
+    if (annotation_layer_.mouse_press(event->pos(),
+                                      event->button(),
+                                      event->modifiers()))
+    {
+        if (annotation_layer_.has_selection())
+            clear_selection();
+        update();
+        return;
+    }
+
     const QPointF p = event->pos();
     const Qt::KeyboardModifiers mods = event->modifiers();
     const bool ctrl  = mods.testFlag(Qt::ControlModifier);
@@ -1286,6 +1395,17 @@ void song_body_widget::mouseDoubleClickEvent(QMouseEvent* event)
 
     const QPointF p = event->pos();
 
+    // Annotation double-click (e.g. on a text box → open its inline
+    // editor) gets first refusal.  We test this before the bar
+    // double-click path because text boxes can overlay bars, and the
+    // user's intent on double-clicking a visible text box is to edit
+    // its text, not the bar underneath.
+    if (annotation_layer_.mouse_double_click(p))
+    {
+        update();
+        return;
+    }
+
     // Only existing-bar double-clicks are special.  Everywhere else,
     // forward to the press handler so the first-click affordances on
     // title / margin / section / insertion-slot keep working when the
@@ -1331,6 +1451,36 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
             rebuild();
         }
         return;
+    }
+
+    // If the annotation layer has a drag in flight, it consumes every
+    // move and we repaint to advance the rubber-band.  Otherwise, if a
+    // tool is active, the layer still gets to dictate the cursor
+    // (crosshair for empty canvas, resize cursor over a handle, etc.)
+    // and we bypass the bar-hover affordances.
+    if (annotation_layer_.mouse_move(event->pos()))
+    {
+        update();
+        return;
+    }
+    if (annotation_layer_.tool_active())
+    {
+        setCursor(annotation_layer_.cursor_for(event->pos()));
+        bool changed = false;
+        if (hovered_slot_ != -1)               { hovered_slot_ = -1;               changed = true; }
+        if (hovered_empty_section_line_ != -1) { hovered_empty_section_line_ = -1; changed = true; }
+        if (changed) update();
+        return;
+    }
+    // Even in bar mode, a hover over an existing annotation should show
+    // a move / resize cursor.  cursor_for returns ArrowCursor for empty
+    // canvas in bar mode, so this is a cheap short-circuit.
+    Qt::CursorShape ann_cur = annotation_layer_.cursor_for(event->pos());
+    if (ann_cur != Qt::ArrowCursor)
+    {
+        setCursor(ann_cur);
+        // Don't return here — we still want the rest of the hover
+        // logic to clear any bar-side outlines that may be lingering.
     }
 
     // Helper: drop any outline-bearing hover state and repaint if needed.
@@ -1399,6 +1549,13 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
         { hovered_slot_ = new_slot_hover; changed = true; }
     if (hovered_empty_section_line_ != -1)
         { hovered_empty_section_line_ = -1; changed = true; }
+    // Pull pending repaint flag from annotation_layer: when the cursor
+    // crosses a text-box boundary in any tool mode, that box's hover
+    // border needs to appear or disappear.  mouse_move tracks the
+    // transition and sets a flag; we union it with the bar-side
+    // `changed` so a single update() covers both.
+    if (annotation_layer_.take_hover_repaint())
+        changed = true;
     if (changed) update();
 
     setCursor(new_slot_hover >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
@@ -1406,6 +1563,16 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
 
 void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
 {
+    // The annotation layer claims the release iff it had a drag in
+    // flight; on release it commits the new/moved annotation and
+    // repaints.  Tested first so that a connector drop is treated as
+    // ending an annotation gesture, not as a stray click that would
+    // also tickle the divider state.
+    if (annotation_layer_.mouse_release(event->pos()))
+    {
+        update();
+        return;
+    }
     if (event->button() == Qt::LeftButton && dragging_divider_)
     {
         dragging_divider_ = false;
@@ -1422,10 +1589,18 @@ void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
 // painted indefinitely until the next paint event re-evaluated hover.
 void song_body_widget::leaveEvent(QEvent*)
 {
+    // Clear bar-side hover affordances...
     bool changed = false;
     if (hovered_slot_ != -1)               { hovered_slot_ = -1;               changed = true; }
     if (hovered_empty_section_line_ != -1) { hovered_empty_section_line_ = -1; changed = true; }
-    if (changed) update();
+    // ...and the annotation-side idle-hover position too, so anchor
+    // dots near the last cursor location don't keep painting after the
+    // cursor leaves.  Don't condition this on `tool_active()`: the
+    // layer's mouse_leave() is a cheap reset and clearing
+    // unconditionally is robust to mid-leave tool changes.
+    annotation_layer_.mouse_leave();
+    update();
+    (void)changed;  // update() above already covers both cases
 }
 
 // ---------------------------------------------------------------------------
@@ -1445,6 +1620,19 @@ void song_body_widget::keyPressEvent(QKeyEvent* event)
     if (active_editor_)
     {
         QWidget::keyPressEvent(event);
+        return;
+    }
+
+    // Annotation layer gets first crack at Esc / Del / Backspace.  Its
+    // key_press returns false if it doesn't consume the key (e.g. Del
+    // with no annotation selected), letting the existing bar-side
+    // shortcuts fire normally.  For Esc, the layer's precedence chain
+    // is: cancel in-flight drag → clear annotation selection → exit
+    // annotation tool → fall through.  If we get a "true" back, the
+    // layer handled the key and we just repaint.
+    if (annotation_layer_.key_press(event->key(), event->modifiers()))
+    {
+        update();
         return;
     }
 
@@ -2271,6 +2459,44 @@ void song_body_widget::edit_section(std::size_t line_index)
 }
 
 // ---------------------------------------------------------------------------
+// edit_text_box — inline editor for an annotation text box's text
+// ---------------------------------------------------------------------------
+// Called by the annotation_layer through the edit-text callback we wired
+// in the constructor.  Uses the multi-line editor (not the single-line
+// one) because annotations should support Enter for newlines and only
+// commit on focus-out, matching Google Drawings text boxes.  Mirrors
+// edit_bar's pattern otherwise: capture the id, look it up freshly on
+// commit so we don't carry a pointer across a model mutation, and let
+// close_line_editor's revert-on-failure handle bad input by returning
+// false.  In practice every input is valid here — a blank annotation
+// isn't useful but isn't an error either, so we always return true.
+void song_body_widget::edit_text_box(std::uint64_t text_box_id,
+                                     const QRectF& widget_rect)
+{
+    auto* tb = song_.annotations().find_text_box(text_box_id);
+    if (!tb)
+        return;
+    const QString initial = tb->text;
+
+    open_multiline_editor(
+        widget_rect,
+        initial,
+        text_box_id,
+        [this, text_box_id](const QString& text) -> bool
+        {
+            if (auto* t = song_.annotations().find_text_box(text_box_id))
+            {
+                t->text = text;
+                update();
+                return true;
+            }
+            // Annotation vanished mid-edit (e.g. another path deleted
+            // it).  Treat as a no-op revert.
+            return false;
+        });
+}
+
+// ---------------------------------------------------------------------------
 // Inline-editor plumbing
 // ---------------------------------------------------------------------------
 void song_body_widget::open_line_editor(const QRectF& rect,
@@ -2305,14 +2531,129 @@ void song_body_widget::open_line_editor(const QRectF& rect,
     });
 }
 
+// ---------------------------------------------------------------------------
+// open_multiline_editor — for annotation text boxes
+// ---------------------------------------------------------------------------
+// Same overall shape as open_line_editor but with a QPlainTextEdit
+// inside.  Three notable differences:
+//   * Enter inserts a newline (default QPlainTextEdit behavior), so we
+//     don't need to override key handling for it.  Esc still cancels —
+//     that lives in eventFilter, which already dispatches by `watched
+//     == active_editor_` and doesn't care about widget type.
+//   * Focus loss commits.  QPlainTextEdit has no editingFinished
+//     signal — we install a focus-out hook via the event filter
+//     (FocusOut case below in eventFilter).
+//   * As the user types, the editor's documentLayout reports the
+//     content's natural size.  We resize the editor vertically to fit
+//     and write the new height back to the text box, so the box grows
+//     to fit content live.  Width stays at the original rect's width;
+//     wrapping inside the box happens via QPlainTextEdit's word-wrap
+//     mode, matching the same wrap rule the painter uses.
+void song_body_widget::open_multiline_editor(
+    const QRectF& rect,
+    const QString& initial,
+    std::uint64_t text_box_id,
+    std::function<bool(const QString&)> commit)
+{
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/false);
+
+    auto* edit = new QPlainTextEdit(this);
+    edit->setPlainText(initial);
+    // Word-wrap at the editor's width.  The painter uses WordWrap too,
+    // so what the user sees while editing matches what they'll see
+    // when the editor closes (modulo the editor's own frame chrome).
+    edit->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    edit->setWordWrapMode(QTextOption::WordWrap);
+    // No scrollbars — the box grows instead.  If a user paints
+    // themselves into a corner with a tiny box and a huge novel,
+    // they'll still get scrollbars from QPlainTextEdit's default
+    // behavior, but the steady-state UX is "type, box grows."
+    edit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    edit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    edit->setFrameStyle(QFrame::Panel | QFrame::Plain);
+    // Match the text-box paint font so the visual replacement is
+    // seamless.  annotation_layer holds the font for paint, but the
+    // editor needs its own copy — set it from our chord-number font
+    // family at the same 75% size used in paint_text_box.
+    QFont tb_font = fonts_.number;
+    tb_font.setPointSize(std::max(8, int(tb_font.pointSize() * 0.75)));
+    edit->setFont(tb_font);
+
+    edit->setGeometry(rect.toRect());
+    edit->show();
+    edit->setFocus(Qt::MouseFocusReason);
+    edit->selectAll();
+    edit->installEventFilter(this);
+
+    active_editor_       = edit;
+    editor_commit_       = std::move(commit);
+    editing_text_box_id_ = text_box_id;
+
+    // Grow-to-fit: every time the document changes, ask the document
+    // layout for its natural size and resize both the editor and the
+    // underlying text box's rect height to match.  Width is unchanged
+    // so horizontal growth doesn't happen automatically (Google's
+    // text boxes grow vertically when you type; horizontal growth
+    // requires a manual resize).  We clamp to the original rect's
+    // height as a minimum so a user shrinking their text doesn't
+    // shrink the box past where they originally drew it.
+    const qreal min_h = rect.height();
+    const qreal w     = rect.width();
+    connect(edit, &QPlainTextEdit::textChanged, this,
+        [this, edit, min_h, w, text_box_id]() {
+            // Natural document height = layout's reported size + the
+            // editor's frame thickness (top+bottom).  Cap at the
+            // remaining height of the widget so a runaway box doesn't
+            // overflow.
+            QSizeF doc_size = edit->document()->size();
+            const int frame = edit->frameWidth() * 2;
+            qreal needed = doc_size.height() + frame
+                         + edit->contentsMargins().top()
+                         + edit->contentsMargins().bottom();
+            if (needed < min_h) needed = min_h;
+            const QPoint top_left = edit->geometry().topLeft();
+            const qreal max_h = std::max(min_h,
+                qreal(height()) - top_left.y() - 2);
+            if (needed > max_h) needed = max_h;
+            // Apply to the editor.  Width is unchanged.
+            edit->setFixedHeight(int(needed));
+            edit->setFixedWidth(int(w));
+            // Mirror into the model so the text box on commit
+            // (and during the live edit, any neighboring repaint)
+            // sees the new height.  We don't repaint the chart while
+            // editing because the editor occludes the box — but
+            // mutating the model now means the rebuild after close
+            // already has the right rect.
+            if (auto* tb = song_.annotations().find_text_box(text_box_id))
+            {
+                if (tb->rect.height() != needed)
+                {
+                    tb->rect.setHeight(needed);
+                }
+            }
+        });
+}
+
 bool song_body_widget::close_line_editor(bool commit_value)
 {
     if (!active_editor_)
         return false;
 
-    QLineEdit* edit = active_editor_;
+    QWidget* edit = active_editor_;
     auto commit = std::move(editor_commit_);
-    QString text = edit->text().trimmed();
+
+    // Read text in a type-dispatched way: single-line editors store
+    // their text in QLineEdit::text(), multi-line in
+    // QPlainTextEdit::toPlainText().  Trimming policy is the same for
+    // both — bar/section/etc. editors all trim, and text-box
+    // annotations should trim too (a box with trailing whitespace and
+    // no visible content would be a UX foot-gun).
+    QString text;
+    if (auto* le = qobject_cast<QLineEdit*>(edit))
+        text = le->text().trimmed();
+    else if (auto* pe = qobject_cast<QPlainTextEdit*>(edit))
+        text = pe->toPlainText().trimmed();
 
     // Tear down before invoking the commit callback so the callback's
     // rebuild() can repaint without the (about-to-be-deleted) editor on
@@ -2323,6 +2664,7 @@ bool song_body_widget::close_line_editor(bool commit_value)
     // it, or both.  Any follow-up open_line_editor (e.g. from the Tab-
     // advance path itself) will re-set this if appropriate.
     editing_bar_index_.reset();
+    editing_text_box_id_.reset();
     edit->removeEventFilter(this);
     edit->hide();
     edit->deleteLater();
@@ -2350,6 +2692,33 @@ bool song_body_widget::close_line_editor(bool commit_value)
 
 bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
 {
+    // FocusOut commits the multi-line editor.  QPlainTextEdit has no
+    // editingFinished signal, and we want the same focus-out-commits
+    // behavior QLineEdit has (which QLineEdit gives us for free via
+    // editingFinished).  We *only* honor focus-out for the multi-line
+    // editor — single-line editors already auto-commit through
+    // editingFinished, and double-handling here would race.  The
+    // discriminator is editing_text_box_id_: set iff the active editor
+    // is the multi-line one.
+    if (watched == active_editor_ &&
+        event->type() == QEvent::FocusOut &&
+        editing_text_box_id_.has_value())
+    {
+        // Commit on focus loss.  Match the existing QLineEdit
+        // editingFinished behavior: pretend the user pressed Enter on
+        // a single-line editor.  This also handles "click anywhere
+        // outside the editor" because that's the same chain
+        // mousePressEvent already uses to clear the editor (and the
+        // click delivers a FocusOut to the editor before our handler
+        // runs).
+        close_line_editor(/*commit_value=*/true);
+        // Don't return true here: the focus event still needs to
+        // propagate to whatever the user clicked on, so they're not
+        // left in a dead state.  Returning false lets Qt deliver the
+        // event to subsequent filters and the target widget.
+        return false;
+    }
+
     if (watched == active_editor_ && event->type() == QEvent::KeyPress)
     {
         auto* ke = static_cast<QKeyEvent*>(event);

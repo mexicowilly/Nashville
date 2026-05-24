@@ -5,12 +5,14 @@
 #include "bar_renderer.hpp"
 #include "margin_renderer.hpp"
 #include "layout_structs.hpp"
+#include "annotation_layer.hpp"
 #include <QWidget>
 #include <vector>
 #include <functional>
 #include <set>
 #include <string>
 #include <optional>
+#include <cstdint>
 
 class QLineEdit;
 class QContextMenuEvent;
@@ -154,7 +156,53 @@ public:
     // context menu can both invoke it on the same selection the user
     // sees highlighted.  The internal cut_selection() path also routes
     // through this — there's one delete implementation.
-    void apply_delete_to_selection() { delete_selection(); }
+    // The menubar's Delete action (with Del/Backspace shortcuts) and
+    // the right-click context menu both call this.  It dispatches by
+    // which selection is live: if an annotation (text box or
+    // connector) is selected, delete that; otherwise fall through to
+    // delete_selection() which handles bars.  Routing both selection
+    // domains through one function means the QAction shortcut can't
+    // race the widget's own keyPressEvent — there is only one path.
+    void apply_delete_to_selection()
+    {
+        if (annotation_layer_.key_press(Qt::Key_Delete, Qt::NoModifier))
+        {
+            update();
+            return;
+        }
+        delete_selection();
+    }
+
+    // --- Annotation tool mode ---
+    // Switches the widget between bar-editing mode (the default) and one
+    // of the annotation tools.  When an annotation tool is active, clicks
+    // on the chart create or manipulate text boxes / connectors instead
+    // of selecting bars.  Esc returns to bar mode — that's handled
+    // inside annotation_layer::key_press, which also runs before our
+    // own Esc handler (see keyPressEvent).
+    void set_annotation_tool(annotation_layer::tool t)
+    {
+        annotation_layer_.set_tool(t);
+        // Cursor needs a refresh; mouseMoveEvent will set it again on
+        // next mouse move, but unsetCursor() here keeps a stale cursor
+        // (e.g. crosshair from the previous tool) from lingering until
+        // the user moves.  update() repaints any selection chrome that
+        // was cleared by set_tool().
+        unsetCursor();
+        update();
+    }
+    annotation_layer::tool current_annotation_tool() const
+    {
+        return annotation_layer_.current_tool();
+    }
+
+    // Read-only access to the annotation layer.  The Insert-menu wiring
+    // in app.cpp uses this to gate its enabled state on the layer's
+    // selection.
+    const annotation_layer& annotations_view() const
+    {
+        return annotation_layer_;
+    }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -285,6 +333,27 @@ private:
                           const QString& initial,
                           std::function<bool(const QString&)> commit,
                           const QString& placeholder = QString());
+
+    // Multi-line counterpart for annotation text boxes.  Differs from
+    // open_line_editor in three ways:
+    //   1. Uses QPlainTextEdit so Enter inserts a newline instead of
+    //      committing.  This matches Google Drawings: the only ways
+    //      to end editing are clicking outside the box or pressing
+    //      Esc (which still cancels).
+    //   2. Grows the editor vertically as the user types past the
+    //      initial rect's height, and writes the new height back to
+    //      the annotation on commit — text boxes expand to fit
+    //      content, again mirroring Google's behavior.
+    //   3. Captures the text-box id so the grow-on-type and commit
+    //      paths know which annotation to mutate.  The id is held in
+    //      editing_text_box_id_ for the editor's lifetime.
+    // Same commit contract: returns trimmed text via the callback;
+    // callback returning false silently reverts.  No placeholder
+    // because annotation editors don't show one — Google doesn't.
+    void open_multiline_editor(const QRectF& rect,
+                               const QString& initial,
+                               std::uint64_t text_box_id,
+                               std::function<bool(const QString&)> commit);
     // Returns true iff the commit callback was both invoked AND returned
     // true.  Esc/cancel and validation-rejected commits both return
     // false.  The return is consulted by the Tab-advance path so a
@@ -292,8 +361,23 @@ private:
     // bar — the user would lose their input without realising it.
     bool close_line_editor(bool commit_value);
 
-    QLineEdit* active_editor_      = nullptr;
+    // Active inline editor.  Either a QLineEdit (single-line: title,
+    // key, time-sig, tempo, sections, bars) or a QPlainTextEdit
+    // (multi-line: annotation text boxes).  We hold it as the QWidget
+    // base because close_line_editor reads text via dynamic_cast on
+    // the actual type — both editors store their string differently
+    // (text() vs. toPlainText()) and require slightly different setup.
+    // editingFinished is QLineEdit-only, so the multi-line editor has
+    // its own focus-out hook (see open_multiline_editor for the
+    // wiring).
+    QWidget* active_editor_ = nullptr;
     std::function<bool(const QString&)> editor_commit_;
+
+    // The text box being edited by the multi-line editor, if any.
+    // Used by the live "grow box to fit text" feedback so we can apply
+    // height changes to the underlying annotation as the user types.
+    // nullopt for any editor type other than the text-box one.
+    std::optional<std::uint64_t> editing_text_box_id_;
 
     // Set by edit_bar before opening the editor, cleared by
     // close_line_editor.  When set, Tab in the editor (intercepted in
@@ -348,6 +432,18 @@ private:
     std::vector<line_layout> lines_;
     chord_renderer::Fonts    fonts_;
     int                      margin_width_ = k_default_margin_width;
+
+    // The annotation overlay.  Order matters: constructed in the
+    // initialiser list of the constructor AFTER song_ (because it
+    // captures song_.annotations() by reference).  It also captures
+    // lines_ and a lambda that re-derives the chart-content rect on
+    // demand; see the constructor.
+    annotation_layer annotation_layer_;
+
+    // Open the inline editor over a text box and, on commit, store the
+    // new text into the annotation by id.  Mirrors edit_bar's pattern
+    // (capture id, look up freshly on commit, no in-flight pointers).
+    void edit_text_box(std::uint64_t text_box_id, const QRectF& widget_rect);
 
     // --- Hit-test rects (populated during paintEvent, in widget coords) ---
     mutable QRectF        title_rect_;
