@@ -37,7 +37,7 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
       // we automatically track resize and margin-drag without any
       // signal/slot plumbing.
       annotation_layer_(
-          song.annotations(),
+          song.annotes(),
           lines_,
           [this]() {
               const qreal th = title_height();
@@ -54,6 +54,28 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     // that clicking the chart hands keyboard focus back from any sibling
     // widget (toolbar, sidebar) the user may have last interacted with.
     setFocusPolicy(Qt::StrongFocus);
+
+    // Force a white-paper / black-ink palette regardless of the
+    // desktop theme.  The chart is meant to imply a printed page, so
+    // even on a dark-themed system the widget reads as paper.
+    // setAutoFillBackground + setting Window/Base to white covers the
+    // brief moment Qt clears the widget before paintEvent runs (where
+    // it would otherwise use the system's window color).  Child
+    // widgets — inline editors — pick up the same colors via the
+    // explicit apply_print_palette call in open_line_editor /
+    // open_multiline_editor; we don't rely on inheritance here
+    // because Qt's QPalette inheritance is partial and theme-
+    // dependent (some palette roles propagate, others don't).
+    {
+        QPalette pal = palette();
+        pal.setColor(QPalette::Window,     Qt::white);
+        pal.setColor(QPalette::Base,       Qt::white);
+        pal.setColor(QPalette::WindowText, Qt::black);
+        pal.setColor(QPalette::Text,       Qt::black);
+        setPalette(pal);
+        setAutoFillBackground(true);
+    }
+
     init_fonts();
 
     // Wire the annotation layer's text-editing requests through to our
@@ -82,9 +104,9 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     // local positions when free), but the resolver runs through the
     // view's text_box_anchors() helper which returns widget coords,
     // so we sub off the chart-content origin to convert.
-    song.annotations().set_anchor_resolver(
+    song.annotes().set_anchor_resolver(
         [this](std::uint64_t tb_id, unsigned idx) -> QPointF {
-            const auto* tb = song_.annotations().find_text_box(tb_id);
+            const auto* tb = song_.annotes().find_text_box(tb_id);
             if (!tb || idx >= 8)
                 return QPointF(0, 0);
             // Compute the anchor in song-local coords directly from
@@ -2473,7 +2495,7 @@ void song_body_widget::edit_section(std::size_t line_index)
 void song_body_widget::edit_text_box(std::uint64_t text_box_id,
                                      const QRectF& widget_rect)
 {
-    auto* tb = song_.annotations().find_text_box(text_box_id);
+    auto* tb = song_.annotes().find_text_box(text_box_id);
     if (!tb)
         return;
     const QString initial = tb->text;
@@ -2484,7 +2506,7 @@ void song_body_widget::edit_text_box(std::uint64_t text_box_id,
         text_box_id,
         [this, text_box_id](const QString& text) -> bool
         {
-            if (auto* t = song_.annotations().find_text_box(text_box_id))
+            if (auto* t = song_.annotes().find_text_box(text_box_id))
             {
                 t->text = text;
                 update();
@@ -2499,6 +2521,50 @@ void song_body_widget::edit_text_box(std::uint64_t text_box_id,
 // ---------------------------------------------------------------------------
 // Inline-editor plumbing
 // ---------------------------------------------------------------------------
+
+// Force the standard "looks like printed paper" palette onto an editor
+// widget: white background, black text, even when the desktop is in
+// dark mode.  The chart's own painting already uses Qt::white as the
+// background everywhere (see paintEvent and paint_to_rect), but Qt
+// widgets like QLineEdit and QPlainTextEdit inherit their palette
+// from the application's theme — so on a dark-themed desktop you'd
+// get a dark editor sitting on a white chart, which looks broken.
+//
+// We touch four palette roles:
+//   * Base       — the editor's background fill
+//   * Text       — typed text color
+//   * Window     — frame/chrome background (matters for the
+//                  QPlainTextEdit's frame between the document area
+//                  and the widget border)
+//   * WindowText — chrome foreground
+// PlaceholderText is left to its default derivation from Text, which
+// gives a faded-black placeholder against the white base — same look
+// the user would see on a light-theme desktop.
+//
+// This goes through palette rather than stylesheet because mixing
+// stylesheets with palette overrides interacts unpredictably in Qt6
+// (stylesheets win for most properties but not all), and palette is
+// the documented "I want specific colors regardless of theme" knob.
+static void apply_print_palette(QWidget* w)
+{
+    QPalette pal = w->palette();
+    pal.setColor(QPalette::Base,       Qt::white);
+    pal.setColor(QPalette::Text,       Qt::black);
+    pal.setColor(QPalette::Window,     Qt::white);
+    pal.setColor(QPalette::WindowText, Qt::black);
+    // Selected-text colors for the editor's own selection (when the
+    // user drags to highlight some characters they typed).  Use a
+    // light blue background with black text — readable on both light
+    // and dark desktops because we picked them ourselves.  Without
+    // setting these explicitly, the editor would pick up the system's
+    // highlight color, which on dark themes is typically a low-
+    // contrast color that disappears against the white background we
+    // just forced.
+    pal.setColor(QPalette::Highlight,        QColor(180, 213, 254));
+    pal.setColor(QPalette::HighlightedText,  Qt::black);
+    w->setPalette(pal);
+}
+
 void song_body_widget::open_line_editor(const QRectF& rect,
                                         const QString& initial,
                                         std::function<bool(const QString&)> commit,
@@ -2510,6 +2576,7 @@ void song_body_widget::open_line_editor(const QRectF& rect,
         close_line_editor(/*commit_value=*/false);
 
     auto* edit = new QLineEdit(this);
+    apply_print_palette(edit);
     edit->setText(initial);
     if (!placeholder.isEmpty())
         edit->setPlaceholderText(placeholder);
@@ -2559,6 +2626,7 @@ void song_body_widget::open_multiline_editor(
         close_line_editor(/*commit_value=*/false);
 
     auto* edit = new QPlainTextEdit(this);
+    apply_print_palette(edit);
     edit->setPlainText(initial);
     // Word-wrap at the editor's width.  The painter uses WordWrap too,
     // so what the user sees while editing matches what they'll see
@@ -2625,7 +2693,7 @@ void song_body_widget::open_multiline_editor(
             // editing because the editor occludes the box — but
             // mutating the model now means the rebuild after close
             // already has the right rect.
-            if (auto* tb = song_.annotations().find_text_box(text_box_id))
+            if (auto* tb = song_.annotes().find_text_box(text_box_id))
             {
                 if (tb->rect.height() != needed)
                 {

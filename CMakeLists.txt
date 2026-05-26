@@ -52,10 +52,18 @@ qt_add_executable(nashville
     view/chord_renderer.cpp
     view/chord_renderer.hpp
     view/layout_structs.hpp
+    view/main_window.cpp
+    view/main_window.hpp
     view/margin_renderer.cpp
     view/margin_renderer.hpp
+    view/modal_overlay.cpp
+    view/modal_overlay.hpp
+    view/side_panel.cpp
+    view/side_panel.hpp
     view/song_body_widget.cpp
     view/song_body_widget.hpp
+    view/song_tab.cpp
+    view/song_tab.hpp
     view/song_widget.cpp
     view/song_widget.hpp
 )

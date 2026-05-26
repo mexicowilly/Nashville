@@ -758,7 +758,7 @@ void database::insert_song(const model::song& s)
     std::map<std::uint64_t, std::uint64_t> text_box_id_map;
     {
         auto& ins_tb = prepared_statements_[statement::INSERT_TEXT_BOX];
-        for (const auto& tb : s.annotations().text_boxes())
+        for (const auto& tb : s.annotes().text_boxes())
         {
             ins_tb->reset();
             auto tb_raw = ins_tb->ptr();
@@ -783,7 +783,7 @@ void database::insert_song(const model::song& s)
     }
     {
         auto& ins_c = prepared_statements_[statement::INSERT_CONNECTOR];
-        for (const auto& c : s.annotations().connectors())
+        for (const auto& c : s.annotes().connectors())
         {
             ins_c->reset();
             auto c_raw = ins_c->ptr();
@@ -805,7 +805,7 @@ void database::insert_song(const model::song& s)
                 [&](const model::connector_endpoint& ep) -> QPointF {
                     if (ep.k == model::connector_endpoint::kind::free)
                         return ep.free_pos;
-                    const auto* tb = s.annotations().find_text_box(ep.text_box_id);
+                    const auto* tb = s.annotes().find_text_box(ep.text_box_id);
                     if (!tb || ep.anchor_index >= 8)
                         return QPointF(0, 0);
                     const QRectF& r = tb->rect;
@@ -1310,7 +1310,7 @@ model::song database::select_song(const std::string& name)
                 conns.push_back(c);
             }
         }
-        found.annotations().load(std::move(tbs), std::move(conns));
+        found.annotes().load(std::move(tbs), std::move(conns));
     }
     else
     {

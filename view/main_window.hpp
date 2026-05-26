@@ -1,0 +1,123 @@
+#pragma once
+
+#include <QWidget>
+#include <memory>
+#include <string>
+
+class QTabWidget;
+class QToolButton;
+
+namespace nashville
+{
+class database;
+}
+
+namespace nashville::view
+{
+
+class side_panel;
+class song_tab;
+class modal_overlay;
+
+// The central widget for the application.  Composes:
+//   * a hamburger QToolButton in the upper-left that toggles the
+//     side panel's expanded state
+//   * the side panel (collapsed by default)
+//   * a QTabWidget of open song tabs (the main editing area)
+//
+// Layout is a QHBoxLayout: [side_panel] [main column].  The main
+// column is a QVBoxLayout: [hamburger row] [tab widget].  The
+// hamburger sits in its own row above the tabs rather than next to
+// them because the hamburger needs to be the leftmost thing on
+// screen even when the side panel is collapsed — putting it inside
+// the tab area would mean it moves around when tabs are added.
+//
+// The main_window does NOT own the database.  The database lives in
+// `app`, which passes it by reference here.  We hold the reference
+// so we can populate the side panel's lists on construction and on
+// refresh.
+class main_window : public QWidget
+{
+    Q_OBJECT
+public:
+    main_window(database& db, QWidget* parent = nullptr);
+
+    // Open a song by name.  If a tab for it already exists, switch
+    // to that tab.  Otherwise load from the database and add a new
+    // tab.  Silently no-ops if the name isn't in the database (the
+    // caller's UI usually only offers names from the songs list, so
+    // this is mostly defensive).
+    void open_song(const std::string& name);
+
+    // Force a save on every open tab.  Called by app on quit so no
+    // in-flight edits are lost.  Each tab's flush_save handles its
+    // own debounce-timer state.
+    void flush_all_tabs();
+
+    // Close (and delete) every open tab without flushing — the
+    // assumption is that flush_all_tabs has already run.  Used by
+    // app's destructor to tear down tabs explicitly BEFORE the
+    // database is destroyed; otherwise Qt's parent-deletion cascade
+    // runs each tab's destructor after db_ is gone, and the
+    // destructor's defensive flush_save hits a dead reference.
+    void close_all_tabs_without_saving();
+
+    // Repopulate the side panel's lists from the database.  Called
+    // on app start, after closing a tab (in case the close added /
+    // removed something at the DB level), and when the side panel
+    // is shown (in case external state changed).
+    void refresh_lists();
+
+    // Currently focused tab's song_tab, or nullptr if no tabs are
+    // open.  Used by app::wire_*_menu so menu actions target the
+    // visible tab's song widget.
+    song_tab* current_tab() const;
+
+    // Side-panel selection accessors.  Used by the Playlist menu's
+    // Delete action, which targets whatever's selected in the side
+    // panel (playlists don't have tabs).  Returns an empty string
+    // when nothing is selected.
+    std::string selected_song_name() const;
+    std::string selected_playlist_name() const;
+
+    // Menu-driven entry points.  app's menu wiring calls these for
+    // the Song / Playlist menus' New and Delete items.  They share
+    // their implementation with the side-panel's "+" and right-click
+    // paths, so the user gets identical prompts and confirmations
+    // regardless of how they got here.
+    void prompt_new_song();
+    void prompt_new_playlist();
+    void confirm_delete_song(const std::string& name);
+    void confirm_delete_playlist(const std::string& name);
+
+signals:
+    // Emitted when the current tab changes or when a tab opens /
+    // closes — basically any state change that affects what
+    // current_tab() returns.  The app uses this to re-wire menu
+    // actions to the new visible song's widgets.
+    void current_tab_changed(song_tab* tab);
+
+private:
+    // Tab close handler.  Flushes the closing tab, drops it from
+    // the QTabWidget, refreshes the side panel (since save may
+    // have updated it).  Wired to QTabWidget::tabCloseRequested.
+    void close_tab_at(int index);
+
+    // Find the index of the tab editing `name`, or -1 if none.
+    // Linear scan — number of open tabs is small (a handful at
+    // most), so hashing is overkill.
+    int find_tab_by_name(const std::string& name) const;
+
+    database&     db_;
+    QToolButton*  hamburger_  = nullptr;
+    side_panel*   panel_      = nullptr;
+    QTabWidget*   tabs_       = nullptr;
+    // In-widget modal overlay for prompts and confirmations.
+    // Used instead of QDialog because Wayland (and any other
+    // protocol where the application can't control window
+    // placement) renders QDialog positioning unreliable.  See
+    // modal_overlay.hpp for the full rationale.
+    modal_overlay* overlay_   = nullptr;
+};
+
+} // namespace nashville::view

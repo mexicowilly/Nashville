@@ -34,9 +34,19 @@
     <property name="title">
      <string>Song</string>
     </property>
+    <addaction name="actionNewSong"/>
+    <addaction name="actionDeleteSong"/>
+    <addaction name="separator"/>
     <addaction name="actionInsertTextBox"/>
     <addaction name="actionInsertLine"/>
     <addaction name="actionInsertArrow"/>
+   </widget>
+   <widget class="QMenu" name="menuPlaylist">
+    <property name="title">
+     <string>Playlist</string>
+    </property>
+    <addaction name="actionNewPlaylist"/>
+    <addaction name="actionDeletePlaylist"/>
    </widget>
    <widget class="QMenu" name="menuBar">
     <property name="title">
@@ -60,6 +70,7 @@
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuSong"/>
+   <addaction name="menuPlaylist"/>
    <addaction name="menuBar"/>
   </widget>
   <action name="actionExit">
@@ -134,6 +145,26 @@
   <action name="actionInsertArrow">
    <property name="text">
     <string>Insert arrow</string>
+   </property>
+  </action>
+  <action name="actionNewSong">
+   <property name="text">
+    <string>New...</string>
+   </property>
+  </action>
+  <action name="actionDeleteSong">
+   <property name="text">
+    <string>Delete</string>
+   </property>
+  </action>
+  <action name="actionNewPlaylist">
+   <property name="text">
+    <string>New...</string>
+   </property>
+  </action>
+  <action name="actionDeletePlaylist">
+   <property name="text">
+    <string>Delete</string>
    </property>
   </action>
  </widget>
