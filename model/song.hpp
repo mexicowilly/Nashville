@@ -16,14 +16,14 @@ public:
     {
         // These two are always set
         std::chrono::sys_time<std::chrono::milliseconds> creation_time;
-        std::chrono::sys_time<std::chrono::milliseconds> last_modification_time;
+        std::chrono::sys_time<std::chrono::milliseconds> modification_time;
         // Empty means none
         std::vector<std::string> authors;
         std::string original_performer;
         std::string original_album;
         std::string notes;
         // Optional because time_point has no value that means none
-        std::optional<std::chrono::sys_time<std::chrono::days>> original_album_release_date;
+        std::optional<std::chrono::sys_days> original_album_release_date;
     };
 
     song();

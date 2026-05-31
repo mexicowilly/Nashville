@@ -4,6 +4,7 @@
 #include <chrono>
 
 using namespace nashville;
+using namespace std::string_literals;
 
 namespace
 {
@@ -86,6 +87,15 @@ protected:
                 b.add_chord().number(7);
                 b.add_chord().number(3);
             }
+            auto istr = std::to_string(i);
+            for (int j = 0; j < i % 7; j++)
+                s.meta().authors.push_back("Author "s + std::to_string(j));
+            auto is = std::to_string(i);
+            s.meta().original_performer = "Performer "s + is;
+            s.meta().original_album = "Album "s + is;
+            s.meta().notes = "Notes "s + is;
+            if (i & 1)
+                s.meta().original_album_release_date = std::chrono::time_point_cast<std::chrono::days>(std::chrono::system_clock::now());
             songs.push_back(s);
         }
         lgr()->info("Created {} songs", songs.size());
@@ -137,6 +147,13 @@ protected:
         EXPECT_EQ(lhs.time_sig(), rhs.time_sig());
         EXPECT_EQ(lhs.tempo(), rhs.tempo());
         EXPECT_EQ(lhs.bars_per_line(), rhs.bars_per_line());
+        EXPECT_EQ(lhs.meta().creation_time, rhs.meta().creation_time);
+        EXPECT_EQ(lhs.meta().modification_time, rhs.meta().modification_time);
+        EXPECT_EQ(lhs.meta().authors, rhs.meta().authors);
+        EXPECT_EQ(lhs.meta().original_performer, rhs.meta().original_performer);
+        EXPECT_EQ(lhs.meta().original_album, rhs.meta().original_album);
+        EXPECT_EQ(lhs.meta().notes, rhs.meta().notes);
+        EXPECT_EQ(lhs.meta().original_album_release_date, rhs.meta().original_album_release_date);
     }
 
     virtual void SetUp() override

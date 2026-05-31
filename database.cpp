@@ -1,4 +1,5 @@
 #include "database.hpp"
+#include "iso8601.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <algorithm>
@@ -75,6 +76,14 @@ CREATE TABLE IF NOT EXISTS song
     bars_per_line INTEGER,
     beats_per_minute INTEGER,
     beats_unit INTEGER,
+    -- These are the metadata
+    creation_time TEXT,                 -- ISO 8601
+    modification_time TEXT,             -- ISO 8601
+    authors TEXT, -- CSV list
+    original_performer TEXT,
+    original_album TEXT,
+    notes TEXT,
+    original_album_release_date TEXT,   -- ISO 8601
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -249,7 +258,14 @@ SELECT song.id,
        song.beats_per_minute,
        song.beats_unit,
        time_signature.beat_type,
-       time_signature.count
+       time_signature.count,
+       song.creation_time,
+       song.modification_time,
+       song.authors,
+       song.original_performer,
+       song.original_album,
+       song.notes,
+       song.original_album_release_date
 FROM song
 LEFT JOIN time_signature ON time_signature.id = song.time_sig_id
 WHERE song.name = ?1;
@@ -269,8 +285,15 @@ INSERT INTO song (name,
                   time_sig_id,
                   bars_per_line,
                   beats_per_minute,
-                  beats_unit)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                  beats_unit,
+                  creation_time,
+                  modification_time,
+                  authors,
+                  original_performer,
+                  original_album,
+                  notes,
+                  original_album_release_date)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
 RETURNING id;
 )";
 
@@ -377,7 +400,7 @@ database::prepared::prepared(sqlite3* db, const char* const sql)
     if (rc != SQLITE_OK)
     {
         // THIS IS FATAL
-        throw std::invalid_argument("Error preparing statement: '"s + sql + "': " + sqlite3_errstr(rc));
+        throw std::invalid_argument("Error preparing statement: '"s + sql + "': " + sqlite3_errmsg(db));
     }
 }
 
@@ -711,6 +734,34 @@ void database::insert_song(const model::song& s)
         sqlite3_bind_int(raw, 4, s.bars_per_line());
         sqlite3_bind_int(raw, 5, std::get<0>(s.tempo()));
         sqlite3_bind_int(raw, 6, static_cast<int>(std::get<1>(s.tempo())));
+        const auto& meta = s.meta();
+        auto ctime = format_iso8601(meta.creation_time);
+        sqlite3_bind_text(raw, 7, ctime.c_str(), ctime.length(), SQLITE_TRANSIENT);
+        auto mtime = format_iso8601(meta.modification_time);
+        sqlite3_bind_text(raw, 8, mtime.c_str(), mtime.length(), SQLITE_TRANSIENT);
+        if (!meta.authors.empty())
+        {
+            std::ostringstream auth;
+            for (int i = 0; i < meta.authors.size(); i++)
+            {
+                auth << meta.authors[i];
+                if (i < meta.authors.size() - 1)
+                    auth << ',';
+            }
+            auto auths = auth.str();
+            sqlite3_bind_text(raw, 9, auths.c_str(), auths.length(), SQLITE_TRANSIENT);
+        }
+        if (!meta.original_performer.empty())
+            sqlite3_bind_text(raw, 10, meta.original_performer.c_str(), meta.original_performer.length(), SQLITE_STATIC);
+        if (!meta.original_album.empty())
+            sqlite3_bind_text(raw, 11, meta.original_album.c_str(), meta.original_album.length(), SQLITE_STATIC);
+        if (!meta.notes.empty())
+            sqlite3_bind_text(raw, 12, meta.notes.c_str(), meta.notes.length(), SQLITE_STATIC);
+        if (meta.original_album_release_date)
+        {
+            auto rdate = format_iso8601(*meta.original_album_release_date);
+            sqlite3_bind_text(raw, 13, rdate.c_str(), rdate.length(), SQLITE_TRANSIENT);
+        }
         rc = sqlite3_step(raw);
         if (rc == SQLITE_CONSTRAINT_UNIQUE)
         {
@@ -1242,7 +1293,43 @@ model::song database::select_song(const std::string& name)
         ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(raw, 5)))
           .count(sqlite3_column_int(raw, 6));
         found.time_sig(ts);
-
+        auto& meta = found.meta();
+        meta.creation_time = std::chrono::time_point_cast<std::chrono::milliseconds>
+            (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 7))));
+        meta.modification_time = std::chrono::time_point_cast<std::chrono::milliseconds>
+            (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 8))));
+        if (sqlite3_column_type(raw, 9) == SQLITE_TEXT)
+        {
+            std::string cur;
+            std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(raw, 9)));
+            while (std::getline(in, cur, ','))
+                meta.authors.push_back(cur);
+        }
+        else
+        {
+            assert(sqlite3_column_type(raw, 9) == SQLITE_NULL);
+        }
+        if (sqlite3_column_type(raw, 10) == SQLITE_TEXT)
+            meta.original_performer = reinterpret_cast<const char*>(sqlite3_column_text(raw, 10));
+        else
+            assert(sqlite3_column_type(raw, 10) == SQLITE_NULL);
+        if (sqlite3_column_type(raw, 11) == SQLITE_TEXT)
+            meta.original_album = reinterpret_cast<const char*>(sqlite3_column_text(raw, 11));
+        else
+            assert(sqlite3_column_type(raw, 11) == SQLITE_NULL);
+        if (sqlite3_column_type(raw, 12) == SQLITE_TEXT)
+            meta.notes = reinterpret_cast<const char*>(sqlite3_column_text(raw, 12));
+        else
+            assert(sqlite3_column_type(raw, 12) == SQLITE_NULL);
+        if (sqlite3_column_type(raw, 13) == SQLITE_TEXT)
+        {
+            meta.original_album_release_date = std::chrono::time_point_cast<std::chrono::days>
+                (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 13))));
+        }
+        else
+        {
+            assert(sqlite3_column_type(raw, 13) == SQLITE_NULL);
+        }
         // --- Annotations ---
         // Pulled into local vectors first because annotations::load()
         // takes them by value and reseeds next_id_ in a single shot.

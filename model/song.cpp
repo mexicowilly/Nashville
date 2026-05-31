@@ -16,6 +16,8 @@ song::song(const std::string& nm)
 {
     if (nm.empty())
         throw std::invalid_argument("The song name cannot be empty");
+    metadata_.creation_time = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    metadata_.modification_time = metadata_.creation_time;
 }
 
 song& song::bars_per_line(unsigned num)
