@@ -24,6 +24,8 @@ public:
     void move_to_file(const std::filesystem::path& file_name);
     void remove_playlist(const std::string& pl);
     void remove_song(const std::string& s);
+    void rename_playlist(const std::string& old_name, const std::string& new_name);
+    void rename_song(const std::string& old_name, const std::string& new_name);
     model::playlist select_playlist(const std::string& name);
     std::vector<std::string> select_playlist_names();
     std::vector<std::string> select_song_names();
@@ -64,7 +66,11 @@ private:
         INSERT_TEXT_BOX,
         SELECT_SONG_TEXT_BOXES,
         INSERT_CONNECTOR,
-        SELECT_SONG_CONNECTORS
+        SELECT_SONG_CONNECTORS,
+        RENAME_SONG,
+        RENAME_PLAYLIST,
+        DELETE_SONG_TEXT_BOXES,
+        DELETE_SONG_CONNECTORS
     };
 
     class prepared
@@ -94,11 +100,13 @@ private:
         bool is_active_;
     };
 
+    std::string error_msg(int rc) const;
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);
     std::uint64_t insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index);
     void maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id);
+    void remove_song_bars(std::uint64_t song_id);
     std::vector<model::bar> select_bars(std::uint64_t song_id);
     std::vector<model::chord> select_chords(std::uint64_t bar_id);
     std::uint64_t time_signature_id(const model::time_signature& ts);
