@@ -182,6 +182,7 @@ void app::wire_bar_menu()
             nashville_win_.actionEndLine->setEnabled(sel);
             nashville_win_.menuRepeat->setEnabled(sel);
             nashville_win_.actionVoltas->setEnabled(sel);
+            nashville_win_.actionDelete->setEnabled(sel);
         });
 
     QObject::connect(nashville_win_.menuRepeat, &QMenu::aboutToShow,

@@ -38,6 +38,8 @@ public:
         WHOLE = 1
     };
 
+    static constexpr unsigned REST = 0;
+
     chord();
 
     bool operator== (const chord& other) const;

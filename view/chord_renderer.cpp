@@ -230,7 +230,7 @@ void chord_renderer::paint_rhythm(QPainter& painter,
     // Augmentation dot: right of notehead, centred vertically on the notehead.
     if (dotted)
     {
-        qreal dot_r = rect.height() * 0.06;
+        qreal dot_r = 1.8;  // fixed radius; proportional (rect.height()*0.06) was too thick
         qreal dot_x = draw_x + fm.horizontalAdvance(head_glyph) + k_element_spacing + dot_r;
         qreal dot_y = (head_top_y + head_bottom_y) / 2.0;  // centre of notehead for all types
         painter.setPen(Qt::NoPen);
@@ -580,11 +580,14 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 
     // When a diamond is present the tie arc sits entirely to its right.
     // Otherwise span the full slot width with a small margin.
-    // The tie extends to the right edge of the slot (no right margin) so it
-    // visually connects to the next bar.  When a diamond is present the left
-    // endpoint starts just to its right; otherwise it starts near the left edge.
+    // The tie extends past the right edge of the slot with a fixed-pixel
+    // overhang so it reliably reaches into the inter-bar/inter-chord gap and
+    // visually connects to the next chord — even when the slot is narrow (e.g.
+    // the last chord in a multi-chord bar) or the line ends with a
+    // continuation dot.  A percentage-of-slot-width overhang shrank to almost
+    // nothing on narrow slots and fell short of the continuation dot.
     qreal start_x = diamond_right + margin;
-    qreal end_x   = artRect.right() + artRect.width() * 0.18;  // overhang into inter-bar gap
+    qreal end_x   = artRect.right() + 10.0;  // fixed overhang past slot edge
 
     // Symmetric cubic bezier: endpoints at base_y, control points pushed
     // above arc_top so the actual curve peak reaches close to arc_top.

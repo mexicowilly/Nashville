@@ -114,8 +114,8 @@ chord& chord::mode(chord::type m)
 
 chord& chord::number(unsigned num)
 {
-    if (num < 1 || num > 7)
-        throw std::invalid_argument("The chord number must be from 1 to 7");
+    if (num != REST && num < 1 || num > 7)
+        throw std::invalid_argument("The chord number must be a rest or from 1 to 7");
     number_ = num;
     if (mode_ == type::UNDEFINED)
         mode_ = type::MAJOR;
@@ -129,7 +129,7 @@ chord& chord::parse_user_input(const std::string& usr)
         throw std::invalid_argument("The chord description cannot be empty");
     chord saved(*this);
     *this = chord();
-    auto re = std::regex("([tdsp]+:)?([b#])?([1-7])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
+    auto re = std::regex("([tdsp]+:)?([b#])?([1-7rR])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
     std::smatch result;
     if (std::regex_match(usr, result, re))
     {
@@ -163,7 +163,11 @@ chord& chord::parse_user_input(const std::string& usr)
         if (result[2].length() > 0)
             step_ = result[2].str()[0] == 'b' ? flat_sharp::FLAT : flat_sharp::SHARP;
         assert(result[3].length() == 1);
-        number_ = result[3].str()[0] - '0';
+        auto num = result[3].str()[0];
+        if (num == 'r' || num == 'R')
+            number_ = REST;
+        else
+            number_ = num - '0';
         if (result[4].length() > 0)
         {
             auto mode = result[4].str();
@@ -249,7 +253,10 @@ std::string chord::to_string() const
     {
         if (step_)
             out << (step_ == chord::flat_sharp::FLAT ? "flat " : "sharp ");
-        out << number_;
+        if (number_ == REST)
+            out << "REST";
+        else
+            out << number_;
         switch (mode_)
         {
             case chord::type::MINOR:
@@ -352,7 +359,10 @@ std::string chord::to_user_input() const
     }
     if (step_)
         out << (*step_ == flat_sharp::FLAT ? 'b' : '#');
-    out << number_;
+    if (number_ == REST)
+        out << 'r';
+    else
+        out << number_;
     switch (mode_)
     {
     case type::MINOR:

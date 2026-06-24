@@ -1,7 +1,6 @@
 #include "app.hpp"
 #include <QCoreApplication>
 #include <QStandardPaths>
-#include <fstream>
 #include <filesystem>
 #include "loggable.hpp"
 #include "spdlog/cfg/env.h"

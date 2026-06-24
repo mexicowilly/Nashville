@@ -7,13 +7,73 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QToolButton>
 #include <QLabel>
 #include <QListWidget>
 #include <QPalette>
+#include <QAbstractButton>
+#include <QPainter>
+#include <QPainterPath>
+#include <QEnterEvent>
 
 namespace nashville::view
 {
+
+// ---------------------------------------------------------------------------
+// tab_close_button — custom close button for tab chrome
+// ---------------------------------------------------------------------------
+// Paints a small "x" centred in the button.  A thin 1px circle is drawn
+// around it only while the mouse is hovering, giving a subtle affordance
+// without cluttering the tab bar at rest.  The x itself is always faintly
+// visible so the button remains discoverable without requiring hover first.
+class tab_close_button : public QAbstractButton
+{
+public:
+    explicit tab_close_button(QWidget* parent = nullptr)
+        : QAbstractButton(parent)
+    {
+        setFixedSize(16, 16);
+        setCursor(Qt::ArrowCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setAttribute(Qt::WA_Hover, true);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF  r      = QRectF(rect());
+        const QPointF centre = r.center();
+        const qreal   radius = r.width() / 2.0 - 1.5;   // 1.5px inset from edge
+
+        // Circle: only while hovered
+        if (underMouse())
+        {
+            p.setPen(QPen(QColor(120, 120, 120), 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(centre, radius, radius);
+        }
+
+        // x glyph — only drawn while hovered; invisible at rest so the
+        // tab chrome stays uncluttered until the user moves over the button.
+        if (!underMouse())
+            return;
+        p.setPen(QPen(QColor(60, 60, 60), 1.2, Qt::SolidLine, Qt::RoundCap));
+
+        const qreal arm = radius * 0.42;   // half-length of each arm
+        p.drawLine(QPointF(centre.x() - arm, centre.y() - arm),
+                   QPointF(centre.x() + arm, centre.y() + arm));
+        p.drawLine(QPointF(centre.x() + arm, centre.y() - arm),
+                   QPointF(centre.x() - arm, centre.y() + arm));
+    }
+
+    // Repaint on enter/leave so the circle appears/disappears instantly.
+    void enterEvent(QEnterEvent* e) override { QAbstractButton::enterEvent(e); update(); }
+    void leaveEvent(QEvent*      e) override { QAbstractButton::leaveEvent(e); update(); }
+};
 
 main_window::main_window(database& db, QWidget* parent)
     : QWidget(parent)
@@ -80,6 +140,48 @@ main_window::main_window(database& db, QWidget* parent)
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
     tabs_->setDocumentMode(true);   // less chrome, more chart-like
+
+    // Force white tab backgrounds regardless of OS theme.  The chart is a
+    // "printed page" — every surface the user sees should read as white paper.
+    // The stylesheet targets QTabBar::tab so inactive and active tabs both get
+    // white backgrounds; the active tab gets a slightly heavier bottom border
+    // to indicate selection without relying on a theme colour.
+    // The close button is hidden here because we install our own custom
+    // tab_close_button widget (below) on every new tab.
+    tabs_->setStyleSheet(
+        "QTabWidget::pane {"
+        "    border: none;"
+        "    background: white;"
+        "}"
+        "QTabBar::tab {"
+        "    background: white;"
+        "    color: black;"
+        "    padding: 4px 8px 4px 10px;"
+        "    border: 1px solid #c0c0c0;"
+        "    border-bottom: none;"
+        "    margin-right: 2px;"
+        "}"
+        "QTabBar::tab:selected {"
+        "    background: white;"
+        "    border-bottom: 2px solid white;"  // merges visually with pane
+        "}"
+        "QTabBar::tab:hover:!selected {"
+        "    background: #f5f5f5;"
+        "}"
+        "QTabBar::close-button {"
+        "    image: none;"        // hide the OS-provided close button image
+        "    width: 0px;"         // collapse the default close-button slot
+        "    height: 0px;"        // (our custom widget sits in its place)
+        "}"
+    );
+
+    // Install a custom close button on every new tab.  We connect to
+    // tabBar()'s tabBarClicked signal as a creation hook: Qt installs
+    // our setTabButton call right after addTab returns, so we can't do
+    // it from open_song directly (the index isn't stable until the tab
+    // is fully inserted).  Instead we use QTabWidget::tabInserted via
+    // a subclass — but since we can't subclass here, we re-install the
+    // button immediately after addTab in open_song() instead (see below).
     connect(tabs_, &QTabWidget::tabCloseRequested,
             this, &main_window::close_tab_at);
     connect(tabs_, &QTabWidget::currentChanged,
@@ -175,6 +277,25 @@ void main_window::open_song(const std::string& name)
 
     auto* tab = new song_tab(std::move(song), db_, this);
     const int idx = tabs_->addTab(tab, tab->tab_name());
+
+    // Install our custom close button in place of the OS-provided one.
+    // Qt's QTabBar::setTabButton places an arbitrary widget in the
+    // RightSide button slot; wiring its clicked() to tabCloseRequested
+    // reuses the same close path as the default button.
+    auto* close_btn = new tab_close_button(tabs_->tabBar());
+    connect(close_btn, &QAbstractButton::clicked, this, [this, close_btn]() {
+        QTabBar* bar = tabs_->tabBar();
+        for (int i = 0; i < bar->count(); ++i)
+        {
+            if (bar->tabButton(i, QTabBar::RightSide) == close_btn)
+            {
+                emit tabs_->tabCloseRequested(i);
+                return;
+            }
+        }
+    });
+    tabs_->tabBar()->setTabButton(idx, QTabBar::RightSide, close_btn);
+
     tabs_->setCurrentIndex(idx);
 }
 

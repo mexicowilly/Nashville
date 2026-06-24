@@ -151,13 +151,18 @@ TEST(chord, user_input)
     EXPECT_EQ(c, ref);
     EXPECT_THROW(c.parse_user_input("q:1"), std::invalid_argument);
     EXPECT_THROW(c.parse_user_input(":1"), std::invalid_argument);
+    ref.clear()
+       .number(model::chord::REST);
+    EXPECT_NO_THROW(c.parse_user_input("r"));
+    EXPECT_EQ(c, ref);
+    EXPECT_NO_THROW(c.parse_user_input("R"));
+    EXPECT_EQ(c, ref);
 }
 
 TEST(chord, to_user_input)
 {
     model::chord c;
     EXPECT_EQ(std::string(), c.to_user_input());
-    EXPECT_THROW(c.number(0), std::invalid_argument);
     EXPECT_THROW(c.number(8), std::invalid_argument);
     for (const auto& num : { 1, 2, 3, 4, 5, 6, 7 })
         EXPECT_EQ(std::to_string(num), c.clear().number(num).to_user_input());
@@ -235,4 +240,7 @@ TEST(chord, to_user_input)
     EXPECT_EQ("dpt:1"s, c.to_user_input());
     c.is_staccato(true);
     EXPECT_EQ("ps:1"s, c.to_user_input());
+    c.clear()
+     .number(model::chord::REST);
+    EXPECT_EQ("r"s, c.to_user_input());
 }

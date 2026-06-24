@@ -1018,8 +1018,9 @@ void song_body_widget::paint_divider(QPainter& painter) const
 {
     painter.save();
     painter.setPen(QPen(QColor(180, 180, 180), 1));
-    qreal y0 = title_height();
-    painter.drawLine(QPointF(margin_width_, y0), QPointF(margin_width_, height()));
+    // The vertical rule runs the full height of the widget, including through
+    // the title row, so the margin column reads as a continuous left strip.
+    painter.drawLine(QPointF(margin_width_, 0), QPointF(margin_width_, height()));
     painter.restore();
 }
 
