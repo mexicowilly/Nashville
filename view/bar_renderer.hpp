@@ -62,9 +62,16 @@ public:
     static constexpr qreal k_rule_thickness   = 1.0;
     static constexpr qreal k_rhythm_row_ratio = 0.30;
 
-private:
+    // True if this bar should render the rhythm row — the rule plus the
+    // duration/rest symbols beneath it.  A bar qualifies when any of its
+    // chords carries a duration OR is a rest: rests are inherently rhythmic
+    // and always live below the rule (an unset duration renders as a whole
+    // rest), so a bar holding one is in duration mode even with no explicit
+    // durations.  Public so the layout pass in song_body_widget shares this
+    // single definition rather than re-deriving it.
     static bool is_duration_mode(const model::bar& bar);
 
+private:
     // Paints a single repeat mark.  `mark_rect` is the slot the glyph
     // should occupy (width == k_repeat_slot_w); `is_begin` selects which
     // side the dots and wings face.

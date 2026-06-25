@@ -22,6 +22,11 @@ song_widget::song_widget(model::song& song, QWidget* parent)
     scroll_->setWidgetResizable(true);
     scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // QScrollArea is a QFrame and defaults to a 1px styled-panel border, which
+    // (under the app's black palette) rendered as a hard line boxing in the
+    // song.  Drop it: the Chrome tab's grey delineation is the only separation
+    // the song surface needs.
+    scroll_->setFrameShape(QFrame::NoFrame);
 
     body_ = new song_body_widget(song_, scroll_);
     scroll_->setWidget(body_);

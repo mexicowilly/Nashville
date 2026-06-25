@@ -112,6 +112,31 @@ private:
     // --- Rhythm helpers ---
     static bool is_dotted(model::chord::time duration);
 
+    // Rest rendering.  Rests are drawn entirely in the rhythm row (below the
+    // rule), never in the chord-number zone.  paint_rest dispatches off the
+    // chord's duration (absent -> whole rest) to the right Bravura glyph.
+    static void paint_rest(QPainter& painter,
+                           const QRectF& rect,
+                           const model::chord& ch,
+                           const Fonts& fonts);
+
+    // SMuFL codepoint for the rest of a given duration.  Whole and half use
+    // the leger-line variants (restWholeLegerLine / restHalfLegerLine) so the
+    // short line — above for whole, below for half — distinguishes them with
+    // no staff present.
+    static QString rest_glyph_for(model::chord::time duration);
+
+    // The music (Bravura) font scaled so the reference quarter rest occupies
+    // k_rest_target_ratio of row_h_px, preserving SMuFL's relative rest sizes.
+    static QFont rest_font(const Fonts& fonts, qreal row_h_px);
+
+    // Nominal rhythm-row height in px, used by size_hint to reserve rest width.
+    // Must match bar_renderer's k_rhythm_row_px so reserved and painted widths
+    // agree.
+    static constexpr qreal k_rhythm_row_px    = 16.0;
+    // Fraction of the rhythm row the tallest (quarter) rest fills.
+    static constexpr qreal k_rest_target_ratio = 0.82;
+
     // Articulation vertical offsets within the articulation zone (top = 0).
     static constexpr qreal k_staccato_top_ratio = 0.08;
     static constexpr qreal k_tied_top_ratio      = 0.62;

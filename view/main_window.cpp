@@ -16,6 +16,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QEnterEvent>
+#include <QMouseEvent>
+#include <algorithm>
 
 namespace nashville::view
 {
@@ -73,6 +75,183 @@ protected:
     // Repaint on enter/leave so the circle appears/disappears instantly.
     void enterEvent(QEnterEvent* e) override { QAbstractButton::enterEvent(e); update(); }
     void leaveEvent(QEvent*      e) override { QAbstractButton::leaveEvent(e); update(); }
+};
+
+// ---------------------------------------------------------------------------
+// chrome_tab_bar — Chrome-style tab strip
+// ---------------------------------------------------------------------------
+// A stylesheet can round a tab's *top* corners but not its bottom ones the way
+// a Chrome tab needs them: there the corners flare *outward* into a concave
+// "scoop" so the active tab looks fused to the page below.  That shape isn't a
+// border-radius (which only curves inward), so we paint the bar ourselves.
+//
+// Only the current tab gets the full shape: a white fill, a 1px hairline up the
+// left flare / side / rounded top / right side / right flare, and an *open*
+// bottom that merges into the content pane.  A thin separator runs along the
+// foot of the strip but is interrupted directly beneath the current tab, so the
+// active tab reads as connected to the page while every other tab sits below an
+// unbroken line.  Inactive tabs are just their label (plus a soft rounded hover
+// fill) with no border at all — which is the "no lines around their borders"
+// look that was asked for.
+//
+// The geometry is built clockwise from the bottom-left baseline using
+// QPainterPath::arcTo.  Top corners are convex quarter-circles (radius
+// k_radius_top); bottom corners are concave quarter-circles (radius
+// k_radius_bottom) whose arc centres sit *outside* the tab body, which is what
+// produces the outward flare.
+class chrome_tab_bar : public QTabBar
+{
+public:
+    explicit chrome_tab_bar(QWidget* parent = nullptr)
+        : QTabBar(parent)
+    {
+        setDrawBase(false);       // we paint our own foot separator
+        setExpanding(false);      // tabs hug their content, left-aligned
+        setMouseTracking(true);   // needed so hover updates without a press
+    }
+
+protected:
+    // Reserve horizontal room for the two flares plus a little breathing space
+    // so labels never collide with the rounded corners, and guarantee enough
+    // height for the top rounding + flare to render cleanly.
+    QSize tabSizeHint(int index) const override
+    {
+        QSize s = QTabBar::tabSizeHint(index);
+        s.setWidth(s.width() + 2 * int(k_radius_bottom) + 8);
+        s.setHeight(std::max(s.height(), k_min_height));
+        return s;
+    }
+
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        const int h = tabAt(e->pos());
+        if (h != hover_index_) { hover_index_ = h; update(); }
+        QTabBar::mouseMoveEvent(e);
+    }
+
+    void leaveEvent(QEvent* e) override
+    {
+        if (hover_index_ != -1) { hover_index_ = -1; update(); }
+        QTabBar::leaveEvent(e);
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+
+        const int   sel  = currentIndex();
+        const qreal base = height() - 1.0;   // y of the foot separator
+
+        // 1) Foot separator, broken under the current tab so that tab connects
+        //    to the pane and every other tab sits below an unbroken line.
+        p.setPen(QPen(k_outline, 1.0));
+        if (sel < 0)
+        {
+            p.drawLine(QPointF(0, base), QPointF(width(), base));
+        }
+        else
+        {
+            const QRect sr = tabRect(sel);
+            p.drawLine(QPointF(0, base),            QPointF(sr.left(), base));
+            p.drawLine(QPointF(sr.left() + sr.width(), base), QPointF(width(), base));
+        }
+
+        // 2) Inactive tabs: optional hover fill, then the label. No borders.
+        for (int i = 0; i < count(); ++i)
+        {
+            if (i == sel) continue;
+            paint_inactive(p, i);
+        }
+
+        // 3) Current tab last so its flares overlap the neighbours cleanly.
+        if (sel >= 0)
+            paint_active(p, sel, base);
+    }
+
+private:
+    void paint_label(QPainter& p, int i, const QColor& color) const
+    {
+        const QRect r = tabRect(i);
+        // Left padding clears the flare; right padding clears the flare plus
+        // the custom close button that lives in the RightSide slot.
+        const int left  = r.left() + int(k_radius_bottom) + 6;
+        const int right = r.left() + r.width() - (int(k_radius_bottom) + 22);
+        if (right <= left) return;
+        const QRect textRect(QPoint(left, r.top()), QPoint(right, r.bottom()));
+        const QString txt = fontMetrics().elidedText(
+            tabText(i), Qt::ElideRight, textRect.width());
+        p.setPen(color);
+        p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, txt);
+    }
+
+    void paint_inactive(QPainter& p, int i) const
+    {
+        if (i == hover_index_)
+        {
+            const QRect r = tabRect(i).adjusted(
+                int(k_radius_bottom), 4, -int(k_radius_bottom), -2);
+            QPainterPath bg;
+            bg.addRoundedRect(QRectF(r), k_radius_top, k_radius_top);
+            p.fillPath(bg, k_hover);
+        }
+        paint_label(p, i, k_text_inactive);
+    }
+
+    void paint_active(QPainter& p, int i, qreal base) const
+    {
+        const QRect  tr = tabRect(i);
+        const qreal  L  = tr.left();
+        const qreal  R  = tr.left() + tr.width();
+        const qreal  T  = tr.top() + 1.0;     // 1px inset so the top stroke isn't clipped
+        const qreal  B  = base;               // foot of the tab == separator line
+        const qreal  rt = k_radius_top;
+        const qreal  rb = k_radius_bottom;
+
+        // Clockwise from the bottom-left baseline; bottom edge left open.
+        QPainterPath path;
+        path.moveTo(L, B);
+        path.arcTo(L - rb,          B - 2 * rb, 2 * rb, 2 * rb, 270,  90);  // bottom-left flare (concave)
+        path.lineTo(L + rb, T + rt);                                       // left side
+        path.arcTo(L + rb,          T,          2 * rt, 2 * rt, 180, -90);  // top-left (convex)
+        path.lineTo(R - rb - rt, T);                                       // top edge
+        path.arcTo(R - rb - 2 * rt, T,          2 * rt, 2 * rt,  90, -90);  // top-right (convex)
+        path.lineTo(R - rb, B - rb);                                       // right side
+        path.arcTo(R - rb,          B - 2 * rb, 2 * rb, 2 * rb, 180,  90);  // bottom-right flare (concave) -> (R, B)
+
+        // Fill the body white (close along the baseline), then stroke the open
+        // outline so the bottom edge stays seamless with the pane.
+        QPainterPath fill = path;
+        fill.closeSubpath();
+        p.fillPath(fill, Qt::white);
+        p.strokePath(path, QPen(k_outline, 1.0));
+
+        paint_label(p, i, k_text_active);
+    }
+
+    int hover_index_ = -1;
+
+    static constexpr qreal k_radius_top    = 8.0;
+    static constexpr qreal k_radius_bottom = 8.0;
+    static constexpr int   k_min_height    = 34;
+
+    inline static const QColor k_outline       {208, 208, 208};
+    inline static const QColor k_hover         {241, 243, 244};
+    inline static const QColor k_text_active   { 32,  32,  32};
+    inline static const QColor k_text_inactive { 95,  99, 104};
+};
+
+// QTabWidget::setTabBar is protected, so installing a custom bar has to happen
+// from inside a subclass.  This thin wrapper exists only to do that — every
+// other behaviour is plain QTabWidget.
+class chrome_tab_widget : public QTabWidget
+{
+public:
+    explicit chrome_tab_widget(QWidget* parent = nullptr)
+        : QTabWidget(parent)
+    {
+        setTabBar(new chrome_tab_bar(this));
+    }
 };
 
 main_window::main_window(database& db, QWidget* parent)
@@ -136,37 +315,26 @@ main_window::main_window(database& db, QWidget* parent)
     // The tab widget.  Tabs are closable; close requests come back to
     // close_tab_at where we flush-save and drop the tab.  Tabs are
     // movable so users can reorder their workspace.
-    tabs_ = new QTabWidget(this);
+    tabs_ = new chrome_tab_widget(this);
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
     tabs_->setDocumentMode(true);   // less chrome, more chart-like
 
-    // Force white tab backgrounds regardless of OS theme.  The chart is a
-    // "printed page" — every surface the user sees should read as white paper.
-    // The stylesheet targets QTabBar::tab so inactive and active tabs both get
-    // white backgrounds; the active tab gets a slightly heavier bottom border
-    // to indicate selection without relying on a theme colour.
-    // The close button is hidden here because we install our own custom
-    // tab_close_button widget (below) on every new tab.
+    // The Chrome-style tab bar is installed by chrome_tab_widget's constructor
+    // (QTabWidget::setTabBar is protected, so it can't be called from here).
+    // That bar paints each tab itself: rounded top corners, outward-flaring
+    // bottom corners on the current tab, and a foot separator that breaks under
+    // the current tab so it reads as fused to the content.
+
+    // The pane is just the white "printed page" the tabs sit on.  No border
+    // here — the tab bar draws its own foot separator (with the gap under the
+    // active tab), so a pane border would only double the line.  The default
+    // close-button subcontrol is collapsed to nothing because we install our
+    // own custom tab_close_button widget (below) on every tab.
     tabs_->setStyleSheet(
         "QTabWidget::pane {"
         "    border: none;"
         "    background: white;"
-        "}"
-        "QTabBar::tab {"
-        "    background: white;"
-        "    color: black;"
-        "    padding: 4px 8px 4px 10px;"
-        "    border: 1px solid #c0c0c0;"
-        "    border-bottom: none;"
-        "    margin-right: 2px;"
-        "}"
-        "QTabBar::tab:selected {"
-        "    background: white;"
-        "    border-bottom: 2px solid white;"  // merges visually with pane
-        "}"
-        "QTabBar::tab:hover:!selected {"
-        "    background: #f5f5f5;"
         "}"
         "QTabBar::close-button {"
         "    image: none;"        // hide the OS-provided close button image

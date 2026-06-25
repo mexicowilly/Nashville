@@ -451,7 +451,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     auto line_bar_height = [&](const std::vector<raw_bar>& bars) -> qreal {
         bool has_art = line_has_articulation(bars);
         for (const auto& rb : bars)
-            if (!rb.bar->empty() && rb.bar->chords().front().duration().has_value())
+            if (bar_renderer::is_duration_mode(*rb.bar))
                 return has_art ? duration_h_art : duration_h_bare;
         return has_art ? plain_h_art : plain_h_bare;
     };
@@ -556,8 +556,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             bar_layout bl;
             bl.bar              = b;
             bl.rect             = QRectF(x, bar_top_y, bar_w, actual_bar_h);
-            bl.is_duration_mode = !b->empty()
-                                && b->chords().front().duration().has_value();
+            bl.is_duration_mode = bar_renderer::is_duration_mode(*b);
             bl.draw_begin_repeat = repeat_flags[rb.song_index].first;
             bl.draw_end_repeat   = repeat_flags[rb.song_index].second;
 
@@ -888,7 +887,7 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
 {
     painter.save();
 
-    QFont title_font("Georgia", 16, QFont::Bold);
+    QFont title_font("Georgia", 12, QFont::Bold);
     painter.setFont(title_font);
     QFontMetricsF fm(title_font);
 

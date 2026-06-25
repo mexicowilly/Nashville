@@ -487,8 +487,14 @@ bool bar_renderer::is_duration_mode(const model::bar& bar)
 {
     if (bar.empty())
         return false;
-    // Model guarantees no mixed bars — check only the first chord.
-    return bar.chords().front().duration().has_value();
+    // A duration anywhere, or any rest, puts the bar in rhythm mode.  The UI
+    // keeps bars duration-uniform, but a rest with no explicit duration must
+    // still drop below the rule (as a whole rest), so we scan every chord
+    // rather than trusting the first one alone.
+    for (const auto& ch : bar.chords())
+        if (ch.duration().has_value() || ch.is_rest())
+            return true;
+    return false;
 }
 
 } // namespace nashville::view

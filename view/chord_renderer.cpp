@@ -42,6 +42,23 @@ QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
 
+    // A rest occupies no chord-number zone; its width is just the rest glyph
+    // (plus an augmentation dot when dotted) drawn in the rhythm row.  Height
+    // stays the standard chord-slot height so the row lines up with neighbours.
+    if (ch.is_rest())
+    {
+        const model::chord::time dur =
+            ch.duration().value_or(model::chord::time::WHOLE);
+        QFont rf = rest_font(fonts, k_rhythm_row_px);
+        QFontMetricsF rfm(rf);
+        qreal w = rfm.tightBoundingRect(rest_glyph_for(dur)).width();
+        if (is_dotted(dur))
+            w += k_element_spacing + 2.0 * 1.8;   // dot diameter
+        w += 4.0;                                  // a little horizontal breathing room
+        qreal total_height = nmFm.height() / k_number_zone_ratio;
+        return QSizeF(w, total_height);
+    }
+
     qreal row_width = 0;
 
     if (ch.step())
@@ -94,6 +111,13 @@ void chord_renderer::paint(QPainter& painter,
     if (ch.mode() == model::chord::type::UNDEFINED)
         return;
 
+    // A rest carries no chord symbol above the rule — it is drawn entirely in
+    // the rhythm row by paint_rhythm().  Returning here keeps the REST sentinel
+    // (number 0) from leaking into the chord-number row as a literal "0", and
+    // suppresses articulations/diamond, which don't apply to a rest.
+    if (ch.is_rest())
+        return;
+
     painter.save();
 
     QFontMetricsF art_fm(fonts.articulation);
@@ -128,6 +152,15 @@ void chord_renderer::paint_rhythm(QPainter& painter,
                                   const model::chord& ch,
                                   const Fonts& fonts)
 {
+    // Rests render in the rhythm row regardless of whether a duration is set
+    // (no duration -> whole rest), so they're handled before the duration
+    // guard below.
+    if (ch.is_rest())
+    {
+        paint_rest(painter, rect, ch, fonts);
+        return;
+    }
+
     if (!ch.duration())
         return;
 
@@ -634,6 +667,97 @@ bool chord_renderer::is_dotted(model::chord::time duration)
     return duration == model::chord::time::DOTTED_EIGHTH  ||
            duration == model::chord::time::DOTTED_QUARTER ||
            duration == model::chord::time::DOTTED_HALF;
+}
+
+// ---------------------------------------------------------------------------
+// Private: rest_glyph_for — SMuFL codepoint per duration
+// ---------------------------------------------------------------------------
+// Whole and half use the leger-line variants so a short horizontal line
+// disambiguates them with no staff: the whole rest's block hangs *below* its
+// line, the half rest's block sits *above* its line.  Dotted durations reuse
+// the same base glyph (the dot is drawn separately by paint_rest).
+QString chord_renderer::rest_glyph_for(model::chord::time duration)
+{
+    switch (duration)
+    {
+        case model::chord::time::WHOLE:          return QString(QChar(0xE4F4)); // restWholeLegerLine (line above)
+        case model::chord::time::HALF:
+        case model::chord::time::DOTTED_HALF:    return QString(QChar(0xE4F5)); // restHalfLegerLine (line below)
+        case model::chord::time::QUARTER:
+        case model::chord::time::DOTTED_QUARTER: return QString(QChar(0xE4E5)); // restQuarter
+        case model::chord::time::EIGHTH:
+        case model::chord::time::DOTTED_EIGHTH:  return QString(QChar(0xE4E6)); // rest8th
+        case model::chord::time::SIXTEENTH:      return QString(QChar(0xE4E7)); // rest16th
+    }
+    return QString(QChar(0xE4F4));   // unreachable; default to whole rest
+}
+
+// ---------------------------------------------------------------------------
+// Private: rest_font — scale Bravura so rest sizes are consistent
+// ---------------------------------------------------------------------------
+// SMuFL rests have intrinsic relative sizes (a quarter rest is tall, a whole
+// rest is a small block).  We pick a single font size from the *quarter* rest
+// — the tallest of the set — so it fills k_rest_target_ratio of the row, then
+// draw every rest at that size.  Measuring rather than assuming pt==px keeps
+// the result correct regardless of the device DPI.
+QFont chord_renderer::rest_font(const Fonts& fonts, qreal row_h_px)
+{
+    QFont f = fonts.music;
+    if (row_h_px <= 0.0)
+        return f;
+    f.setPointSizeF(row_h_px);   // initial guess; rescaled below
+    QFontMetricsF fm0(f);
+    const qreal ref_h = fm0.tightBoundingRect(QString(QChar(0xE4E5))).height(); // quarter rest
+    if (ref_h > 0.0)
+        f.setPointSizeF(f.pointSizeF() * (row_h_px * k_rest_target_ratio / ref_h));
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Private: paint_rest — draw a rest glyph centred in the rhythm row
+// ---------------------------------------------------------------------------
+void chord_renderer::paint_rest(QPainter& painter,
+                                const QRectF& rect,
+                                const model::chord& ch,
+                                const Fonts& fonts)
+{
+    const model::chord::time dur =
+        ch.duration().value_or(model::chord::time::WHOLE);
+    const bool dotted = is_dotted(dur);
+    const QString glyph = rest_glyph_for(dur);
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QColor ink = painter.pen().color();
+
+    QFont mf = rest_font(fonts, rect.height());
+    painter.setFont(mf);
+    QFontMetricsF fm(mf);
+
+    const QRectF tbr = fm.tightBoundingRect(glyph);
+
+    // Centre the glyph (plus the dot, when present) within the slot, both
+    // horizontally and vertically, so it reads as belonging to this column.
+    const qreal dot_r     = 1.8;
+    const qreal dot_space = dotted ? (k_element_spacing + 2.0 * dot_r) : 0.0;
+    const qreal total_w   = tbr.width() + dot_space;
+    const qreal ink_left  = rect.center().x() - total_w / 2.0;
+    const qreal draw_x    = ink_left - tbr.left();
+    const qreal draw_y    = rect.center().y() - (tbr.top() + tbr.height() / 2.0);
+
+    painter.setPen(QPen(ink, 1.0));
+    painter.drawText(QPointF(draw_x, draw_y), glyph);
+
+    if (dotted)
+    {
+        const qreal dot_x = draw_x + tbr.right() + k_element_spacing + dot_r;
+        const qreal dot_y = rect.center().y();
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(ink);
+        painter.drawEllipse(QPointF(dot_x, dot_y), dot_r, dot_r);
+    }
+
+    painter.restore();
 }
 
 } // namespace nashville::view

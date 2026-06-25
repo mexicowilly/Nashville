@@ -57,6 +57,9 @@ public:
     chord& is_diamond(bool state);
     bool is_pushed() const;
     chord& is_pushed(bool state);
+    // True when this chord is a rest (number_ == REST).  A rest carries a
+    // duration like any other chord; an unset duration renders as a whole rest.
+    bool is_rest() const;
     bool is_staccato() const;
     chord& is_staccato(bool state);
     bool is_tied() const;
@@ -119,6 +122,11 @@ inline bool chord::is_diamond() const
 inline bool chord::is_pushed() const
 {
     return is_pushed_;
+}
+
+inline bool chord::is_rest() const
+{
+    return number_ == REST;
 }
 
 inline bool chord::is_staccato() const
