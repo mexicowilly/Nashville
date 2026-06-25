@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS bar
     section TEXT,
     repeat INTEGER,
     voltas TEXT,
+    number_of_beats INTEGER,
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -210,15 +211,16 @@ SELECT bar.is_eol,
        time_signature.beat_type,
        time_signature.count,
        bar.repeat,
-       bar.voltas
+       bar.voltas,
+       bar.number_of_beats
 FROM bar
 LEFT JOIN time_signature ON time_signature.id = bar.time_sig_id
 WHERE bar.id = ?1;
 )";
 
 const char* INSERT_BAR_SQL = R"(
-INSERT INTO bar (time_sig_id, is_eol, section, repeat, voltas)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO bar (time_sig_id, is_eol, section, repeat, voltas, number_of_beats)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 RETURNING id;
 )";
 
@@ -616,6 +618,8 @@ std::uint64_t database::insert_bar(const model::bar& b)
         vtext.pop_back();
         sqlite3_bind_text(raw, 5, vtext.c_str(), vtext.length(), SQLITE_STATIC);
     }
+    if (b.number_of_beats())
+        sqlite3_bind_int(raw, 6, *b.number_of_beats());
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar: "s + error_msg(rc));
@@ -1233,6 +1237,10 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
         {
             assert(sqlite3_column_type(sel_b->ptr(), 5) == SQLITE_NULL);
         }
+        if (sqlite3_column_type(sel_b->ptr(), 6) == SQLITE_INTEGER)
+            bar.number_of_beats(sqlite3_column_int(sel_b->ptr(), 6));
+        else
+            assert(sqlite3_column_type(sel_b->ptr(), 6) == SQLITE_NULL);
 
         bar.chords(select_chords(bar_id));
         bars.push_back(bar);

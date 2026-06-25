@@ -30,6 +30,8 @@ public:
     bool empty() const;
     bool is_eol() const;
     bar& is_eol(bool state);
+    const std::optional<unsigned>& number_of_beats() const;
+    bar& number_of_beats(const std::optional<unsigned>& num);
     bar& parse_user_input(const std::string& str);
     repeat_status repeat() const;
     bar& repeat(repeat_status st);
@@ -52,6 +54,9 @@ private:
     // These are indexed from 0, even though they are numbered from
     // 1 in the UI
     std::set<unsigned> voltas_;
+    // If left unset, then the number is taken from the count
+    // of the time signature of the song.
+    std::optional<unsigned> number_of_beats_;
 };
 
 inline bar& bar::add_volta(unsigned v)
@@ -85,6 +90,17 @@ inline bool bar::empty() const
 inline bool bar::is_eol() const
 {
     return is_eol_;
+}
+
+inline const std::optional<unsigned>& bar::number_of_beats() const
+{
+    return number_of_beats_;
+}
+
+inline bar& bar::number_of_beats(const std::optional<unsigned>& num)
+{
+    number_of_beats_ = num;
+    return *this;
 }
 
 inline bar::repeat_status bar::repeat() const
