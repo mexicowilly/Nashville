@@ -128,7 +128,11 @@ modal_overlay::modal_overlay(QWidget* host)
 
 void modal_overlay::prompt_text(const QString& title,
                                 const QString& label,
-                                std::function<void(std::optional<QString>)> on_done)
+                                std::function<void(std::optional<QString>)> on_done,
+                                const QString& initial_text,
+                                bool allow_empty,
+                                bool select_all,
+                                int min_width)
 {
     // Build a body containing [label text on its own line] +
     // [QLineEdit].  The line edit is the default focus target so
@@ -145,6 +149,8 @@ void modal_overlay::prompt_text(const QString& title,
     bl->addWidget(prompt_label);
 
     auto* edit = new QLineEdit(body);
+    if (!initial_text.isEmpty())
+        edit->setText(initial_text);
     bl->addWidget(edit);
 
     // Enter in the text field = OK click.  Esc is handled at the
@@ -156,14 +162,15 @@ void modal_overlay::prompt_text(const QString& title,
     cfg.body_widget   = body;
     cfg.accept_label  = tr("OK");
     cfg.reject_label  = tr("Cancel");
-    cfg.default_focus = edit;
-    // Capture `edit` so we can read its text on accept.  Capture
-    // by raw pointer is safe because the overlay owns the body
-    // widget hierarchy and won't destroy it until dismiss runs,
-    // by which time we've already used the value.
-    cfg.on_accept = [edit, on_done]() {
+    cfg.default_focus      = edit;
+    cfg.select_all_on_focus = select_all;
+    cfg.min_width           = min_width;
+    // Capture `edit` and `allow_empty` so we can read the text on accept.
+    // Capture by raw pointer is safe because the overlay owns the body
+    // widget hierarchy and won't destroy it until dismiss runs.
+    cfg.on_accept = [edit, on_done, allow_empty]() {
         const QString trimmed = edit->text().trimmed();
-        if (trimmed.isEmpty())
+        if (trimmed.isEmpty() && !allow_empty)
             on_done(std::nullopt);
         else
             on_done(trimmed);
@@ -276,6 +283,11 @@ void modal_overlay::show_card(const card_config& cfg)
     // 400px is a comfortable reading width for a one-line input.
     card_->adjustSize();
     int max_w = std::min(420, host_ ? host_->width() - 40 : 420);
+    if (cfg.min_width > 0 && card_->width() < cfg.min_width)
+    {
+        card_->setFixedWidth(std::min(cfg.min_width, max_w));
+        card_->adjustSize();
+    }
     if (card_->width() > max_w)
     {
         card_->setFixedWidth(max_w);
@@ -292,7 +304,12 @@ void modal_overlay::show_card(const card_config& cfg)
     show();
     setFocus();
     if (cfg.default_focus)
+    {
         cfg.default_focus->setFocus();
+        if (cfg.select_all_on_focus)
+            if (auto* le = qobject_cast<QLineEdit*>(cfg.default_focus))
+                le->selectAll();
+    }
     else
         accept_btn_->setFocus();
 }

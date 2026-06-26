@@ -36,7 +36,8 @@ public:
                       bool line_duration_mode,
                       bool line_has_articulation,
                       bool draw_begin_repeat = false,
-                      bool draw_end_repeat   = false);
+                      bool draw_end_repeat   = false,
+                      bool draw_beat_parens  = false);
 
     // Returns the y-coordinate at the vertical centre of the number row
     // for a bar laid out into `rect`.  Match this value when placing any
@@ -56,6 +57,12 @@ public:
     // volta-bracket placement.  Sized to give the wings room to extend
     // outward without colliding with the bar's chord column.
     static constexpr qreal k_repeat_slot_w = 12.0;
+
+    // Width always reserved at the left of a bar for a time-signature glyph.
+    // Bars without a time sig leave this space empty so chord columns align.
+    // Public so paint_beat_dots in song_body_widget can align the dot row
+    // with the chord column.
+    static constexpr qreal k_time_sig_slot_w = 20.0;
 
     // Vertical split ratios for duration-mode bars (public so callers can derive heights)
     static constexpr qreal k_chord_slot_ratio = 0.60;
@@ -87,10 +94,6 @@ private:
     static void paint_repeat_mark(QPainter& painter,
                                   const QRectF& mark_rect,
                                   bool is_begin);
-
-    // Fixed horizontal slot reserved for a time signature at the left of every bar.
-    // Bars without a time sig leave this space empty so chord columns stay aligned.
-    static constexpr qreal k_time_sig_slot_w = 20.0;
 
     // Width given to the (otherwise zero-width) chord row of an empty
     // bar — i.e. one with no chords yet, as produced by the "Insert 1

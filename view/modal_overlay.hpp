@@ -52,15 +52,20 @@ public:
     explicit modal_overlay(QWidget* host);
 
     // Prompt the user for a single line of text.  Calls `on_done`
-    // with the trimmed result on OK, or std::nullopt on Cancel /
-    // dismiss.  An empty-after-trim result is treated as Cancel
-    // since nothing in the app accepts an empty string as a valid
-    // name.  Multiple prompts in flight are not supported; calling
-    // any prompt while one is already shown will replace its
-    // contents (caller is responsible for not doing that).
+    // with the trimmed result on OK (including empty string when
+    // allow_empty is true), or std::nullopt on Cancel / dismiss.
+    // When allow_empty is false (the default), an empty-after-trim
+    // result is treated as Cancel.  `initial_text` pre-populates
+    // the line edit.  `select_all` selects the initial text so the
+    // user can immediately replace it by typing.  `min_width` sets
+    // a minimum card width (px) to prevent long labels from wrapping.
     void prompt_text(const QString& title,
                      const QString& label,
-                     std::function<void(std::optional<QString>)> on_done);
+                     std::function<void(std::optional<QString>)> on_done,
+                     const QString& initial_text = {},
+                     bool allow_empty = false,
+                     bool select_all = false,
+                     int min_width = 0);
 
     // Yes/No confirmation.  `on_done` receives true iff the user
     // clicked Yes; clicking No, clicking the background, or
@@ -114,6 +119,14 @@ private:
         // Optional default-focus target inside the body.  If null,
         // the accept button takes focus.
         QWidget* default_focus = nullptr;
+        // When true, call selectAll() on default_focus after focusing it
+        // (useful for pre-filled line edits where the user will likely
+        // retype the whole value rather than amend it).
+        bool select_all_on_focus = false;
+        // Minimum card width in pixels.  0 means no override (card sizes
+        // to its content up to the 420px cap).  Use when the label text
+        // is long enough that the auto-sized card would wrap awkwardly.
+        int min_width = 0;
     };
     void show_card(const card_config& cfg);
 

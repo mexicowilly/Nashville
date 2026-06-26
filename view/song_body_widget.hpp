@@ -20,6 +20,11 @@ class QContextMenuEvent;
 namespace nashville::view
 {
 
+// Forward declaration so song_body_widget can hold a pointer to the overlay
+// without a full include (which would pull QPrinter headers and cause
+// namespace pollution when song_body_widget.hpp is included by main_window.cpp).
+class modal_overlay;
+
 // Renders a song chart and supports click-to-edit on the title and on the
 // three margin elements (key, time signature, tempo), plus click-to-insert
 // for new bars via dashed "ghost" rectangles that appear on hover.  The
@@ -78,6 +83,12 @@ class song_body_widget : public QWidget
 public:
     explicit song_body_widget(model::song& song, QWidget* parent = nullptr);
 
+    // Supply the application-level modal overlay so this widget can show
+    // Wayland-safe prompts.  Must be called before any prompt_*_for_selection
+    // methods are invoked.  The pointer is non-owning; the overlay's lifetime
+    // is managed by main_window.
+    void set_overlay(modal_overlay* overlay) { overlay_ = overlay; }
+
     // Call after font changes or song data changes.
     void rebuild();
 
@@ -101,6 +112,22 @@ public:
     // time we reach this method we're already in storage coordinates.
     void apply_voltas_to_selection(const std::set<unsigned>& voltas);
 
+    // Opens a modal QInputDialog prompting for a custom number of beats for
+    // the selected bars.  Empty input (or the song's default beat count)
+    // clears the override, restoring the bars to normal.  Out-of-range or
+    // non-numeric input is rejected silently.  Public because both the
+    // right-click context menu and the menubar "Bar > Custom beats..." action
+    // invoke it.
+    void prompt_beats_for_selection();
+
+    // Sets (or clears, when beats == nullopt) the number_of_beats override on
+    // every selected bar and rebuilds.
+    void apply_beats_to_selection(std::optional<unsigned> beats);
+
+    // Returns the shared number_of_beats across all selected bars iff they
+    // all agree (including all nullopt), nullopt otherwise.
+    std::optional<std::optional<unsigned>> common_beats_of_selection() const;
+
     // Opens a modal QInputDialog prompting for a comma-separated list of
     // 1-indexed volta numbers, prefilled from the current selection iff
     // every selected bar carries the same volta set.  On accept, parses
@@ -114,12 +141,11 @@ public:
     // "Bar > Voltas..." action invoke it.
     void prompt_voltas_for_selection();
 
-    // Returns the shared repeat_status across all selected bars iff they
+    // Returns the shared repeat bitmask across all selected bars iff they
     // all agree, nullopt otherwise (mixed selection or empty selection).
-    // Used by app.cpp to drive the checkmark state on the "Repeat"
-    // submenu items: exactly one item checked when the selection is
-    // homogeneous, none checked when it's mixed.
-    std::optional<model::bar::repeat_status> common_repeat_of_selection() const;
+    // The value is an int (ANDed repeat_status bits), not the enum itself,
+    // because a bar may carry both BEGIN and END simultaneously.
+    std::optional<int> common_repeat_of_selection() const;
     // Same idea for the volta set.  When all selected bars carry the
     // same volta set (including all empty), returns that set; otherwise
     // nullopt.  The "Voltas..." dialog uses this to prefill its text
@@ -248,6 +274,11 @@ private:
     // compute_layout when any bar on the line carries a volta number.
     void paint_volta_brackets(QPainter& painter,
                               const line_layout& line) const;
+    // Paints a row of filled dots above bl.rect for a bar whose number_of_beats
+    // differs from the song time signature.  beat_count dots are drawn,
+    // centred horizontally over the bar's chord column.
+    void paint_beat_dots(QPainter& painter,
+                         const bar_layout& bl) const;
 
     // Returns a per-song-bar pair {draw_begin_repeat, draw_end_repeat}
     // derived from each bar's repeat() flag PLUS the implicit end-repeat
@@ -408,7 +439,16 @@ private:
     int  drag_start_margin_ = 0;
 
     // --- Constants ---
-    static constexpr qreal k_title_padding       = 16.0;  // above and below title text
+    // Padding above and below the title text.  Kept tight: a Nashville chart
+    // treats vertical space as a primary resource, so the title hugs the top
+    // of the page and sits close to the chart body rather than floating in a
+    // large band of whitespace.
+    static constexpr qreal k_title_padding       = 6.0;   // above and below title text
+    // Vertical gap between the title block and the first chart line.  This is
+    // deliberately separate from k_content_padding (which governs the left/
+    // right/bottom content insets): the title already carries its own bottom
+    // padding, so reusing the full content padding here double-padded the gap.
+    static constexpr qreal k_title_content_gap   = 4.0;
     static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
     static constexpr qreal k_line_spacing_normal = 10.0;  // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
@@ -417,6 +457,11 @@ private:
     // small downward hook).  Lines without voltas don't reserve this so
     // the rest of the chart packs as densely as before.
     static constexpr qreal k_volta_zone_height   = 18.0;
+    // Vertical zone above a bar's rect when that bar has a custom beat count.
+    // Holds a row of filled dots (one per beat) centred horizontally over the
+    // bar's chord column and all articulations above it.  Sized to hold one
+    // dot diameter plus small top/bottom breathing room.
+    static constexpr qreal k_beat_dot_zone_height = 10.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;
     static constexpr int   k_min_margin_width   = 60;
@@ -432,6 +477,7 @@ private:
     std::vector<line_layout> lines_;
     chord_renderer::Fonts    fonts_;
     int                      margin_width_ = k_default_margin_width;
+    modal_overlay*           overlay_      = nullptr;  // non-owning; set by main_window
 
     // The annotation overlay.  Order matters: constructed in the
     // initialiser list of the constructor AFTER song_ (because it

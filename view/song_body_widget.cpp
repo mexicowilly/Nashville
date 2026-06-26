@@ -12,7 +12,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QActionGroup>
-#include <QInputDialog>
+#include "modal_overlay.hpp"
 #include <QKeySequence>
 #include <stdexcept>
 #include <cmath>
@@ -43,9 +43,9 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
               const qreal th = title_height();
               return QRectF(
                   margin_width_ + k_content_padding,
-                  th + k_content_padding,
+                  th + k_title_content_gap,
                   std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
-                  std::max(0.0, height() - th - k_content_padding * 2));
+                  std::max(0.0, height() - th - k_title_content_gap - k_content_padding));
           })
 {
     setMouseTracking(true);
@@ -151,9 +151,9 @@ void song_body_widget::rebuild()
 {
     qreal title_h = title_height();
     QRectF content_rect(margin_width_ + k_content_padding,
-                       title_h + k_content_padding,
+                       title_h + k_title_content_gap,
                        std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
-                       std::max(0.0, height() - title_h - k_content_padding * 2));
+                       std::max(0.0, height() - title_h - k_title_content_gap - k_content_padding));
     compute_layout(content_rect);
     update();
 }
@@ -199,11 +199,12 @@ std::vector<std::pair<bool, bool>> song_body_widget::compute_repeat_flags() cons
     std::vector<std::pair<bool, bool>> flags(bars.size(), {false, false});
 
     // Step 1: explicit repeat flags from the model.
+    // repeat() is now an ANDed bitmask — a bar can carry both BEGIN and END.
     for (std::size_t i = 0; i < bars.size(); ++i)
     {
-        if (bars[i].repeat() == model::bar::repeat_status::BEGIN)
+        if (bars[i].repeat() & model::bar::repeat_status::BEGIN)
             flags[i].first = true;
-        else if (bars[i].repeat() == model::bar::repeat_status::END)
+        if (bars[i].repeat() & model::bar::repeat_status::END)
             flags[i].second = true;
     }
 
@@ -247,7 +248,7 @@ std::vector<std::pair<bool, bool>> song_body_widget::compute_repeat_flags() cons
         // volta belonging to the section it closes — common when the
         // last volta is a single-bar ending that also bears the END
         // mark).
-        if (bars[i].repeat() == model::bar::repeat_status::BEGIN)
+        if (bars[i].repeat() & model::bar::repeat_status::BEGIN)
             section_stack.push_back(i);
 
         const auto& vs = bars[i].voltas();
@@ -281,7 +282,7 @@ std::vector<std::pair<bool, bool>> song_body_widget::compute_repeat_flags() cons
             }
         }
 
-        if (bars[i].repeat() == model::bar::repeat_status::END)
+        if (bars[i].repeat() & model::bar::repeat_status::END)
         {
             // Pop the innermost section.  If the stack is empty here,
             // the input has more ENDs than BEGINs — defensively ignore
@@ -448,12 +449,26 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         return false;
     };
 
+    // Helper: does any bar on this line carry a custom beat count that
+    // differs from the song's time signature?  When true, compute_layout
+    // reserves k_beat_dot_zone_height above the chord row for the dot row.
+    auto line_has_beat_dots = [&](const std::vector<raw_bar>& bars) {
+        const unsigned sig_beats = song_.time_sig().count();
+        for (const auto& rb : bars)
+            if (rb.bar->number_of_beats().has_value()
+                && *rb.bar->number_of_beats() != sig_beats)
+                return true;
+        return false;
+    };
+
     auto line_bar_height = [&](const std::vector<raw_bar>& bars) -> qreal {
-        bool has_art = line_has_articulation(bars);
+        bool has_art  = line_has_articulation(bars);
+        bool has_dots = line_has_beat_dots(bars);
+        qreal beat_dot_h = has_dots ? k_beat_dot_zone_height : 0.0;
         for (const auto& rb : bars)
             if (bar_renderer::is_duration_mode(*rb.bar))
-                return has_art ? duration_h_art : duration_h_bare;
-        return has_art ? plain_h_art : plain_h_bare;
+                return beat_dot_h + (has_art ? duration_h_art : duration_h_bare);
+        return beat_dot_h + (has_art ? plain_h_art : plain_h_bare);
     };
 
     // --- Pass 3: compute per-column bar widths ---
@@ -511,17 +526,21 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         line_layout line;
 
         qreal actual_bar_h = line_bar_height(raw.bars);
-        line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art);
+        line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art
+                              || actual_bar_h == k_beat_dot_zone_height + duration_h_bare
+                              || actual_bar_h == k_beat_dot_zone_height + duration_h_art);
         line.has_articulation = line_has_articulation(raw.bars);
         line.has_voltas       = line_has_voltas(raw.bars);
+        line.has_beat_dots    = line_has_beat_dots(raw.bars);
 
         // Reserve a volta zone above the bar row when needed.  The bars
         // themselves get pushed down by this amount; line.rect covers
         // the whole stack (volta zone + bars) so callers that need a
         // line-bounding rect (insertion-slot placement, section-end
         // rules, hit-testing whitespace) see the true vertical extent.
-        qreal volta_zone_h = line.has_voltas ? k_volta_zone_height : 0.0;
-        qreal bar_top_y    = y + volta_zone_h;
+        qreal volta_zone_h    = line.has_voltas    ? k_volta_zone_height    : 0.0;
+        qreal beat_dot_zone_h = line.has_beat_dots ? k_beat_dot_zone_height : 0.0;
+        qreal bar_top_y       = y + volta_zone_h + beat_dot_zone_h;
 
         // Section label comes from the first bar only.  Sections on
         // non-first bars are silently ignored — see the UI invariant.
@@ -555,10 +574,22 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
             bar_layout bl;
             bl.bar              = b;
-            bl.rect             = QRectF(x, bar_top_y, bar_w, actual_bar_h);
+            bl.rect             = QRectF(x, bar_top_y, bar_w, actual_bar_h - beat_dot_zone_h);
             bl.is_duration_mode = bar_renderer::is_duration_mode(*b);
             bl.draw_begin_repeat = repeat_flags[rb.song_index].first;
             bl.draw_end_repeat   = repeat_flags[rb.song_index].second;
+
+            // Beat parens: this bar has a custom beat count that differs
+            // from the song's time signature.
+            {
+                const unsigned sig_beats = song_.time_sig().count();
+                if (b->number_of_beats().has_value()
+                    && *b->number_of_beats() != sig_beats)
+                {
+                    bl.draw_beat_parens = true;
+                    bl.beat_count       = *b->number_of_beats();
+                }
+            }
 
             // Centre the continuation-dot vertically on the chord-number
             // row by asking bar_renderer where that row will paint.  Doing
@@ -1058,7 +1089,11 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
 
         bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
                             line.has_articulation,
-                            bl.draw_begin_repeat, bl.draw_end_repeat);
+                            bl.draw_begin_repeat, bl.draw_end_repeat,
+                            bl.draw_beat_parens);
+
+        if (bl.draw_beat_parens)
+            paint_beat_dots(painter, bl);
 
         if (bl.show_continuation_dot)
             paint_continuation_dot(painter, bl.rect, bl.num_center_y);
@@ -1136,6 +1171,82 @@ void song_body_widget::paint_continuation_dot(QPainter& painter,
     painter.setBrush(Qt::black);
     painter.setPen(Qt::NoPen);
     painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r);
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
+// paint_beat_dots
+// ---------------------------------------------------------------------------
+// Draws one filled dot per beat, centred horizontally over the bar's chord
+// column and vertically centred in the k_beat_dot_zone_height strip that
+// compute_layout reserved immediately above bl.rect.  The dots are evenly
+// spaced within the chord-column width (excluding the time-sig slot on the
+// left), so they read as a count of beats rather than as decoration.
+void song_body_widget::paint_beat_dots(QPainter& painter,
+                                       const bar_layout& bl) const
+{
+    if (bl.beat_count == 0 || !bl.bar)
+        return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    constexpr qreal dot_r = 2.2;
+    const qreal zone_top  = bl.rect.top() - k_beat_dot_zone_height;
+    const qreal dot_cy    = zone_top + k_beat_dot_zone_height / 2.0;
+
+    // Mirror bar_renderer's geometry exactly.
+    // The '(' is placed at chords_left - paren_w - 2.
+    // The ')' is placed at last_chord_right + 2, where last_chord_right is the
+    // right edge of the last chord's *natural* (unscaled) glyph width — the
+    // same value bar_renderer uses.  We replicate that here so the dots span
+    // exactly [chords_left, last_chord_right], the same content region.
+    const qreal interior_left  = bl.rect.left()
+                                + (bl.draw_begin_repeat ? bar_renderer::k_repeat_slot_w : 0.0);
+    const qreal interior_right = bl.rect.right()
+                                 - (bl.draw_end_repeat  ? bar_renderer::k_repeat_slot_w : 0.0);
+    const qreal chords_left    = interior_left + bar_renderer::k_time_sig_slot_w;
+
+    // Replicate bar_renderer's walk exactly:
+    //   x advances by slot_width (= natural_width * scale) between chords,
+    //   last_chord_right = x + natural_width  (unscaled — same formula bar_renderer uses).
+    // This ensures the dot span [chords_left, last_chord_right] matches
+    // the '(' inner edge and ')' outer-left edge precisely.
+    constexpr qreal k_inter = 6.0;
+    qreal total_chord_width = 0.0;
+    for (const auto& ch : bl.bar->chords())
+        total_chord_width += chord_renderer::size_hint(ch, fonts_).width();
+    const std::size_t nc = bl.bar->chords().size();
+    const qreal available_w = (interior_right - chords_left)
+                              - k_inter * (nc > 0 ? nc - 1 : 0);
+    const qreal scale = (total_chord_width > 0.0) ? available_w / total_chord_width : 1.0;
+
+    qreal x = chords_left;
+    qreal last_chord_right = chords_left;
+    for (const auto& ch : bl.bar->chords())
+    {
+        const qreal w = chord_renderer::size_hint(ch, fonts_).width();
+        last_chord_right = x + w;          // unscaled — matches bar_renderer
+        x += w * scale + k_inter;          // scaled advance — matches bar_renderer
+    }
+
+    // Centre dots across the full outer paren span so they read as
+    // belonging to the parenthesised group, not to one side of it.
+    QFontMetricsF pfm(fonts_.number);
+    const qreal paren_w   = pfm.horizontalAdvance("(");
+    const qreal span_left  = chords_left - paren_w - 2.0;
+    const qreal span_right = last_chord_right + 2.0 + paren_w;
+    const qreal span_w = span_right - span_left;
+    const unsigned n   = bl.beat_count;
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::black);
+    for (unsigned i = 0; i < n; ++i)
+    {
+        const qreal slot_w = span_w / static_cast<qreal>(n);
+        const qreal dot_cx = span_left + slot_w * (i + 0.5);
+        painter.drawEllipse(QPointF(dot_cx, dot_cy), dot_r, dot_r);
+    }
+
     painter.restore();
 }
 
@@ -2917,9 +3028,22 @@ void song_body_widget::apply_repeat_to_selection(model::bar::repeat_status st)
     {
         if (idx >= bars_copy.size())
             continue;
-        if (bars_copy[idx].repeat() == st)
+        int current = bars_copy[idx].repeat();
+        int next;
+        if (st == model::bar::repeat_status::NONE)
+        {
+            // Clear all bits.
+            next = model::bar::repeat_status::NONE;
+        }
+        else
+        {
+            // Toggle the requested bit (BEGIN or END) independently.
+            // This lets a bar carry both marks simultaneously.
+            next = current ^ static_cast<int>(st);
+        }
+        if (next == current)
             continue;
-        bars_copy[idx].repeat(st);
+        bars_copy[idx].repeat(next);
         any_changed = true;
     }
     if (!any_changed)
@@ -2987,14 +3111,14 @@ void song_body_widget::apply_end_line_to_selection()
     rebuild();
 }
 
-std::optional<model::bar::repeat_status>
+std::optional<int>
 song_body_widget::common_repeat_of_selection() const
 {
     if (selected_bars_.empty())
         return std::nullopt;
 
     const auto& bars = song_.bars();
-    std::optional<model::bar::repeat_status> shared;
+    std::optional<int> shared;
     for (std::size_t idx : selected_bars_)
     {
         if (idx >= bars.size())
@@ -3171,6 +3295,92 @@ void song_body_widget::insert_bar_relative_to_selection(bool after)
 }
 
 // ---------------------------------------------------------------------------
+// common_beats_of_selection
+// ---------------------------------------------------------------------------
+// Returns the shared number_of_beats() across all selected bars iff they
+// all agree, nullopt otherwise.  The return type is optional<optional<unsigned>>:
+// the outer optional is nullopt when the selection is heterogeneous; the inner
+// optional is nullopt when every selected bar has no override set (i.e. all
+// bars use the song's time-signature beat count).
+std::optional<std::optional<unsigned>>
+song_body_widget::common_beats_of_selection() const
+{
+    if (selected_bars_.empty())
+        return std::nullopt;
+    std::optional<unsigned> first = song_.bars()[*selected_bars_.begin()].number_of_beats();
+    for (std::size_t i : selected_bars_)
+        if (song_.bars()[i].number_of_beats() != first)
+            return std::nullopt;
+    return first;
+}
+
+// ---------------------------------------------------------------------------
+// apply_beats_to_selection
+// ---------------------------------------------------------------------------
+void song_body_widget::apply_beats_to_selection(std::optional<unsigned> beats)
+{
+    if (selected_bars_.empty())
+        return;
+    for (std::size_t i : selected_bars_)
+        const_cast<model::bar&>(song_.bars()[i]).number_of_beats(beats);
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
+// prompt_beats_for_selection
+// ---------------------------------------------------------------------------
+// The dialog accepts a positive integer for a custom beat count, or an empty
+// string to clear the override on all selected bars.  The song's own time-
+// signature count is shown as the placeholder so users understand what
+// "normal" means here.  Entering that exact number is treated as "clear" —
+// it has no visible effect and avoids leaving a spurious override that the
+// rendering would then ignore anyway.
+void song_body_widget::prompt_beats_for_selection()
+{
+    if (!has_selection() || !overlay_)
+        return;
+
+    const unsigned sig_beats = song_.time_sig().count();
+
+    // Prefill: use the current custom beat count if the selection is
+    // homogeneous and has one set; otherwise fall back to the song's
+    // time-signature count so the field is never empty.
+    unsigned prefill = sig_beats;
+    if (auto shared = common_beats_of_selection())
+        if (shared->has_value())
+            prefill = **shared;
+
+    overlay_->prompt_text(
+        tr("Custom beats"),
+        tr("Number of beats:"),
+        [this, sig_beats](std::optional<QString> result) {
+            if (!result)
+                return;  // user cancelled
+
+            const QString text = result->trimmed();
+
+            // Empty string → clear the override (fall back to song's time sig).
+            if (text.isEmpty())
+            {
+                apply_beats_to_selection(std::nullopt);
+                return;
+            }
+
+            bool num_ok = false;
+            unsigned n = text.toUInt(&num_ok);
+            if (!num_ok || n == 0 || n > 32)
+                return;  // reject non-numeric, zero, or implausibly large values
+
+            // Entering the song's own beat count is equivalent to clearing.
+            apply_beats_to_selection(n == sig_beats ? std::nullopt
+                                                    : std::optional<unsigned>(n));
+        },
+        QString::number(prefill),
+        /*allow_empty=*/true,
+        /*select_all=*/true);
+}
+
+// ---------------------------------------------------------------------------
 // prompt_voltas_for_selection
 // ---------------------------------------------------------------------------
 // Modal prompt for a comma-separated list of 1-indexed volta numbers.
@@ -3183,7 +3393,7 @@ void song_body_widget::insert_bar_relative_to_selection(bool after)
 // model's 0-indexed convention (see bar.hpp's voltas_ comment).
 void song_body_widget::prompt_voltas_for_selection()
 {
-    if (!has_selection())
+    if (!has_selection() || !overlay_)
         return;
 
     // Prefill from the selection iff every selected bar carries the
@@ -3199,29 +3409,36 @@ void song_body_widget::prompt_voltas_for_selection()
         initial = parts.join(", ");
     }
 
-    bool ok = false;
-    QString text = QInputDialog::getText(
-        this, tr("Voltas"),
+    overlay_->prompt_text(
+        tr("Voltas"),
         tr("Volta numbers (comma-separated, 1-indexed; empty to clear):"),
-        QLineEdit::Normal, initial, &ok);
-    if (!ok)
-        return;   // user cancelled — leave the model untouched
+        [this](std::optional<QString> result) {
+            if (!result)
+                return;  // user cancelled — leave the model untouched
 
-    std::set<unsigned> parsed;
-    const QStringList tokens = text.split(',', Qt::SkipEmptyParts);
-    for (const QString& tok : tokens)
-    {
-        QString t = tok.trimmed();
-        if (t.isEmpty())
-            continue;   // tolerate "1, ,2" — common typo
-        bool num_ok = false;
-        unsigned n = t.toUInt(&num_ok);
-        if (!num_ok || n == 0)
-            return;     // invalid token: silently abort the whole apply
-        parsed.insert(n - 1);  // store 0-indexed
-    }
+            // Empty string means "clear all voltas" — result is "" not nullopt
+            // because we pass allow_empty=true.
+            const QString text = *result;
+            std::set<unsigned> parsed;
+            const QStringList tokens = text.split(',', Qt::SkipEmptyParts);
+            for (const QString& tok : tokens)
+            {
+                QString t = tok.trimmed();
+                if (t.isEmpty())
+                    continue;   // tolerate "1, ,2" — common typo
+                bool num_ok = false;
+                unsigned n = t.toUInt(&num_ok);
+                if (!num_ok || n == 0)
+                    return;     // invalid token: silently abort the whole apply
+                parsed.insert(n - 1);  // store 0-indexed
+            }
 
-    apply_voltas_to_selection(parsed);
+            apply_voltas_to_selection(parsed);
+        },
+        initial,
+        /*allow_empty=*/true,
+        /*select_all=*/false,
+        /*min_width=*/480);
 }
 
 // ---------------------------------------------------------------------------
@@ -3276,23 +3493,22 @@ void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
     menu.addSeparator();
 
     QMenu* repeat_menu = menu.addMenu(tr("Repeat"));
-    auto* repeat_group = new QActionGroup(&menu);
-    repeat_group->setExclusive(true);
+    // BEGIN and END are now independent bits — a bar can carry both.
+    // Items are checkable but not mutually exclusive; each toggles its own bit.
+    using repeat_status = model::bar::repeat_status;
+    const auto shared_repeat = common_repeat_of_selection();
 
     struct entry { const char* label; repeat_status value; };
     static const entry entries[] = {
-        { "None",  repeat_status::NONE  },
         { "Begin", repeat_status::BEGIN },
         { "End",   repeat_status::END   },
     };
-
-    const auto shared = common_repeat_of_selection();
     for (const auto& e : entries)
     {
         QAction* a = repeat_menu->addAction(tr(e.label));
         a->setCheckable(true);
-        a->setActionGroup(repeat_group);
-        a->setChecked(shared.has_value() && *shared == e.value);
+        a->setChecked(shared_repeat.has_value()
+                      && (*shared_repeat & static_cast<int>(e.value)));
         repeat_status v = e.value;
         connect(a, &QAction::triggered, this, [this, v]() {
             apply_repeat_to_selection(v);
@@ -3302,6 +3518,11 @@ void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
     QAction* voltas_act = menu.addAction(tr("Voltas..."));
     connect(voltas_act, &QAction::triggered, this, [this]() {
         prompt_voltas_for_selection();
+    });
+
+    QAction* beats_act = menu.addAction(tr("Custom beats..."));
+    connect(beats_act, &QAction::triggered, this, [this]() {
+        prompt_beats_for_selection();
     });
 
     menu.exec(global_pos);

@@ -56,7 +56,6 @@
      <property name="title">
       <string>Repeat</string>
      </property>
-     <addaction name="actionNone"/>
      <addaction name="actionBegin"/>
      <addaction name="actionEnd"/>
     </widget>
@@ -67,6 +66,7 @@
     <addaction name="separator"/>
     <addaction name="menuRepeat"/>
     <addaction name="actionVoltas"/>
+    <addaction name="actionCustomBeats"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuSong"/>
@@ -81,14 +81,6 @@
   <action name="actionRepeat">
    <property name="text">
     <string>Repeat</string>
-   </property>
-  </action>
-  <action name="actionNone">
-   <property name="text">
-    <string>None</string>
-   </property>
-   <property name="checkable">
-    <bool>true</bool>
    </property>
   </action>
   <action name="actionBegin">
@@ -110,6 +102,11 @@
   <action name="actionVoltas">
    <property name="text">
     <string>Voltas...</string>
+   </property>
+  </action>
+  <action name="actionCustomBeats">
+   <property name="text">
+    <string>Custom beats...</string>
    </property>
   </action>
   <action name="actionInsertBefore">

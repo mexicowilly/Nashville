@@ -18,6 +18,14 @@ struct bar_layout
     bool show_continuation_dot         = false;  // paint dot in gap after this bar
     qreal num_center_y                  = 0.0;    // vertical centre of number row, for dot placement
 
+    // --- Custom beat count ---
+    // Set when this bar's number_of_beats() differs from the song's time
+    // signature count.  draw_beat_parens drives the bar_renderer to wrap
+    // every chord number in parentheses; beat_count drives song_body_widget
+    // to paint the dot row in the zone above the bar rect.
+    bool draw_beat_parens = false;
+    unsigned beat_count   = 0;     // number of dots to draw (valid iff draw_beat_parens)
+
     // --- Repeat marks ---
     // These are derived from the model's repeat() flag at layout time and
     // from the volta analysis: a non-final volta ends with an implicit end
@@ -54,6 +62,7 @@ struct line_layout
     bool draw_section_end_rule = false;     // draw gray rule below this line (section boundary)
     bool has_articulation      = false;     // true if ANY chord on this line has a push/staccato/tie
     bool has_voltas            = false;     // true if any bar on this line carries a volta number
+    bool has_beat_dots         = false;     // true if any bar on this line has a custom beat count
     std::vector<volta_span> volta_spans;    // grouped runs of bars sharing a volta set
 };
 

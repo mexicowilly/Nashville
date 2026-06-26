@@ -13,11 +13,11 @@ namespace nashville::model
 class bar : public loggable
 {
 public:
-    enum class repeat_status
+    enum repeat_status
     {
-        NONE,
-        BEGIN,
-        END
+        NONE = 0,
+        BEGIN = 1,
+        END = 2
     };
 
     bar();
@@ -33,8 +33,12 @@ public:
     const std::optional<unsigned>& number_of_beats() const;
     bar& number_of_beats(const std::optional<unsigned>& num);
     bar& parse_user_input(const std::string& str);
-    repeat_status repeat() const;
-    bar& repeat(repeat_status st);
+    // This is checked by ANDing against the enum values. A bar
+    // can be both the beginning and the end of a repeat.
+    int repeat() const;
+    // This is set by ANDing the enum values. A bar can be both
+    // the beginning and the end of a repeat.
+    bar& repeat(int st);
     const std::optional<std::string>& section() const;
     // Assigns a section label.  Passing the empty string clears the
     // section (the optional becomes nullopt) — the empty string is not
@@ -50,7 +54,7 @@ private:
     std::optional<time_signature> time_signature_;
     bool is_eol_ = false;
     std::optional<std::string> section_;
-    repeat_status repeat_ = repeat_status::NONE;
+    int repeat_ = repeat_status::NONE;
     // These are indexed from 0, even though they are numbered from
     // 1 in the UI
     std::set<unsigned> voltas_;
@@ -103,12 +107,12 @@ inline bar& bar::number_of_beats(const std::optional<unsigned>& num)
     return *this;
 }
 
-inline bar::repeat_status bar::repeat() const
+inline int bar::repeat() const
 {
     return repeat_;
 }
 
-inline bar& bar::repeat(repeat_status st)
+inline bar& bar::repeat(int st)
 {
     repeat_ = st;
     return *this;

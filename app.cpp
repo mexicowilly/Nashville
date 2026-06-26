@@ -135,14 +135,8 @@ void app::wire_bar_menu()
 {
     using repeat_status = model::bar::repeat_status;
 
-    auto* group = new QActionGroup(&main_win_);
-    group->setExclusive(true);
-    group->addAction(nashville_win_.actionNone);
-    group->addAction(nashville_win_.actionBegin);
-    group->addAction(nashville_win_.actionEnd);
-
-    QObject::connect(nashville_win_.actionNone, &QAction::triggered,
-        [this]() { if (auto* b = current_body()) b->apply_repeat_to_selection(repeat_status::NONE); });
+    // BEGIN and END are now independent bits — no exclusive QActionGroup.
+    // "None" clears all bits; "Begin" and "End" each toggle their own bit.
     QObject::connect(nashville_win_.actionBegin, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->apply_repeat_to_selection(repeat_status::BEGIN); });
     QObject::connect(nashville_win_.actionEnd, &QAction::triggered,
@@ -150,6 +144,9 @@ void app::wire_bar_menu()
 
     QObject::connect(nashville_win_.actionVoltas, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->prompt_voltas_for_selection(); });
+
+    QObject::connect(nashville_win_.actionCustomBeats, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->prompt_beats_for_selection(); });
 
     QObject::connect(nashville_win_.actionInsertBefore, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->insert_bar_relative_to_selection(/*after=*/false); });
@@ -182,6 +179,7 @@ void app::wire_bar_menu()
             nashville_win_.actionEndLine->setEnabled(sel);
             nashville_win_.menuRepeat->setEnabled(sel);
             nashville_win_.actionVoltas->setEnabled(sel);
+            nashville_win_.actionCustomBeats->setEnabled(sel);
             nashville_win_.actionDelete->setEnabled(sel);
         });
 
@@ -189,18 +187,17 @@ void app::wire_bar_menu()
         [this]() {
             auto* b = current_body();
             if (!b) {
-                nashville_win_.actionNone->setChecked(false);
                 nashville_win_.actionBegin->setChecked(false);
                 nashville_win_.actionEnd->setChecked(false);
                 return;
             }
+            // shared is optional<int>: nullopt = mixed, has_value = homogeneous.
             auto shared = b->common_repeat_of_selection();
-            nashville_win_.actionNone->setChecked(
-                shared.has_value() && *shared == repeat_status::NONE);
+            // "Begin"/"End" are checked when their bit is set.
             nashville_win_.actionBegin->setChecked(
-                shared.has_value() && *shared == repeat_status::BEGIN);
+                shared.has_value() && (*shared & repeat_status::BEGIN));
             nashville_win_.actionEnd->setChecked(
-                shared.has_value() && *shared == repeat_status::END);
+                shared.has_value() && (*shared & repeat_status::END));
         });
 }
 

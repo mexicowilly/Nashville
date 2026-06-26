@@ -126,7 +126,8 @@ void bar_renderer::paint(QPainter& painter,
                          bool line_duration_mode,
                          bool line_has_articulation,
                          bool draw_begin_repeat,
-                         bool draw_end_repeat)
+                         bool draw_end_repeat,
+                         bool draw_beat_parens)
 {
     if (bar.empty())
         return;
@@ -233,7 +234,8 @@ void bar_renderer::paint(QPainter& painter,
     qreal scale = (total_chord_width > 0.0) ? available_width / total_chord_width : 1.0;
 
     qreal x = chords_left;
-    qreal last_chord_right = chords_left;
+    qreal last_chord_right = chords_left;   // unscaled, used for multi-chord underline
+    qreal last_slot_right  = chords_left;   // scaled slot right edge, used for ')'
     for (std::size_t i = 0; i < bar.chords().size(); ++i)
     {
         qreal slot_width = chord_widths[i] * scale;
@@ -244,7 +246,8 @@ void bar_renderer::paint(QPainter& painter,
         chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode,
                               line_has_articulation);
 
-        last_chord_right = x + chord_widths[i];  // actual glyph right edge
+        last_chord_right = x + chord_widths[i];  // actual glyph right edge (unscaled)
+        last_slot_right  = x + slot_width;        // scaled slot right edge
 
         if (duration_mode && line_duration_mode)
         {
@@ -274,6 +277,32 @@ void bar_renderer::paint(QPainter& painter,
         painter.fillRect(QRectF(chords_left, line_y,
                                 chord_slot_rect.width(), 1.0),
                          Qt::black);
+    }
+
+    // Parentheses around chord numbers for bars with a custom beat count.
+    // A opening '(' sits just to the left of the first chord, a closing ')'
+    // just to the right of the last, both vertically centred on the number
+    // row so they read as belonging to the chord symbols rather than to the
+    // articulation zone or the rhythm row.
+    if (draw_beat_parens && !bar.chords().empty())
+    {
+        painter.save();
+        QFont pf = fonts.number;
+        painter.setFont(pf);
+        QFontMetricsF pfm(pf);
+
+        // Baseline: vertically centres the paren ink on the number row.
+        // The number row sits below the articulation zone (or top_pad when
+        // there is none), mirroring chord_renderer::paint_number_row.
+        const qreal paren_baseline = line_duration_mode
+            ? chord_slot_rect.top() + art_h + pfm.ascent()
+            : rect.top() + top_pad + (line_has_articulation ? art_h : 4.0) + pfm.ascent();
+
+        const qreal paren_w = pfm.horizontalAdvance("(");
+        painter.setPen(QPen(Qt::black, 1.0));
+        painter.drawText(QPointF(chords_left - paren_w - 2.0, paren_baseline), "(");
+        painter.drawText(QPointF(last_chord_right + 2.0,      paren_baseline), ")");
+        painter.restore();
     }
 
     // --- Repeat marks ---

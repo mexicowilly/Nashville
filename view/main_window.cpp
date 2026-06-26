@@ -444,6 +444,10 @@ void main_window::open_song(const std::string& name)
     }
 
     auto* tab = new song_tab(std::move(song), db_, this);
+    // Give the body widget access to the overlay so its prompts
+    // (Voltas, Custom beats) use the Wayland-safe in-widget overlay
+    // rather than QInputDialog.
+    tab->widget()->body()->set_overlay(overlay_);
     const int idx = tabs_->addTab(tab, tab->tab_name());
 
     // Install our custom close button in place of the OS-provided one.
