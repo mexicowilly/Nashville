@@ -46,6 +46,12 @@ private:
     // per-tab editor — they're list-only in the side panel for now.
     void wire_playlist_menu();
 
+    // Wires the View menu's "Text size" presets.  Each preset persists a
+    // font scale via ui_settings and pushes it to every open tab through
+    // main_window.  The presets form an exclusive checkable group whose
+    // checkmark is synced from the persisted value on menu open.
+    void wire_view_menu();
+
     // Returns the song_body_widget of the currently focused tab, or
     // nullptr if no tab is open.  Used by the menu wiring lambdas to
     // retarget on each invocation.

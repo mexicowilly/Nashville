@@ -30,23 +30,24 @@
     </property>
     <addaction name="actionExit"/>
    </widget>
-   <widget class="QMenu" name="menuSong">
-    <property name="title">
-     <string>Song</string>
-    </property>
-    <addaction name="actionNewSong"/>
-    <addaction name="actionDeleteSong"/>
-    <addaction name="separator"/>
-    <addaction name="actionInsertTextBox"/>
-    <addaction name="actionInsertLine"/>
-    <addaction name="actionInsertArrow"/>
-   </widget>
    <widget class="QMenu" name="menuPlaylist">
     <property name="title">
      <string>Playlist</string>
     </property>
     <addaction name="actionNewPlaylist"/>
     <addaction name="actionDeletePlaylist"/>
+   </widget>
+   <widget class="QMenu" name="menuSong">
+    <property name="title">
+     <string>Song</string>
+    </property>
+    <addaction name="actionNewSong"/>
+    <addaction name="actionDeleteSong"/>
+    <addaction name="actionPrint"/>
+    <addaction name="separator"/>
+    <addaction name="actionInsertTextBox"/>
+    <addaction name="actionInsertLine"/>
+    <addaction name="actionInsertArrow"/>
    </widget>
    <widget class="QMenu" name="menuBar">
     <property name="title">
@@ -68,10 +69,26 @@
     <addaction name="actionVoltas"/>
     <addaction name="actionCustomBeats"/>
    </widget>
+   <widget class="QMenu" name="menuView">
+    <property name="title">
+     <string>View</string>
+    </property>
+    <widget class="QMenu" name="menuTextSize">
+     <property name="title">
+      <string>Text size</string>
+     </property>
+     <addaction name="actionTextNormal"/>
+     <addaction name="actionTextLarge"/>
+     <addaction name="actionTextXLarge"/>
+     <addaction name="actionTextHuge"/>
+    </widget>
+    <addaction name="menuTextSize"/>
+   </widget>
    <addaction name="menuFile"/>
    <addaction name="menuSong"/>
    <addaction name="menuPlaylist"/>
    <addaction name="menuBar"/>
+   <addaction name="menuView"/>
   </widget>
   <action name="actionExit">
    <property name="text">
@@ -152,6 +169,43 @@
   <action name="actionDeleteSong">
    <property name="text">
     <string>Delete</string>
+   </property>
+  </action>
+  <action name="actionPrint">
+   <property name="text">
+    <string>Print...</string>
+   </property>
+  </action>
+  <action name="actionTextNormal">
+   <property name="text">
+    <string>Normal</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionTextLarge">
+   <property name="text">
+    <string>Large</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionTextXLarge">
+   <property name="text">
+    <string>Extra large</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+  </action>
+  <action name="actionTextHuge">
+   <property name="text">
+    <string>Huge</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
    </property>
   </action>
   <action name="actionNewPlaylist">

@@ -1,15 +1,20 @@
 #include "app.hpp"
 #include "database.hpp"
+#include "ui_settings.hpp"
 #include "view/main_window.hpp"
 #include "view/song_tab.hpp"
 #include "view/song_widget.hpp"
 #include "view/song_body_widget.hpp"
 #include <QVBoxLayout>
 #include <QActionGroup>
+#include <QAction>
 #include <QKeySequence>
 #include <QList>
 #include <QPalette>
 #include <QCloseEvent>
+#include <QPrinter>
+#include <vector>
+#include <cmath>
 
 namespace nashville
 {
@@ -68,6 +73,7 @@ app::app(int argc, char* argv[])
     wire_bar_menu();
     wire_song_menu();
     wire_playlist_menu();
+    wire_view_menu();
     main_win_.setFocus();
     main_win_.show();
 }
@@ -204,7 +210,7 @@ void app::wire_bar_menu()
 // ---------------------------------------------------------------------------
 // wire_song_menu
 // ---------------------------------------------------------------------------
-// The Song menu now carries five actions:
+// The Song menu now carries six actions:
 //
 //   * New...           — prompt for a name, insert into DB, open in tab.
 //                        Routes through main_window::prompt_new_song so
@@ -216,12 +222,17 @@ void app::wire_bar_menu()
 //                        panel right-click also offers Delete, scoped
 //                        to whatever row was right-clicked — different
 //                        target, same confirm+delete code path.
+//   * Print...         — print the currently-focused tab's chart.  The
+//                        print dialog + painting live in
+//                        song_widget::print; this just supplies a
+//                        QPrinter for the visible tab.  Bound to Ctrl+P
+//                        and disabled when no tab is open.
 //   * Insert text box / line / arrow — the existing one-shot
 //                        annotation tools, unchanged.
 //
-// New and Delete go through main_window (not current_body) because
-// they're DB-level operations on the song's identity, not edits to its
-// contents.
+// New, Delete and Print go through main_window / the tab's song_widget
+// (not current_body) because they're song-level operations on the
+// document, not edits to the chart's bar contents.
 void app::wire_song_menu()
 {
     using tool = view::annotation_layer::tool;
@@ -238,6 +249,22 @@ void app::wire_song_menu()
                 main_window_->confirm_delete_song(tab->song_name());
         });
 
+    // Print the currently-focused tab's chart.  The print dialog and
+    // the actual painting live in song_widget::print; we just hand it
+    // a fresh QPrinter targeting the visible tab.  Standard Ctrl+P
+    // shortcut (QKeySequence::Print maps to the platform convention).
+    // Guarded against having no open tab both here (defensive, for the
+    // shortcut path) and via aboutToShow gating below.
+    nashville_win_.actionPrint->setShortcut(QKeySequence::Print);
+    QObject::connect(nashville_win_.actionPrint, &QAction::triggered,
+        [this]() {
+            if (auto* tab = main_window_->current_tab())
+            {
+                QPrinter printer;
+                tab->widget()->print(&printer);
+            }
+        });
+
     QObject::connect(nashville_win_.actionInsertTextBox, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->set_annotation_tool(tool::text_box); });
     QObject::connect(nashville_win_.actionInsertLine, &QAction::triggered,
@@ -252,6 +279,7 @@ void app::wire_song_menu()
         [this]() {
             const bool has_tab = current_body() != nullptr;
             nashville_win_.actionDeleteSong   ->setEnabled(has_tab);
+            nashville_win_.actionPrint        ->setEnabled(has_tab);
             nashville_win_.actionInsertTextBox->setEnabled(has_tab);
             nashville_win_.actionInsertLine   ->setEnabled(has_tab);
             nashville_win_.actionInsertArrow  ->setEnabled(has_tab);
@@ -282,6 +310,55 @@ void app::wire_playlist_menu()
         [this]() {
             const bool has_sel = !main_window_->selected_playlist_name().empty();
             nashville_win_.actionDeletePlaylist->setEnabled(has_sel);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// wire_view_menu
+// ---------------------------------------------------------------------------
+// The View menu's "Text size" submenu offers a few named presets that map
+// to chart font-scale multipliers.  Picking one persists the scale (so new
+// tabs and future sessions inherit it) and immediately re-lays-out every
+// open chart.  The presets are an exclusive checkable group; their
+// checkmark is re-synced from the persisted value on each menu open, so it
+// stays correct even though nothing else in the app changes the scale.
+//
+// Keep the (action, scale) table below in sync with the actions declared
+// in the .ui's Text size submenu.
+void app::wire_view_menu()
+{
+    struct preset { QAction* action; double scale; };
+    const std::vector<preset> presets = {
+        { nashville_win_.actionTextNormal, 1.00 },
+        { nashville_win_.actionTextLarge,  1.25 },
+        { nashville_win_.actionTextXLarge, 1.50 },
+        { nashville_win_.actionTextHuge,   2.00 },
+    };
+
+    // Exclusive group so exactly one size carries a checkmark.  Parented to
+    // the main window so it lives for the app's lifetime.
+    auto* group = new QActionGroup(&main_win_);
+    group->setExclusive(true);
+    for (const auto& p : presets)
+        group->addAction(p.action);
+
+    for (const auto& p : presets)
+    {
+        QObject::connect(p.action, &QAction::triggered,
+            [this, scale = p.scale]() {
+                ui_settings::set_font_scale(scale);
+                main_window_->apply_font_scale_to_all_tabs(scale);
+            });
+    }
+
+    // Reflect the persisted scale in the checkmarks each time the submenu
+    // opens.  If the stored value matches no preset (shouldn't happen, since
+    // only these presets ever write it), all items simply show unchecked.
+    QObject::connect(nashville_win_.menuTextSize, &QMenu::aboutToShow,
+        [this, presets]() {
+            const double current = ui_settings::font_scale();
+            for (const auto& p : presets)
+                p.action->setChecked(std::abs(p.scale - current) < 1e-6);
         });
 }
 

@@ -39,6 +39,8 @@ public:
     bool empty() const;
     const std::string& key() const;
     song& key(const std::string& k);
+    const std::optional<unsigned>& margin_width() const;
+    song& margin_width(const std::optional<unsigned>& mw);
     song::metadata& meta();
     const song::metadata& meta() const;
     const std::string& name() const;
@@ -57,6 +59,7 @@ private:
     unsigned bars_per_line_ = 4;
     annotations annotations_;
     metadata metadata_;
+    std::optional<unsigned> margin_width_;
 };
 
 inline bar& song::add_bar()
@@ -98,6 +101,17 @@ inline bool song::empty() const
 inline const std::string& song::key() const
 {
     return key_;
+}
+
+inline const std::optional<unsigned>& song::margin_width() const
+{
+    return margin_width_;
+}
+
+inline song& song::margin_width(const std::optional<unsigned>& mw)
+{
+    margin_width_ = mw;
+    return *this;
 }
 
 inline song::metadata& song::meta()

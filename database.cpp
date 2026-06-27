@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS song
     original_album TEXT,
     notes TEXT,
     original_album_release_date TEXT,   -- ISO 8601
+    -- This is for the UI
+    margin_width INTEGER,
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -267,7 +269,8 @@ SELECT song.id,
        song.original_performer,
        song.original_album,
        song.notes,
-       song.original_album_release_date
+       song.original_album_release_date,
+       song.margin_width
 FROM song
 LEFT JOIN time_signature ON time_signature.id = song.time_sig_id
 WHERE song.name = ?1;
@@ -294,8 +297,9 @@ INSERT INTO song (name,
                   original_performer,
                   original_album,
                   notes,
-                  original_album_release_date)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                  original_album_release_date,
+                  margin_width)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
 ON CONFLICT(name) DO UPDATE SET
     key = ?2,
     time_sig_id = ?3,
@@ -308,7 +312,8 @@ ON CONFLICT(name) DO UPDATE SET
     original_performer = ?10,
     original_album = ?11,
     notes = ?12,
-    original_album_release_date = ?13
+    original_album_release_date = ?13,
+    margin_width = ?14
 WHERE name = ?1
 RETURNING id;
 )";
@@ -789,6 +794,8 @@ void database::insert_song(const model::song& s)
         auto rdate = format_iso8601(*meta.original_album_release_date);
         sqlite3_bind_text(raw, 13, rdate.c_str(), rdate.length(), SQLITE_TRANSIENT);
     }
+    if (s.margin_width())
+        sqlite3_bind_int(raw, 14, *s.margin_width());
     rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Unable to insert song '"s + s.name() + "': " + error_msg(rc));
@@ -1431,6 +1438,11 @@ model::song database::select_song(const std::string& name)
         {
             assert(sqlite3_column_type(raw, 13) == SQLITE_NULL);
         }
+        if (sqlite3_column_type(raw, 14) == SQLITE_INTEGER)
+            found.margin_width(sqlite3_column_int(raw, 14));
+        else
+            assert(sqlite3_column_type(raw, 14) == SQLITE_NULL);
+
         // --- Annotations ---
         // Pulled into local vectors first because annotations::load()
         // takes them by value and reseeds next_id_ in a single shot.

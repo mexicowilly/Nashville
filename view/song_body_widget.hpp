@@ -92,6 +92,15 @@ public:
     // Call after font changes or song data changes.
     void rebuild();
 
+    // Apply a new chart font scale (clamped to the ui_settings range) and
+    // relayout.  The scale multiplies every font on the chart and resizes
+    // the left-margin column proportionally so the whole chart grows as a
+    // unit.  No-op if the scale is unchanged.  Called by app when the user
+    // picks a size from the View > Text size menu; newly opened tabs pick
+    // up the persisted scale on construction instead, so this only needs to
+    // touch already-open charts.
+    void apply_font_scale(qreal scale);
+
     // For printing: same layout/paint logic targeting an arbitrary rect.
     void paint_to_rect(QPainter& painter, const QRectF& page_rect) const;
 
@@ -437,6 +446,10 @@ private:
     bool dragging_divider_ = false;
     int  drag_start_x_      = 0;
     int  drag_start_margin_ = 0;
+    // True while the cursor is within the divider's grab zone (but not yet
+    // dragging).  Drives paint_divider to reveal the faint full-height
+    // guide line and darken the grabber; cleared on leave.
+    bool hovered_divider_   = false;
 
     // --- Constants ---
     // Padding above and below the title text.  Kept tight: a Nashville chart
@@ -444,6 +457,11 @@ private:
     // of the page and sits close to the chart body rather than floating in a
     // large band of whitespace.
     static constexpr qreal k_title_padding       = 6.0;   // above and below title text
+    // Base point size of the title text at scale 1.0.  Used for BOTH the
+    // painted title and the reserved title-band height so the two never
+    // drift (they previously measured at one size and painted at another).
+    // Multiplied by the live font scale at use sites.
+    static constexpr qreal k_title_base_pt       = 12.0;
     // Vertical gap between the title block and the first chart line.  This is
     // deliberately separate from k_content_padding (which governs the left/
     // right/bottom content insets): the title already carries its own bottom
@@ -464,6 +482,12 @@ private:
     static constexpr qreal k_beat_dot_zone_height = 10.0;
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;
+    // Geometry of the always-visible margin-resize grabber drawn at the top
+    // of the divider boundary.  A small rounded handle that signals "drag
+    // to resize the margin" without painting a full-height rule (which read
+    // as a table border, especially on print).
+    static constexpr qreal k_divider_grabber_w  = 6.0;
+    static constexpr qreal k_divider_grabber_h  = 22.0;
     static constexpr int   k_min_margin_width   = 60;
     static constexpr int   k_max_margin_width   = 200;
     static constexpr int   k_default_margin_width = 100;
@@ -476,6 +500,12 @@ private:
     model::song&             song_;
     std::vector<line_layout> lines_;
     chord_renderer::Fonts    fonts_;
+    // Multiplier applied to every chart font.  Seeded from ui_settings on
+    // construction and updated via apply_font_scale.  1.0 == shipped sizes.
+    qreal                    font_scale_   = 1.0;
+    // Bravura (music) font family, resolved once and cached so re-running
+    // init_fonts() on a scale change doesn't repeatedly addApplicationFont.
+    QString                  music_family_;
     int                      margin_width_ = k_default_margin_width;
     modal_overlay*           overlay_      = nullptr;  // non-owning; set by main_window
 
@@ -545,6 +575,16 @@ private:
                                 // (or at song end if no selection)
 
     void init_fonts();
+    // Resolve and cache the Bravura music-font family (member music_family_).
+    // Called once, lazily, from init_fonts.
+    void resolve_music_family();
+    // The font used for text-box annotations: the chord-number font at 75%,
+    // floored at 8pt.  Shared by construction, the inline editor, and
+    // apply_font_scale so all three stay in sync.
+    QFont text_box_font() const;
+    // The left-margin width for a given scale: the default width scaled and
+    // clamped to [k_min_margin_width, k_max_margin_width].
+    int scaled_margin_default(qreal scale) const;
 };
 
 } // namespace nashville::view

@@ -497,6 +497,15 @@ void main_window::flush_all_tabs()
     }
 }
 
+void main_window::apply_font_scale_to_all_tabs(qreal scale)
+{
+    for (int i = 0; i < tabs_->count(); ++i)
+    {
+        if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
+            tab->widget()->body()->apply_font_scale(scale);
+    }
+}
+
 void main_window::close_all_tabs_without_saving()
 {
     // Walk in reverse because removeTab shifts higher indices down,

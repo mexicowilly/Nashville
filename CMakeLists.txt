@@ -45,6 +45,8 @@ qt_add_executable(nashville
     nashville.ui
     sqlite3.c
     sqlite3.h
+    ui_settings.cpp
+    ui_settings.hpp
     view/annotation_layer.cpp
     view/annotation_layer.hpp
     view/bar_renderer.cpp

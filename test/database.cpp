@@ -96,6 +96,8 @@ protected:
             s.meta().notes = "Notes "s + is;
             if (i & 1)
                 s.meta().original_album_release_date = std::chrono::time_point_cast<std::chrono::days>(std::chrono::system_clock::now());
+            if ((i % 10) != 0)
+                s.margin_width((i % 10) * 15);
             songs.push_back(s);
         }
         lgr()->info("Created {} songs", songs.size());
@@ -204,6 +206,7 @@ protected:
         EXPECT_EQ(lhs.meta().original_album, rhs.meta().original_album);
         EXPECT_EQ(lhs.meta().notes, rhs.meta().notes);
         EXPECT_EQ(lhs.meta().original_album_release_date, rhs.meta().original_album_release_date);
+        EXPECT_EQ(lhs.margin_width(), rhs.margin_width());
         expect_annotations(lhs.annotes(), rhs.annotes());
     }
 

@@ -36,7 +36,7 @@ public:
     // This is checked by ANDing against the enum values. A bar
     // can be both the beginning and the end of a repeat.
     int repeat() const;
-    // This is set by ANDing the enum values. A bar can be both
+    // This is set by ORing the enum values. A bar can be both
     // the beginning and the end of a repeat.
     bar& repeat(int st);
     const std::optional<std::string>& section() const;

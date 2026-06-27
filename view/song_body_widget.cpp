@@ -1,5 +1,6 @@
 #include "song_body_widget.hpp"
 #include "margin_renderer.hpp"
+#include "../ui_settings.hpp"
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
@@ -16,6 +17,7 @@
 #include <QKeySequence>
 #include <stdexcept>
 #include <cmath>
+#include <algorithm>
 #include <map>
 
 namespace nashville::view
@@ -76,6 +78,15 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
         setAutoFillBackground(true);
     }
 
+    // Seed the chart font scale from the persisted UI settings so every
+    // tab opens at the user's chosen readability size.  The margin column
+    // is sized proportionally up front (the key / time / tempo need room
+    // to grow with the rest of the chart); the user can still drag it.
+    font_scale_   = ui_settings::font_scale();
+    if (auto stored = song_.margin_width())
+        margin_width_ = std::clamp(int(*stored), k_min_margin_width, k_max_margin_width);
+    else
+        margin_width_ = scaled_margin_default(font_scale_);
     init_fonts();
 
     // Wire the annotation layer's text-editing requests through to our
@@ -91,9 +102,7 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     // family, so annotations look native rather than imported.  75%
     // size matches the section-label convention elsewhere; clamp at 8pt
     // because Qt's font hinting falls apart below that.
-    QFont tb_font = fonts_.number;
-    tb_font.setPointSize(std::max(8, int(tb_font.pointSize() * 0.75)));
-    annotation_layer_.set_text_font(tb_font);
+    annotation_layer_.set_text_font(text_box_font());
 
     // Install an anchor resolver on the annotations model.  The model
     // needs this when a text box is removed: any connector endpoints
@@ -131,17 +140,78 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     rebuild();
 }
 
-void song_body_widget::init_fonts()
+void song_body_widget::resolve_music_family()
 {
     int bravura_id = QFontDatabase::addApplicationFont(":/fonts/Bravura.otf");
-    QString music_family = (bravura_id != -1)
-                          ? QFontDatabase::applicationFontFamilies(bravura_id).first()
-                          : QApplication::font().family();
+    music_family_ = (bravura_id != -1)
+                    ? QFontDatabase::applicationFontFamilies(bravura_id).first()
+                    : QApplication::font().family();
+}
 
-    fonts_.number = QFont("Georgia", 18, QFont::Normal);
-    fonts_.modifier     = QFont("Georgia", 11);
-    fonts_.articulation = QFont("Georgia", 12);
-    fonts_.music        = QFont(music_family, 14);
+void song_body_widget::init_fonts()
+{
+    if (music_family_.isEmpty())
+        resolve_music_family();
+
+    // Base sizes (at scale 1.0) are deliberately proportional: the
+    // modifier / articulation / music fonts are tuned satellites of the
+    // dominant chord-number size.  Scaling all of them by one factor
+    // preserves those relationships, so a single knob makes the whole
+    // chart bigger without disturbing its balance.
+    const qreal s = font_scale_;
+
+    fonts_.number = QFont("Georgia");
+    fonts_.number.setWeight(QFont::Normal);
+    fonts_.number.setPointSizeF(18.0 * s);
+
+    fonts_.modifier = QFont("Georgia");
+    fonts_.modifier.setPointSizeF(11.0 * s);
+
+    fonts_.articulation = QFont("Georgia");
+    fonts_.articulation.setPointSizeF(12.0 * s);
+
+    fonts_.music = QFont(music_family_);
+    fonts_.music.setPointSizeF(14.0 * s);
+}
+
+QFont song_body_widget::text_box_font() const
+{
+    QFont f = fonts_.number;
+    f.setPointSizeF(std::max(8.0, f.pointSizeF() * 0.75));
+    return f;
+}
+
+int song_body_widget::scaled_margin_default(qreal scale) const
+{
+    const int w = static_cast<int>(std::lround(k_default_margin_width * scale));
+    return std::clamp(w, k_min_margin_width, k_max_margin_width);
+}
+
+void song_body_widget::apply_font_scale(qreal scale)
+{
+    scale = std::clamp<qreal>(scale,
+                              ui_settings::FONT_SCALE_MIN,
+                              ui_settings::FONT_SCALE_MAX);
+    if (scale == font_scale_)
+        return;
+
+    font_scale_ = scale;
+
+    // Resize the margin column with the text.  Changing the global text
+    // size is a deliberate "resize the whole chart" action, so we reset
+    // the (otherwise user-draggable) margin to the proportionate default
+    // rather than trying to preserve a prior drag — keeping the layout
+    // coherent and the key / time / tempo from clipping at large sizes.
+    margin_width_ = scaled_margin_default(scale);
+
+    init_fonts();
+
+    // The text-box paint font derives from the (now rescaled) chord-number
+    // font; refresh the annotation layer's cached copy so existing boxes
+    // redraw at the new size.
+    annotation_layer_.set_text_font(text_box_font());
+
+    rebuild();   // recompute layout with the new metrics, then repaint
 }
 
 // ---------------------------------------------------------------------------
@@ -906,7 +976,10 @@ qreal song_body_widget::duration_bar_height(bool has_articulation) const
 
 qreal song_body_widget::title_height() const
 {
-    QFontMetricsF fm(QFont("Georgia", 16, QFont::Bold));
+    QFont tf("Georgia");
+    tf.setBold(true);
+    tf.setPointSizeF(k_title_base_pt * font_scale_);
+    QFontMetricsF fm(tf);
     return fm.height() + k_title_padding * 2.0;
 }
 
@@ -918,7 +991,9 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
 {
     painter.save();
 
-    QFont title_font("Georgia", 12, QFont::Bold);
+    QFont title_font("Georgia");
+    title_font.setBold(true);
+    title_font.setPointSizeF(k_title_base_pt * font_scale_);
     painter.setFont(title_font);
     QFontMetricsF fm(title_font);
 
@@ -1038,7 +1113,8 @@ void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect
                                     bool stash_hit_rects) const
 {
     margin_renderer::paint(painter, margin_rect, song_,
-                           stash_hit_rects ? &margin_layout_ : nullptr);
+                           stash_hit_rects ? &margin_layout_ : nullptr,
+                           font_scale_);
 }
 
 // ---------------------------------------------------------------------------
@@ -1047,10 +1123,34 @@ void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect
 void song_body_widget::paint_divider(QPainter& painter) const
 {
     painter.save();
-    painter.setPen(QPen(QColor(180, 180, 180), 1));
-    // The vertical rule runs the full height of the widget, including through
-    // the title row, so the margin column reads as a continuous left strip.
-    painter.drawLine(QPointF(margin_width_, 0), QPointF(margin_width_, height()));
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const qreal x      = margin_width_;
+    const bool  active = hovered_divider_ || dragging_divider_;
+
+    // Faint full-height guide ONLY while the user is interacting with the
+    // boundary — hovering its grab zone or dragging it.  At rest the margin
+    // contents and the small grabber alone imply the boundary, so the chart
+    // stays clean.  This function isn't called on the print path at all, so
+    // paper never shows a rule.
+    if (active)
+    {
+        painter.setPen(QPen(QColor(195, 195, 195), 1));
+        painter.drawLine(QPointF(x, 0), QPointF(x, height()));
+    }
+
+    // Always-visible grabber: a small rounded handle centred on the
+    // boundary x, sitting in the title band at the top of the column.  It
+    // darkens while active so hovering/dragging gives feedback.
+    const qreal gh  = std::min(k_divider_grabber_h, std::max(8.0, title_height() - 4.0));
+    const qreal gw  = k_divider_grabber_w;
+    const qreal top = std::max(2.0, (title_height() - gh) / 2.0);
+    const QRectF handle(x - gw / 2.0, top, gw, gh);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(active ? QColor(120, 120, 120) : QColor(170, 170, 170));
+    painter.drawRoundedRect(handle, gw / 2.0, gw / 2.0);
+
     painter.restore();
 }
 
@@ -1581,9 +1681,25 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
         if (new_margin != margin_width_)
         {
             margin_width_ = new_margin;
+            song_.margin_width(new_margin);
             rebuild();
         }
         return;
+    }
+
+    // Track proximity to the margin boundary so paint_divider can reveal
+    // the faint guide and darken the grabber only while the cursor is near
+    // it.  Done before the annotation/tool branches below (which return
+    // early) so the state is always current — and because divider drag
+    // wins over tools in mousePressEvent, near-boundary feedback is correct
+    // even with an annotation tool active.
+    {
+        const bool near = near_divider(event->pos().x());
+        if (near != hovered_divider_)
+        {
+            hovered_divider_ = near;
+            update();
+        }
     }
 
     // If the annotation layer has a drag in flight, it consumes every
@@ -1726,6 +1842,7 @@ void song_body_widget::leaveEvent(QEvent*)
     bool changed = false;
     if (hovered_slot_ != -1)               { hovered_slot_ = -1;               changed = true; }
     if (hovered_empty_section_line_ != -1) { hovered_empty_section_line_ = -1; changed = true; }
+    if (hovered_divider_)                  { hovered_divider_ = false;         changed = true; }
     // ...and the annotation-side idle-hover position too, so anchor
     // dots near the last cursor location don't keep painting after the
     // cursor leaves.  Don't condition this on `tool_active()`: the
@@ -2753,11 +2870,9 @@ void song_body_widget::open_multiline_editor(
     edit->setFrameStyle(QFrame::Panel | QFrame::Plain);
     // Match the text-box paint font so the visual replacement is
     // seamless.  annotation_layer holds the font for paint, but the
-    // editor needs its own copy — set it from our chord-number font
-    // family at the same 75% size used in paint_text_box.
-    QFont tb_font = fonts_.number;
-    tb_font.setPointSize(std::max(8, int(tb_font.pointSize() * 0.75)));
-    edit->setFont(tb_font);
+    // editor needs its own copy — derived the same way (chord-number
+    // font at 75%, floored at 8pt) so the two always agree.
+    edit->setFont(text_box_font());
 
     edit->setGeometry(rect.toRect());
     edit->show();
@@ -2987,7 +3102,10 @@ void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect)
     paint_margin(painter,
                  QRectF(0, title_height(), margin_width_, height() - title_height()),
                  /*stash_hit_rects=*/false);
-    paint_divider(painter);
+    // No divider on paper: the full-height rule reads as a table border on
+    // a printed chart.  The margin contents (key / time / tempo) and the
+    // chart body provide enough separation.  The on-screen grabber is an
+    // interaction affordance only and is intentionally omitted here.
     painter.setPen(QPen(Qt::black, 1.0));
     {
         // Printouts: never include the selection background, even if the

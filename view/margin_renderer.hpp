@@ -30,10 +30,13 @@ public:
     // three elements as drawn — caller uses these for hit-testing.
     // Pass nullptr when painting to a transformed coordinate space (e.g.
     // printing) since hit rects must remain in widget coordinates.
+    // font_scale multiplies the margin's base font sizes so the key /
+    // time signature / tempo grow with the rest of the chart.
     static void paint(QPainter& painter,
                       const QRectF& margin_rect,
                       const model::song& song,
-                      margin_layout* out_layout = nullptr);
+                      margin_layout* out_layout = nullptr,
+                      qreal font_scale = 1.0);
 
 private:
     static void parse_key(const std::string& key,
