@@ -239,6 +239,15 @@ public:
         return annotation_layer_;
     }
 
+signals:
+    // Emitted by edit_title() when the user commits a title that differs
+    // from the current one.  The song's name has already been updated in
+    // the model by the time this fires.  The host (song_tab) uses it to
+    // push the rename to the database immediately and to refresh the tab
+    // label / song list, which the content-blind debounced save path can't
+    // do on its own (it has no idea a name changed).
+    void title_changed();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;

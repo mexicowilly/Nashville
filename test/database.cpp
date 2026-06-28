@@ -248,7 +248,7 @@ TEST_F(db_test, one_song)
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
     auto start = std::chrono::high_resolution_clock::now();
-    EXPECT_NO_THROW(found = db_->select_song("doggies"));
+    EXPECT_NO_THROW(found = db_->select_song("doggies").value);
     std::chrono::duration<double, std::micro> elapsed = std::chrono::high_resolution_clock::now() - start;
     lgr()->info("Selecting one song took {} microseconds", elapsed.count());
     lgr()->info("About to compare simple song");
@@ -282,7 +282,7 @@ TEST_F(db_test, all_chord_attrs)
        .mode(model::chord::type::DIMINISHED);
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("funny chord"));
+    EXPECT_NO_THROW(found = db_->select_song("funny chord").value);
     lgr()->info("About to compare funny chord");
     expect_song(s, found);
 }
@@ -299,7 +299,7 @@ TEST_F(db_test, all_bar_attrs)
      .add_chord();
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("bar attrs"));
+    EXPECT_NO_THROW(found = db_->select_song("bar attrs").value);
     lgr()->info("About to compare funny bar");
     expect_song(s, found);
 }
@@ -313,7 +313,7 @@ TEST_F(db_test, all_song_attrs)
      .bars_per_line(72);
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("song attrs"));
+    EXPECT_NO_THROW(found = db_->select_song("song attrs").value);
     lgr()->info("About to compare song attrs");
     expect_song(s, found);
 }
@@ -355,7 +355,7 @@ TEST_F(db_test, lots_of_bars)
     lgr()->info("Inserting one song took {} milliseconds", elapsed.count());
     model::song found;
     start = std::chrono::high_resolution_clock::now();
-    EXPECT_NO_THROW(found = db_->select_song("lots of bars"));
+    EXPECT_NO_THROW(found = db_->select_song("lots of bars").value);
     elapsed = std::chrono::high_resolution_clock::now() - start;
     lgr()->info("Selecting one song took {} milliseconds", elapsed.count());
     lgr()->info("About to compare lots of bars");
@@ -424,7 +424,7 @@ TEST_F(db_test, lots_of_chords)
     }
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("lots of chords"));
+    EXPECT_NO_THROW(found = db_->select_song("lots of chords").value);
     lgr()->info("About to compare lots of chords");
     expect_song(s, found);
 }
@@ -438,7 +438,7 @@ TEST_F(db_test, lots_of_songs)
     std::vector<model::song> found;
     lgr()->info("Retrieving {} songs", songs.size());
     for (const auto& s : songs)
-        EXPECT_NO_THROW(found.push_back(db_->select_song(s.name())));
+        EXPECT_NO_THROW(found.push_back(db_->select_song(s.name()).value));
     ASSERT_EQ(songs.size(), found.size());
     lgr()->info("About to compare lots of songs");
     for (int i = 0; i < songs.size(); i++)
@@ -509,7 +509,7 @@ TEST_F(db_test, move_to_file)
     for (const auto& s : songs)
     {
         model::song found_s;
-        EXPECT_NO_THROW(found_s = mem.select_song(s.name()));
+        EXPECT_NO_THROW(found_s = mem.select_song(s.name()).value);
         expect_song(s, found_s);
     }
     for (const auto& p : playlists)
@@ -556,28 +556,35 @@ TEST_F(db_test, lots_of_playlists)
 }
 
 // ---------------------------------------------------------------------------
-// rename_song
+// rename via update_song  (there is no rename_song method any more: identity
+// is the row id, so a rename is just a normal update that happens to change
+// the name column)
 // ---------------------------------------------------------------------------
 
-TEST_F(db_test, rename_song_basic)
+TEST_F(db_test, rename_via_update_basic)
 {
     model::song s("original name");
     s.add_bar().add_chord().number(1);
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
-    EXPECT_NO_THROW(db_->rename_song("original name", "new name"));
+    // Rename: mutate the model's name, save by id.
+    s.name("new name");
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
-    // old name is gone
+    // old name is gone, and there is no orphan row under it
     EXPECT_THROW(db_->select_song("original name"), std::runtime_error);
+    auto names = db_->select_song_names();
+    EXPECT_EQ(std::count(names.begin(), names.end(), "original name"), 0);
+    EXPECT_EQ(names.size(), 1u);
 
     // new name returns the same song content
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("new name"));
-    s.name("new name");
+    EXPECT_NO_THROW(found = db_->select_song("new name").value);
     expect_song(s, found);
 }
 
-TEST_F(db_test, rename_song_preserves_annotations)
+TEST_F(db_test, rename_via_update_preserves_annotations)
 {
     model::song s("annotated song");
     s.add_bar().add_chord().number(3);
@@ -586,23 +593,27 @@ TEST_F(db_test, rename_song_preserves_annotations)
     s.annotes().add_connector(
         model::connector_endpoint::make_anchor(tb_id, 2),
         model::connector_endpoint::make_free(QPointF(200, 200)));
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
-    EXPECT_NO_THROW(db_->rename_song("annotated song", "renamed annotated"));
+    s.name("renamed annotated");
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("renamed annotated"));
-    s.name("renamed annotated");
+    EXPECT_NO_THROW(found = db_->select_song("renamed annotated").value);
     expect_song(s, found);
 }
 
-TEST_F(db_test, rename_song_appears_in_song_names)
+TEST_F(db_test, rename_via_update_appears_in_song_names)
 {
     auto songs = create_songs(5);
+    std::vector<song_id> ids;
     for (const auto& s : songs)
-        EXPECT_NO_THROW(db_->insert_song(s));
+        EXPECT_NO_THROW(ids.push_back(db_->insert_song(s)));
 
-    EXPECT_NO_THROW(db_->rename_song(songs[2].name(), "completely different"));
+    auto renamed = songs[2];
+    renamed.name("completely different");
+    EXPECT_NO_THROW(db_->update_song(ids[2], renamed));
 
     auto names = db_->select_song_names();
     EXPECT_EQ(std::count(names.begin(), names.end(), songs[2].name()), 0);
@@ -610,13 +621,15 @@ TEST_F(db_test, rename_song_appears_in_song_names)
     EXPECT_EQ(names.size(), songs.size());
 }
 
-TEST_F(db_test, rename_song_nonexistent_throws)
+TEST_F(db_test, update_song_unknown_id_throws)
 {
-    EXPECT_THROW(db_->rename_song("does not exist", "whatever"), std::runtime_error);
+    model::song s("present");
+    EXPECT_NO_THROW(db_->insert_song(s));
+    EXPECT_THROW(db_->update_song(song_id{ 999999 }, s), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
-// rename_playlist
+// rename_playlist  (now keyed by playlist_id, resolved via playlist_id_of)
 // ---------------------------------------------------------------------------
 
 TEST_F(db_test, rename_playlist_basic)
@@ -630,16 +643,17 @@ TEST_F(db_test, rename_playlist_basic)
         pl.add_song(s.name());
     EXPECT_NO_THROW(db_->insert_playlist(pl));
 
-    EXPECT_NO_THROW(db_->rename_playlist("old playlist", "new playlist"));
+    auto id = db_->playlist_id_of("old playlist");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_NO_THROW(db_->rename_playlist(*id, "new playlist"));
 
-    // old name is gone — select_playlist returns an empty playlist for unknown names,
-    // so verify via the names list rather than expecting a throw
     std::vector<std::string> pl_names;
     EXPECT_NO_THROW(pl_names = db_->select_playlist_names());
     EXPECT_EQ(std::count(pl_names.begin(), pl_names.end(), "old playlist"), 0);
     EXPECT_EQ(std::count(pl_names.begin(), pl_names.end(), "new playlist"), 1);
 
-    // new name returns the same content
+    // new name returns the same content (membership is FK'd by song id, so it
+    // is unaffected by the rename)
     model::playlist found("x");
     EXPECT_NO_THROW(found = db_->select_playlist("new playlist"));
     pl.name("new playlist");
@@ -660,7 +674,9 @@ TEST_F(db_test, rename_playlist_appears_in_playlist_names)
         EXPECT_NO_THROW(db_->insert_playlist(pl));
     }
 
-    EXPECT_NO_THROW(db_->rename_playlist("playlist 1", "renamed playlist"));
+    auto id = db_->playlist_id_of("playlist 1");
+    ASSERT_TRUE(id.has_value());
+    EXPECT_NO_THROW(db_->rename_playlist(*id, "renamed playlist"));
 
     auto names = db_->select_playlist_names();
     EXPECT_EQ(std::count(names.begin(), names.end(), "playlist 1"), 0);
@@ -668,9 +684,11 @@ TEST_F(db_test, rename_playlist_appears_in_playlist_names)
     EXPECT_EQ(names.size(), 4u);
 }
 
-TEST_F(db_test, rename_playlist_nonexistent_throws)
+TEST_F(db_test, rename_playlist_nonexistent)
 {
-    EXPECT_THROW(db_->rename_playlist("ghost playlist", "whatever"), std::runtime_error);
+    // No row -> no id to resolve; and renaming a bogus id is an error.
+    EXPECT_FALSE(db_->playlist_id_of("ghost playlist").has_value());
+    EXPECT_THROW(db_->rename_playlist(playlist_id{ 4242 }, "whatever"), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +705,7 @@ TEST_F(db_test, insert_song_text_boxes_only)
 
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("tb song"));
+    EXPECT_NO_THROW(found = db_->select_song("tb song").value);
     expect_song(s, found);
 }
 
@@ -707,7 +725,7 @@ TEST_F(db_test, insert_song_free_connectors)
 
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("free conn song"));
+    EXPECT_NO_THROW(found = db_->select_song("free conn song").value);
     expect_song(s, found);
 }
 
@@ -739,7 +757,7 @@ TEST_F(db_test, insert_song_anchored_connectors)
 
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("anchored song"));
+    EXPECT_NO_THROW(found = db_->select_song("anchored song").value);
     expect_song(s, found);
 }
 
@@ -753,18 +771,19 @@ TEST_F(db_test, insert_song_no_annotations)
 
     EXPECT_NO_THROW(db_->insert_song(s));
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("bare song"));
+    EXPECT_NO_THROW(found = db_->select_song("bare song").value);
     expect_song(s, found);
     EXPECT_TRUE(found.annotes().empty());
 }
 
 // ---------------------------------------------------------------------------
-// update_song (UPSERT) — song table columns, with and without annotations
+// update_song — song table columns, with and without annotations.  Each test
+// inserts once (capturing the row id) then updates by id.
 // ---------------------------------------------------------------------------
 
 TEST_F(db_test, update_song_all_columns_no_annotations)
 {
-    // Insert a song, then re-insert it with every column changed and
+    // Insert a song, then update it by id with every column changed and
     // verify the select returns the updated values.
     model::song s("mutable song");
     s.key("C")
@@ -778,10 +797,12 @@ TEST_F(db_test, update_song_all_columns_no_annotations)
     s.meta().original_album_release_date = std::nullopt;
     s.add_bar().add_chord().number(1);
 
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
-    // Mutate every column
-    s.key("F# minor")
+    // Mutate every column (including the name — a rename is just an update)
+    s.name("mutable song renamed")
+     .key("F# minor")
      .time_sig(model::time_signature().count(12).kind(model::time_signature::beat_type::EIGHTH))
      .tempo({ 240, model::chord::time::HALF })
      .bars_per_line(8);
@@ -799,11 +820,13 @@ TEST_F(db_test, update_song_all_columns_no_annotations)
     for (int i = 0; i < 8; i++)
         s.add_bar().add_chord().number((i % 7) + 1);
 
-    EXPECT_NO_THROW(db_->insert_song(s));   // UPSERT
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("mutable song"));
+    EXPECT_NO_THROW(found = db_->select_song("mutable song renamed").value);
     expect_song(s, found);
+    // The original name must not survive as an orphan.
+    EXPECT_THROW(db_->select_song("mutable song"), std::runtime_error);
 }
 
 TEST_F(db_test, update_song_clears_empty_authors)
@@ -812,13 +835,14 @@ TEST_F(db_test, update_song_clears_empty_authors)
     model::song s("author clearance");
     s.meta().authors = { "X", "Y", "Z" };
     s.add_bar().add_chord().number(1);
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
     s.meta().authors.clear();
-    EXPECT_NO_THROW(db_->insert_song(s));
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("author clearance"));
+    EXPECT_NO_THROW(found = db_->select_song("author clearance").value);
     EXPECT_TRUE(found.meta().authors.empty());
 }
 
@@ -829,13 +853,14 @@ TEST_F(db_test, update_song_clears_release_date)
     s.meta().original_album_release_date =
         std::chrono::time_point_cast<std::chrono::days>(std::chrono::system_clock::now());
     s.add_bar().add_chord().number(1);
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
     s.meta().original_album_release_date = std::nullopt;
-    EXPECT_NO_THROW(db_->insert_song(s));
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("date clearance"));
+    EXPECT_NO_THROW(found = db_->select_song("date clearance").value);
     EXPECT_FALSE(found.meta().original_album_release_date.has_value());
 }
 
@@ -844,14 +869,15 @@ TEST_F(db_test, update_song_adds_annotations)
     // Start with no annotations, update to have some.
     model::song s("gains annotations");
     s.add_bar().add_chord().number(1);
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
     s.annotes().add_text_box(QRectF(5, 5, 50, 20), "added later");
     s.annotes().add_connector(QPointF(0, 0), QPointF(100, 100));
-    EXPECT_NO_THROW(db_->insert_song(s));
+    EXPECT_NO_THROW(db_->update_song(id, s));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("gains annotations"));
+    EXPECT_NO_THROW(found = db_->select_song("gains annotations").value);
     expect_song(s, found);
 }
 
@@ -862,16 +888,17 @@ TEST_F(db_test, update_song_removes_annotations)
     s.add_bar().add_chord().number(1);
     s.annotes().add_text_box(QRectF(10, 10, 80, 30), "transient");
     s.annotes().add_connector(QPointF(1, 1), QPointF(9, 9));
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
-    // Replace song with a fresh one that has no annotations (same name)
+    // Update by id with a fresh song that has no annotations
     model::song s2("loses annotations");
     s2.add_bar().add_chord().number(1);
     ASSERT_TRUE(s2.annotes().empty());
-    EXPECT_NO_THROW(db_->insert_song(s2));
+    EXPECT_NO_THROW(db_->update_song(id, s2));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("loses annotations"));
+    EXPECT_NO_THROW(found = db_->select_song("loses annotations").value);
     EXPECT_TRUE(found.annotes().empty());
 }
 
@@ -886,9 +913,10 @@ TEST_F(db_test, update_song_replaces_annotations)
     s.annotes().add_text_box(QRectF(0,  0,  60, 25), "first A");
     s.annotes().add_text_box(QRectF(70, 0,  60, 25), "first B");
     s.annotes().add_connector(QPointF(60, 12), QPointF(70, 12));
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
-    // Second save: completely different annotation set (same song name = UPSERT)
+    // Second save: completely different annotation set, updated by id
     model::song s2("annotation replacement");
     s2.add_bar().add_chord().number(4);
     const auto tb_id = s2.annotes().add_text_box(QRectF(200, 200, 90, 35), "second only").id;
@@ -896,10 +924,10 @@ TEST_F(db_test, update_song_replaces_annotations)
         model::connector_endpoint::make_anchor(tb_id, 0),
         model::connector_endpoint::make_free(QPointF(10, 10)));
     s2.annotes().add_connector(QPointF(300, 300), QPointF(400, 400));
-    EXPECT_NO_THROW(db_->insert_song(s2));
+    EXPECT_NO_THROW(db_->update_song(id, s2));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("annotation replacement"));
+    EXPECT_NO_THROW(found = db_->select_song("annotation replacement").value);
     expect_song(s2, found);
 
     // Counts must match exactly — no ghost rows from first save
@@ -910,7 +938,7 @@ TEST_F(db_test, update_song_replaces_annotations)
 TEST_F(db_test, update_song_all_columns_with_annotations)
 {
     // Combined: change every song-table column AND swap the annotation set
-    // in a single UPSERT, then verify the full round-trip.
+    // in a single update, then verify the full round-trip.
     model::song s("full update");
     s.key("D")
      .time_sig(model::time_signature().count(4).kind(model::time_signature::beat_type::QUARTER))
@@ -923,7 +951,8 @@ TEST_F(db_test, update_song_all_columns_with_annotations)
     s.add_bar().add_chord().number(1);
     s.annotes().add_text_box(QRectF(0, 0, 50, 20), "old box");
     s.annotes().add_connector(QPointF(0, 0), QPointF(50, 50));
-    EXPECT_NO_THROW(db_->insert_song(s));
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
 
     // New version: every column different, different annotation set
     model::song s2("full update");
@@ -948,9 +977,9 @@ TEST_F(db_test, update_song_all_columns_with_annotations)
         model::connector_endpoint::make_anchor(tb1_id, 7));
     s2.annotes().add_connector(QPointF(99, 99), QPointF(1, 1));
 
-    EXPECT_NO_THROW(db_->insert_song(s2));
+    EXPECT_NO_THROW(db_->update_song(id, s2));
 
     model::song found;
-    EXPECT_NO_THROW(found = db_->select_song("full update"));
+    EXPECT_NO_THROW(found = db_->select_song("full update").value);
     expect_song(s2, found);
 }

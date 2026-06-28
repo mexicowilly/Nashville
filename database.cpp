@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <map>
+#include <system_error>
 // Annotation binding/reading uses these directly; they're pulled in
 // transitively via model/annotations.hpp, but listing them explicitly
 // documents the dependency.
@@ -242,18 +243,18 @@ VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
 
-const char* SELECT_SONGS_SQL = R"(
-SELECT song.id,
-       song.name,
-       song.key,
-       song.bars_per_line,
-       song.beats_per_minute,
-       song.beats_unit,
-       time_signature.beat_type,
-       time_signature.count
-FROM song
-LEFT JOIN time_signature ON time_signature.id = song.time_sig_id;
-)";
+//const char* SELECT_SONGS_SQL = R"(
+//SELECT song.id,
+       //song.name,
+       //song.key,
+       //song.bars_per_line,
+       //song.beats_per_minute,
+       //song.beats_unit,
+       //time_signature.beat_type,
+       //time_signature.count
+//FROM song
+//LEFT JOIN time_signature ON time_signature.id = song.time_sig_id;
+//)";
 
 const char* SELECT_SONG_SQL = R"(
 SELECT song.id,
@@ -300,7 +301,14 @@ INSERT INTO song (name,
                   original_album_release_date,
                   margin_width)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-ON CONFLICT(name) DO UPDATE SET
+RETURNING id;
+)";
+
+// Parameters ?1..?14 match INSERT_SONG exactly so the column binding can be
+// shared (bind_song_columns); ?15 is the row identity for the WHERE clause.
+const char* UPDATE_SONG_SQL = R"(
+UPDATE song SET
+    name = ?1,
     key = ?2,
     time_sig_id = ?3,
     bars_per_line = ?4,
@@ -314,8 +322,7 @@ ON CONFLICT(name) DO UPDATE SET
     notes = ?12,
     original_album_release_date = ?13,
     margin_width = ?14
-WHERE name = ?1
-RETURNING id;
+WHERE id = ?15;
 )";
 
 const char* SELECT_SONG_BARS_SQL = R"(
@@ -333,7 +340,7 @@ SELECT name FROM playlist;
 )";
 
 const char* INSERT_PLAYLIST_SQL = R"(
-INSERT INTO playlist (name) VALUES (?1) ON CONFLICT DO UPDATE SET name = ?1 RETURNING id;
+INSERT INTO playlist (name) VALUES (?1) RETURNING id;
 )";
 
 const char* SELECT_PLAYLIST_SONGS_SQL = R"(
@@ -371,10 +378,6 @@ DELETE FROM bar WHERE id = ?1;
 
 const char* REMOVE_PLAYLIST_SQL = R"(
 DELETE FROM playlist WHERE name = ?1;
-)";
-
-const char* RENAME_SONG_SQL = R"(
-UPDATE song SET name=?1 WHERE id = ?2;
 )";
 
 const char* RENAME_PLAYLIST_SQL = R"(
@@ -525,10 +528,19 @@ database::database(const std::filesystem::path& file_name)
                       &err);
     if (rc != SQLITE_OK)
     {
-        // THIS IS FATAL
-        lgr()->critical("The database schema contains errors: {}", err);
+        // The file opened but isn't a usable database (most commonly: the
+        // user picked a file that isn't a Nashville database at all).  This
+        // used to abort, which is fine for the app's own controlled files but
+        // wrong now that Open lets the user choose any file — throw so the
+        // caller can report it and keep running.  close_v2 releases the handle
+        // we opened above (deferred past any statements, though none exist
+        // yet here).
+        std::string msg = err ? err : "unknown error";
         sqlite3_free(err);
-        std::abort();
+        sqlite3_close_v2(db_);
+        db_ = nullptr;
+        throw std::runtime_error("The file '"s + file_name.string() +
+            "' is not a valid Nashville database: " + msg);
     }
     lgr()->debug("Successfully loaded the schema");
     try
@@ -547,6 +559,7 @@ database::database(const std::filesystem::path& file_name)
             { statement::INSERT_BAR_CHORD,       INSERT_BAR_CHORD_SQL },
             { statement::SELECT_SONG_ID,         SELECT_SONG_ID_SQL },
             { statement::INSERT_SONG,            INSERT_SONG_SQL },
+            { statement::UPDATE_SONG,            UPDATE_SONG_SQL },
             { statement::SELECT_SONG_BARS,       SELECT_SONG_BARS_SQL },
             { statement::INSERT_SONG_BAR,        INSERT_SONG_BAR_SQL },
             { statement::INSERT_PLAYLIST,        INSERT_PLAYLIST_SQL },
@@ -567,7 +580,6 @@ database::database(const std::filesystem::path& file_name)
             { statement::SELECT_SONG_CONNECTORS,     SELECT_SONG_CONNECTORS_SQL },
             { statement::DELETE_SONG_TEXT_BOXES,     DELETE_SONG_TEXT_BOXES_SQL },
             { statement::DELETE_SONG_CONNECTORS,     DELETE_SONG_CONNECTORS_SQL },
-            { statement::RENAME_SONG,            RENAME_SONG_SQL },
             { statement::RENAME_PLAYLIST,        RENAME_PLAYLIST_SQL }
         };
 
@@ -576,8 +588,15 @@ database::database(const std::filesystem::path& file_name)
     }
     catch (std::invalid_argument& e)
     {
-        lgr()->critical(e.what());
-        std::abort();
+        // A prepared-statement failed to compile.  As above, throw rather than
+        // abort so a caller (e.g. open_file on a user-chosen file) can recover.
+        // close_v2 defers the actual free until the partially-filled
+        // prepared_statements_ map is unwound, finalizing any statements that
+        // did compile.
+        sqlite3_close_v2(db_);
+        db_ = nullptr;
+        throw std::runtime_error("Could not prepare the database '"s +
+            file_name.string() + "': " + e.what());
     }
     lgr()->debug("Successfully created the prepared statements");
 }
@@ -597,7 +616,7 @@ std::filesystem::path database::file_name() const
 {
     std::filesystem::path p;
     auto fn = sqlite3_db_filename(db_, "main");
-    if (fn != nullptr || std::strlen(fn) != 0)
+    if (fn != nullptr && std::strlen(fn) != 0)
         p = fn;
     return p;
 }
@@ -705,7 +724,7 @@ std::uint64_t database::insert_chord(const model::chord& c)
     return sqlite3_column_int64(raw, 0);
 }
 
-void database::insert_playlist(const model::playlist& pl)
+playlist_id database::insert_playlist(const model::playlist& pl)
 {
     assert(prepared_statements_.count(statement::INSERT_PLAYLIST) == 1);
     assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
@@ -715,7 +734,6 @@ void database::insert_playlist(const model::playlist& pl)
     auto& ins_ps = prepared_statements_[statement::INSERT_PLAYLIST_SONG];
     auto raw = ins_pl->ptr();
     int rc;
-    bool inserted_new = true;
     transaction tx(*this);
     ins_pl->reset();
     sqlite3_bind_text(raw, 1, pl.name().c_str(), pl.name().length(), SQLITE_STATIC);
@@ -748,18 +766,17 @@ void database::insert_playlist(const model::playlist& pl)
         }
     }
     tx.commit();
-    if (inserted_new)
-        lgr()->debug("Inserted new playlist '{}'", pl.name());
+    lgr()->debug("Inserted new playlist '{}' (id {})", pl.name(), pl_id);
+    return playlist_id{ pl_id };
 }
 
-void database::insert_song(const model::song& s)
+// Binds the 14 song-table columns as parameters ?1..?14.  The caller must
+// reset() the statement first (reset clears bindings, so any skipped optional
+// column lands as NULL — which is exactly what clears an emptied authors list
+// or release date on update).  INSERT_SONG and UPDATE_SONG deliberately share
+// this parameter layout so a single binder serves both.
+void database::bind_song_columns(sqlite3_stmt* raw, const model::song& s)
 {
-    assert(prepared_statements_.count(statement::INSERT_SONG) == 1);
-    auto& ins_s = prepared_statements_[statement::INSERT_SONG];
-    auto raw = ins_s->ptr();
-    int rc;
-    transaction tx(*this);
-    ins_s->reset();
     sqlite3_bind_text(raw, 1, s.name().c_str(), s.name().length(), SQLITE_STATIC);
     sqlite3_bind_text(raw, 2, s.key().c_str(), s.key().length(), SQLITE_STATIC);
     sqlite3_bind_int64(raw, 3, time_signature_id(s.time_sig()));
@@ -796,11 +813,14 @@ void database::insert_song(const model::song& s)
     }
     if (s.margin_width())
         sqlite3_bind_int(raw, 14, *s.margin_width());
-    rc = sqlite3_step(raw);
-    if (rc != SQLITE_ROW)
-        throw std::runtime_error("Unable to insert song '"s + s.name() + "': " + error_msg(rc));
-    assert(sqlite3_column_count(raw) == 1);
-    auto song_id = sqlite3_column_int64(raw, 0);
+}
+
+// Rewrites the bars + annotations for an existing song row (identified by
+// song_id).  Clears the prior set first so the persisted state matches the
+// in-memory state exactly with no stale rows.  Runs inside the caller's
+// transaction; the caller owns commit.
+void database::write_song_body(std::int64_t song_id, const model::song& s)
+{
     // Clear any bars from a previous save before writing the current set.
     // For a brand-new song this is a no-op.
     remove_song_bars(song_id);
@@ -849,8 +869,8 @@ void database::insert_song(const model::song& s)
     // connectors may have endpoints glued to text boxes, so we need
     // the text-box rows (and their RETURNING-assigned database ids)
     // before we can bind anchor references on the connector rows.
-    // FK to song(id) is in place by this point (song_id came from the
-    // INSERT above), so no FK violations are possible.
+    // FK to song(id) is in place by this point (song_id is an existing
+    // row), so no FK violations are possible.
     //
     // text_box_id_map maps in-memory annotation ids to the database
     // rowids SQLite assigns on RETURNING.  These will usually differ
@@ -970,9 +990,53 @@ void database::insert_song(const model::song& s)
                     + "': " + error_msg(rc_c));
         }
     }
+}
 
+// Create a brand-new song row and return its identity.  The caller (a tab on
+// its first save, or the New-song flow) keeps the returned id and uses
+// update_song for every subsequent save, so identity never rides on the
+// (mutable) name.
+song_id database::insert_song(const model::song& s)
+{
+    assert(prepared_statements_.count(statement::INSERT_SONG) == 1);
+    auto& ins_s = prepared_statements_[statement::INSERT_SONG];
+    auto raw = ins_s->ptr();
+    transaction tx(*this);
+    ins_s->reset();
+    bind_song_columns(raw, s);
+    auto rc = sqlite3_step(raw);
+    if (rc != SQLITE_ROW)
+        throw std::runtime_error("Unable to insert song '"s + s.name() + "': " + error_msg(rc));
+    assert(sqlite3_column_count(raw) == 1);
+    const std::int64_t new_id = sqlite3_column_int64(raw, 0);
+    write_song_body(new_id, s);
     tx.commit();
-    lgr()->debug("Saved song '{}'", s.name());
+    lgr()->debug("Inserted song '{}' (id {})", s.name(), new_id);
+    return song_id{ new_id };
+}
+
+// Overwrite an existing song row, located by id.  Because the row is found by
+// id, the name is just another column in the write — a rename is an ordinary
+// update, with no old-name lookup and no chance of orphaning the prior row.
+void database::update_song(song_id id, const model::song& s)
+{
+    assert(prepared_statements_.count(statement::UPDATE_SONG) == 1);
+    auto& upd_s = prepared_statements_[statement::UPDATE_SONG];
+    auto raw = upd_s->ptr();
+    const std::int64_t rid = static_cast<std::int64_t>(id);
+    transaction tx(*this);
+    upd_s->reset();
+    bind_song_columns(raw, s);                 // ?1..?14
+    sqlite3_bind_int64(raw, 15, rid);          // WHERE id = ?15
+    auto rc = sqlite3_step(raw);
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Unable to update song '"s + s.name() + "': " + error_msg(rc));
+    if (sqlite3_changes(db_) == 0)
+        throw std::runtime_error("Cannot update song '"s + s.name()
+            + "': no song with id " + std::to_string(rid));
+    write_song_body(rid, s);
+    tx.commit();
+    lgr()->debug("Updated song '{}' (id {})", s.name(), rid);
 }
 
 std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index)
@@ -1015,30 +1079,100 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
 void database::move_to_file(const std::filesystem::path& file_name)
 {
     auto abs = std::filesystem::absolute(file_name).lexically_normal();
-    database other(abs);
-    auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
-    if (back == nullptr)
+
+    // Write to a sibling temp file first, then atomically rename it over the
+    // target.  This keeps the operation all-or-nothing with respect to disk:
+    // a failure (full disk, read-only volume, a backup error) can leave a
+    // discarded temp file but can never damage an existing file at `abs`, and
+    // it never leaves *this half-transitioned — every throw below happens
+    // before the in-memory connection is swapped out, and the swap itself is
+    // noexcept.
+    auto tmp = abs;
+    tmp += ".saving-tmp";
+
+    // Clear any leftover temp from a previously interrupted save so we start
+    // from a clean file (best-effort; a failure to remove surfaces later).
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
+
+    // Back the in-memory database up into the temp file.  The backup reads
+    // from db_ (the source) and writes only to other.db_ (the temp), so the
+    // in-memory data is never modified regardless of where this fails.
+    bool   init_failed = false;
+    std::string init_err;
+    int    step_rc = SQLITE_OK;
+    int    finish_rc = SQLITE_OK;
     {
-        throw std::runtime_error("Could not initialize moving the database to file '"s +
+        database other(tmp);   // creates/opens the temp file + its statements
+        auto back = sqlite3_backup_init(other.db_, "main", db_, "main");
+        if (back == nullptr)
+        {
+            init_failed = true;
+            init_err = other.error_msg(sqlite3_errcode(other.db_));
+        }
+        else
+        {
+            // With nPage = -1, step copies the whole database and returns
+            // SQLITE_DONE on success; finish then returns SQLITE_OK (or the
+            // error from a failed step).  So a clean save is DONE *and* OK.
+            step_rc = sqlite3_backup_step(back, -1);
+            finish_rc = sqlite3_backup_finish(back);
+        }
+    }   // other destroyed here: the temp file is flushed and closed before we
+        // touch it on disk below (matters on platforms that lock open files).
+
+    if (init_failed || step_rc != SQLITE_DONE || finish_rc != SQLITE_OK)
+    {
+        std::filesystem::remove(tmp, ec);   // best-effort cleanup
+        const int err_rc = (step_rc != SQLITE_DONE) ? step_rc : finish_rc;
+        throw std::runtime_error("Could not write the database to file '"s +
                                  abs.string() + "': " +
-                                 other.error_msg(sqlite3_errcode(other.db_)));
-    }
-    auto step_rc = sqlite3_backup_step(back, -1);
-    auto finish_rc = sqlite3_backup_finish(back);
-    auto rc = (step_rc == SQLITE_DONE) ? finish_rc : step_rc;
-    if (rc != SQLITE_OK && rc != SQLITE_DONE)
-    {
-        throw std::runtime_error("Could not move database to file '"s +
-                                 file_name.string() + "': " + error_msg(rc));
+                                 (init_failed ? init_err : error_msg(err_rc)));
     }
 
-    // other already prepared its own statements against its file-backed db_
-    // in its constructor. Swap both members so *this becomes the file-backed
-    // database, and other (about to be destroyed) takes the in-memory one.
+    // Atomically replace any existing target with the freshly written temp.
+    // rename() is atomic within a single filesystem, and the temp is a sibling
+    // of the target, so this holds.  Until this line, `abs` is untouched.
+    std::filesystem::rename(tmp, abs, ec);
+    if (ec)
+    {
+        std::error_code rm_ec;
+        std::filesystem::remove(tmp, rm_ec);   // best-effort cleanup
+        throw std::runtime_error("Could not finalize saving the database to '"s +
+                                 abs.string() + "': " + ec.message());
+    }
+
+    // Re-open the now-final file as the live connection and commit by swapping
+    // it into *this.  If this open fails, the data is already safely on disk
+    // (the rename succeeded) — we throw and stay on the in-memory database, so
+    // nothing is lost (the user can reopen the file) and *this is never left
+    // half-transitioned.
+    database other(abs);
     std::swap(db_, other.db_);
     std::swap(prepared_statements_, other.prepared_statements_);
 
-    lgr()->info("Moved the in-memory database to the file '{}'", abs.string());
+    lgr()->info("Saved the in-memory database to the file '{}'", abs.string());
+}
+
+void database::open_file(const std::filesystem::path& file_name)
+{
+    auto abs = std::filesystem::absolute(file_name).lexically_normal();
+
+    // Open the target as its own database (which prepares its statements and
+    // ensures the schema), then commit by swapping it into *this with the same
+    // noexcept swap move_to_file uses.  This discards whatever *this currently
+    // held — the caller is responsible for having saved or deliberately
+    // discarded it first.
+    //
+    // Failure safety mirrors move_to_file: if the file can't be opened or
+    // isn't a valid database, the `other` constructor throws here, before the
+    // swap, so *this is left exactly as it was — same connection, same
+    // statements, nothing lost.
+    database other(abs);
+    std::swap(db_, other.db_);
+    std::swap(prepared_statements_, other.prepared_statements_);
+
+    lgr()->info("Opened the database file '{}'", abs.string());
 }
 
 void database::remove_playlist(const std::string& pl)
@@ -1142,57 +1276,39 @@ void database::remove_song(const std::string& s)
     lgr()->debug("Removed the song '{}'", s);
 }
 
-void database::rename_playlist(const std::string& old_name, const std::string& new_name)
+std::optional<playlist_id> database::playlist_id_of(const std::string& name)
 {
     assert(prepared_statements_.count(statement::SELECT_PLAYLIST_ID) == 1);
     auto& sel_pl = prepared_statements_[statement::SELECT_PLAYLIST_ID];
     sel_pl->reset();
-    transaction tx(*this);
-    sqlite3_bind_text(sel_pl->ptr(), 1, old_name.c_str(), old_name.length(), SQLITE_STATIC);
+    sqlite3_bind_text(sel_pl->ptr(), 1, name.c_str(), name.length(), SQLITE_STATIC);
     auto rc = sqlite3_step(sel_pl->ptr());
     if (rc == SQLITE_ROW)
-    {
-        assert(prepared_statements_.count(statement::RENAME_PLAYLIST) == 1);
-        auto& ren = prepared_statements_[statement::RENAME_PLAYLIST];
-        sqlite3_bind_text(ren->ptr(), 1, new_name.c_str(), new_name.length(), SQLITE_STATIC);
-        sqlite3_bind_int64(ren->ptr(), 2, sqlite3_column_int64(sel_pl->ptr(), 0));
-        rc = sqlite3_step(ren->ptr());
-        if (rc != SQLITE_DONE)
-            throw std::runtime_error("Error renaming the playlist '"s + old_name + "': "s + error_msg(rc));
-        lgr()->info("Renamed the playlist '{}' to '{}'", old_name, new_name);
-    }
-    else
-    {
-        throw std::runtime_error("Could not rename the playlist '"s + "' because it doesn't exist");
-    }
-    tx.commit();
+        return playlist_id{ sqlite3_column_int64(sel_pl->ptr(), 0) };
+    if (rc == SQLITE_DONE)
+        return std::nullopt;
+    throw std::runtime_error("Could not look up playlist '"s + name + "': " + error_msg(rc));
 }
 
-void database::rename_song(const std::string& old_name, const std::string& new_name)
+void database::rename_playlist(playlist_id id, const std::string& new_name)
 {
-    assert(prepared_statements_.count(statement::SELECT_SONG_ID) == 1);
-    auto& sel_s = prepared_statements_[statement::SELECT_SONG_ID];
-    sel_s->reset();
+    assert(prepared_statements_.count(statement::RENAME_PLAYLIST) == 1);
+    auto& ren = prepared_statements_[statement::RENAME_PLAYLIST];
+    const std::int64_t rid = static_cast<std::int64_t>(id);
     transaction tx(*this);
-    sqlite3_bind_text(sel_s->ptr(), 1, old_name.c_str(), old_name.length(), SQLITE_STATIC);
-    auto rc = sqlite3_step(sel_s->ptr());
-    if (rc == SQLITE_ROW)
-    {
-        assert(prepared_statements_.count(statement::RENAME_SONG) == 1);
-        auto& ren = prepared_statements_[statement::RENAME_SONG];
-        sqlite3_bind_text(ren->ptr(), 1, new_name.c_str(), new_name.length(), SQLITE_STATIC);
-        sqlite3_bind_int64(ren->ptr(), 2, sqlite3_column_int64(sel_s->ptr(), 0));
-        rc = sqlite3_step(ren->ptr());
-        if (rc != SQLITE_DONE)
-            throw std::runtime_error("Error renaming the song '"s + old_name + "': "s + error_msg(rc));
-        lgr()->info("Renamed the song '{}' to '{}'", old_name, new_name);
-    }
-    else
-    {
-        throw std::runtime_error("Could not rename the song '"s + "' because it doesn't exist");
-    }
+    ren->reset();
+    sqlite3_bind_text(ren->ptr(), 1, new_name.c_str(), new_name.length(), SQLITE_STATIC);
+    sqlite3_bind_int64(ren->ptr(), 2, rid);
+    auto rc = sqlite3_step(ren->ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Error renaming playlist to '"s + new_name + "': "s + error_msg(rc));
+    if (sqlite3_changes(db_) == 0)
+        throw std::runtime_error("Cannot rename playlist to '"s + new_name
+            + "': no playlist with id " + std::to_string(rid));
     tx.commit();
+    lgr()->info("Renamed playlist id {} to '{}'", rid, new_name);
 }
+
 
 std::vector<model::bar> database::select_bars(std::uint64_t song_id)
 {
@@ -1380,7 +1496,7 @@ std::vector<std::string> database::select_song_names()
     return names;
 }
 
-model::song database::select_song(const std::string& name)
+stored_song database::select_song(const std::string& name)
 {
     model::song found(name);
     assert(prepared_statements_.count(statement::SELECT_SONG) == 1);
@@ -1390,13 +1506,14 @@ model::song database::select_song(const std::string& name)
     transaction tx(*this);
     sqlite3_bind_text(raw, 1, name.c_str(), name.length(), SQLITE_STATIC);
     auto rc = sqlite3_step(raw);
+    std::int64_t row_id = 0;
     if (rc == SQLITE_ROW)
     {
-        const std::uint64_t song_id = sqlite3_column_int64(raw, 0);
+        row_id = sqlite3_column_int64(raw, 0);
         found.key(reinterpret_cast<const char*>(sqlite3_column_text(raw, 1)));
         found.bars_per_line(sqlite3_column_int(raw, 2));
         found.tempo(std::make_tuple(sqlite3_column_int(raw, 3), static_cast<model::chord::time>(sqlite3_column_int(raw, 4))));
-        found.bars(select_bars(song_id));
+        found.bars(select_bars(row_id));
         model::time_signature ts;
         ts.kind(static_cast<model::time_signature::beat_type>(sqlite3_column_int(raw, 5)))
           .count(sqlite3_column_int(raw, 6));
@@ -1454,7 +1571,7 @@ model::song database::select_song(const std::string& name)
             auto& sel_tb = prepared_statements_[statement::SELECT_SONG_TEXT_BOXES];
             sel_tb->reset();
             auto tb_raw = sel_tb->ptr();
-            sqlite3_bind_int64(tb_raw, 1, song_id);
+            sqlite3_bind_int64(tb_raw, 1, row_id);
             while (sqlite3_step(tb_raw) == SQLITE_ROW)
             {
                 model::text_box tb;
@@ -1472,7 +1589,7 @@ model::song database::select_song(const std::string& name)
             auto& sel_c = prepared_statements_[statement::SELECT_SONG_CONNECTORS];
             sel_c->reset();
             auto c_raw = sel_c->ptr();
-            sqlite3_bind_int64(c_raw, 1, song_id);
+            sqlite3_bind_int64(c_raw, 1, row_id);
             while (sqlite3_step(c_raw) == SQLITE_ROW)
             {
                 model::connector c;
@@ -1519,7 +1636,7 @@ model::song database::select_song(const std::string& name)
     if (sqlite3_step(raw) != SQLITE_DONE)
         throw std::runtime_error("More than one song is named '"s + name + "'");
     tx.commit();
-    return found;
+    return stored_song{ song_id{ row_id }, std::move(found) };
 }
 
 std::uint64_t database::time_signature_id(const model::time_signature& ts)

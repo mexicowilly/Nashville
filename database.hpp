@@ -2,13 +2,19 @@
 
 #include "loggable.hpp"
 #include "sqlite3.h"
+#include "db_ids.hpp"
 #include <map>
+#include <optional>
 #include <filesystem>
 #include "model/song.hpp"
 #include "model/playlist.hpp"
 
 namespace nashville
 {
+
+// A song loaded from the database, paired with the row identity the caller
+// keeps for the rest of the session.
+using stored_song = stored<song_id, model::song>;
 
 class database : loggable
 {
@@ -19,17 +25,19 @@ public:
 
     std::filesystem::path file_name() const;
     bool in_memory() const;
-    void insert_playlist(const model::playlist& pl);
-    void insert_song(const model::song& s);
+    playlist_id insert_playlist(const model::playlist& pl);
+    song_id insert_song(const model::song& s);
+    void update_song(song_id id, const model::song& s);
     void move_to_file(const std::filesystem::path& file_name);
+    void open_file(const std::filesystem::path& file_name);
     void remove_playlist(const std::string& pl);
     void remove_song(const std::string& s);
-    void rename_playlist(const std::string& old_name, const std::string& new_name);
-    void rename_song(const std::string& old_name, const std::string& new_name);
+    void rename_playlist(playlist_id id, const std::string& new_name);
+    std::optional<playlist_id> playlist_id_of(const std::string& name);
     model::playlist select_playlist(const std::string& name);
     std::vector<std::string> select_playlist_names();
     std::vector<std::string> select_song_names();
-    model::song select_song(const std::string& name);
+    stored_song select_song(const std::string& name);
 
 private:
     enum class statement
@@ -67,7 +75,7 @@ private:
         SELECT_SONG_TEXT_BOXES,
         INSERT_CONNECTOR,
         SELECT_SONG_CONNECTORS,
-        RENAME_SONG,
+        UPDATE_SONG,
         RENAME_PLAYLIST,
         DELETE_SONG_TEXT_BOXES,
         DELETE_SONG_CONNECTORS
@@ -101,6 +109,8 @@ private:
     };
 
     std::string error_msg(int rc) const;
+    void bind_song_columns(sqlite3_stmt* raw, const model::song& s);
+    void write_song_body(std::int64_t song_id, const model::song& s);
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);

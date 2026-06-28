@@ -34,6 +34,10 @@ private:
     // if there's no current tab the action is a no-op.
     void wire_bar_menu();
 
+    // Wires the File menu's Save and Save As items to main_window's
+    // save() / save_as().  (Exit is wired in the .ui itself.)
+    void wire_file_menu();
+
     // Wires the three Insert actions in the "Song" menu (text box,
     // line, arrow) to the current tab's body widget.  Same dynamic-
     // lookup pattern as wire_bar_menu.  Also wires the Song menu's

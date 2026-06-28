@@ -1,10 +1,12 @@
 #pragma once
 
 #include "../model/song.hpp"
+#include "../db_ids.hpp"
 #include "song_widget.hpp"
 #include <QWidget>
 #include <QTimer>
 #include <memory>
+#include <optional>
 
 namespace nashville
 {
@@ -30,9 +32,9 @@ namespace nashville::view
 //     also restarting the timer on no-op repaints (hover, focus
 //     changes).  Redundant writes are cheap compared to the
 //     invasiveness of explicit dirty-tracking.
-//   * When the timer fires (~1 sec idle), save() runs:
-//     database::insert_song does an upsert by name.  Tab still alive
-//     after save; user keeps editing.
+//   * When the timer fires (~1 sec idle), save() runs: the first save
+//     inserts the row and records its id; every save after updates by
+//     that id.  Tab still alive after save; user keeps editing.
 //   * close() (called by the tab widget's close button, by app on
 //     quit, or by force_save_and_close from the host) forces an
 //     immediate save and then drops the song.  Idempotent.
@@ -52,6 +54,7 @@ public:
     // dangle the captures.  Heap allocation + stable address fixes
     // it.
     song_tab(std::unique_ptr<model::song> song,
+             std::optional<song_id> id,
              database& db,
              QWidget* parent = nullptr);
     ~song_tab() override;
@@ -91,6 +94,13 @@ public:
     // menu wiring needs body() to set the active tool.
     song_widget* widget() const { return widget_; }
 
+signals:
+    // Emitted after the user renames the song in the chart.  By the time
+    // this fires the new name has been flushed to the database (so the row
+    // is renamed by id, not duplicated), so the host can safely refresh the
+    // tab label and the side-panel song list.
+    void renamed();
+
 protected:
     // Capture every paint event from the song_widget (and its child
     // song_body_widget) so we can restart the debounce timer.  Using
@@ -102,6 +112,12 @@ private:
     void save();   // hits the database
 
     std::unique_ptr<model::song> song_;
+    // Row identity for this song, once it has one.  Empty only for a song
+    // that has never been saved; the first save() inserts and records the
+    // id, and every save after that updates by id.  Because saves are keyed
+    // by id, a title change is just a normal column in the update — no
+    // rename call, and no chance of orphaning the old row.
+    std::optional<song_id>       id_;
     database&                    db_;
     song_widget*                 widget_ = nullptr;
     QTimer                       save_timer_;

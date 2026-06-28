@@ -17,6 +17,10 @@
 #include <QPainterPath>
 #include <QEnterEvent>
 #include <QMouseEvent>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QDir>
+#include <QStandardPaths>
 #include <algorithm>
 
 namespace nashville::view
@@ -434,16 +438,19 @@ void main_window::open_song(const std::string& name)
     // this method is a double-click on a name we just listed, but
     // be defensive.
     std::unique_ptr<model::song> song;
+    std::optional<song_id> id;
     try
     {
-        song = std::make_unique<model::song>(db_.select_song(name));
+        auto loaded = db_.select_song(name);
+        id = loaded.id;
+        song = std::make_unique<model::song>(std::move(loaded.value));
     }
     catch (const std::exception&)
     {
         return;
     }
 
-    auto* tab = new song_tab(std::move(song), db_, this);
+    auto* tab = new song_tab(std::move(song), id, db_, this);
     // Give the body widget access to the overlay so its prompts
     // (Voltas, Custom beats) use the Wayland-safe in-widget overlay
     // rather than QInputDialog.
@@ -467,6 +474,18 @@ void main_window::open_song(const std::string& name)
         }
     });
     tabs_->tabBar()->setTabButton(idx, QTabBar::RightSide, close_btn);
+
+    // Keep the tab label and the side-panel song list in step when the song
+    // is renamed from the chart.  The tab text comes from the in-memory model
+    // (tab_name()); the list is re-read from the database, which song_tab has
+    // already flushed the rename into by the time this fires.  Look the tab's
+    // index up at signal time — it can move as other tabs open and close.
+    connect(tab, &song_tab::renamed, this, [this, tab]() {
+        const int at = tabs_->indexOf(tab);
+        if (at >= 0)
+            tabs_->setTabText(at, tab->tab_name());
+        refresh_lists();
+    });
 
     tabs_->setCurrentIndex(idx);
 }
@@ -495,6 +514,158 @@ void main_window::flush_all_tabs()
         if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
             tab->flush_save();
     }
+}
+
+namespace
+{
+// One source of truth for the file type so the Save and Open dialogs agree.
+const char* const kFileFilter = "Nashville charts (*.nashv);;All files (*)";
+const char* const kFileSuffix = "nashv";
+}
+
+void main_window::save()
+{
+    if (db_.in_memory())
+    {
+        // Untitled: there's no path yet, so a plain Save has to become
+        // Save As and ask for one.
+        save_as();
+    }
+    else
+    {
+        // Already file-backed and continuously auto-saving; an explicit
+        // Save just makes that durable right now by flushing every tab's
+        // in-flight edits into the live database.
+        flush_all_tabs();
+    }
+}
+
+bool main_window::save_as()
+{
+    // Seed the dialog: Documents/Untitled for a fresh session, or the existing
+    // file's own path when relocating a file-backed database.
+    QString start;
+    if (db_.in_memory())
+    {
+        const QString docs =
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        start = QDir(docs).filePath(QString::fromUtf8("Untitled.") +
+                                    QString::fromUtf8(kFileSuffix));
+    }
+    else
+    {
+        start = QString::fromStdString(db_.file_name().string());
+    }
+
+    QString chosen = QFileDialog::getSaveFileName(
+        this, tr("Save As"), start, QString::fromUtf8(kFileFilter));
+    if (chosen.isEmpty())
+        return false;  // user cancelled — stay exactly as we were
+    if (QFileInfo(chosen).suffix().isEmpty())
+        chosen += QString::fromUtf8(".") + QString::fromUtf8(kFileSuffix);
+
+    // Critical ordering: the database snapshots itself as-is, so flush every
+    // open tab's debounced edits into it FIRST, or the user's most recent few
+    // seconds of typing won't make it into the file they just named.
+    flush_all_tabs();
+
+    try
+    {
+        db_.move_to_file(std::filesystem::path(chosen.toStdString()));
+    }
+    catch (const std::exception& e)
+    {
+        // move_to_file is all-or-nothing: on any failure we're still on the
+        // intact in-memory database and no file was damaged, so it's safe to
+        // simply report and return — the user can retry elsewhere.
+        overlay_->message(tr("Could not save"), QString::fromUtf8(e.what()));
+        return false;
+    }
+
+    update_window_title();
+    return true;
+}
+
+void main_window::prompt_open()
+{
+    // Decide whether the current workspace needs saving before we replace it.
+    // Only an *in-memory* session with content is at risk: a file-backed
+    // database is already durable (we flush it below), and an empty scratch
+    // session has nothing to lose.
+    const bool unsaved_scratch =
+        db_.in_memory() &&
+        !(db_.select_song_names().empty() && db_.select_playlist_names().empty());
+
+    if (unsaved_scratch)
+    {
+        overlay_->confirm(
+            tr("Open another file"),
+            tr("Your current workspace isn't saved to a file yet. "
+               "Save it before opening another?"),
+            [this](bool save_first) {
+                if (save_first)
+                {
+                    // Only proceed to the open dialog if the save actually
+                    // happened; if the user cancelled or it failed, stop so
+                    // the unsaved work isn't discarded.
+                    if (save_as())
+                        open_replacing_current();
+                }
+                else
+                {
+                    open_replacing_current();  // deliberately discard scratch
+                }
+            });
+    }
+    else
+    {
+        // File-backed: make the continuous auto-save durable before we drop
+        // the connection by opening another file.
+        if (!db_.in_memory())
+            flush_all_tabs();
+        open_replacing_current();
+    }
+}
+
+void main_window::open_replacing_current()
+{
+    const QString start = db_.in_memory()
+        ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+        : QString::fromStdString(db_.file_name().parent_path().string());
+
+    const QString chosen = QFileDialog::getOpenFileName(
+        this, tr("Open"), start, QString::fromUtf8(kFileFilter));
+    if (chosen.isEmpty())
+        return;  // cancelled — keep the current workspace
+
+    try
+    {
+        db_.open_file(std::filesystem::path(chosen.toStdString()));
+    }
+    catch (const std::exception& e)
+    {
+        // open_file is all-or-nothing: on failure we're still on the current
+        // database with its tabs intact, so just report and stay put.
+        overlay_->message(tr("Could not open"), QString::fromUtf8(e.what()));
+        return;
+    }
+
+    // The swap succeeded: the open tabs reference the previous database's rows,
+    // so drop them WITHOUT saving (we already saved or discarded above; saving
+    // now would write stale ids into the newly-opened database).  No event loop
+    // runs between open_file and here, so no debounced save can fire in the gap.
+    close_all_tabs_without_saving();
+    refresh_lists();
+    update_window_title();
+}
+
+void main_window::update_window_title()
+{
+    const QString name = db_.in_memory()
+        ? tr("Untitled")
+        : QString::fromStdString(db_.file_name().filename().string());
+    if (QWidget* top = window())
+        top->setWindowTitle(name + tr(" — Nashville"));
 }
 
 void main_window::apply_font_scale_to_all_tabs(qreal scale)

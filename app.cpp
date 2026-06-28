@@ -71,6 +71,7 @@ app::app(int argc, char* argv[])
     vl->addWidget(main_window_);
 
     wire_bar_menu();
+    wire_file_menu();
     wire_song_menu();
     wire_playlist_menu();
     wire_view_menu();
@@ -205,6 +206,34 @@ void app::wire_bar_menu()
             nashville_win_.actionEnd->setChecked(
                 shared.has_value() && (*shared & repeat_status::END));
         });
+}
+
+// ---------------------------------------------------------------------------
+// wire_file_menu
+// ---------------------------------------------------------------------------
+// Open / Save / Save As for the workspace database.
+//
+//   * Open... (Ctrl+O)     — switch to a different database file.  If the
+//                            current session is unsaved scratch, offers to
+//                            save it first.
+//   * Save (Ctrl+S)        — while the database is in memory (untitled),
+//                            prompts for a path (it has to — there's nowhere
+//                            to save yet).  Once file-backed, the database is
+//                            already syncing continuously, so Save just
+//                            flushes every open tab to make that durable now.
+//   * Save As... (Ctrl+Shift+S) — always prompts for a path and moves the
+//                            database there.
+//
+// Both route through main_window, which owns the flush-then-move ordering and
+// the error reporting.  Exit is wired in the .ui (actionExit -> close()).
+void app::wire_file_menu()
+{
+    QObject::connect(nashville_win_.actionOpen, &QAction::triggered,
+        [this]() { main_window_->prompt_open(); });
+    QObject::connect(nashville_win_.actionSave, &QAction::triggered,
+        [this]() { main_window_->save(); });
+    QObject::connect(nashville_win_.actionSaveAs, &QAction::triggered,
+        [this]() { main_window_->save_as(); });
 }
 
 // ---------------------------------------------------------------------------

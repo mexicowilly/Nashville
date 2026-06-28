@@ -7,10 +7,12 @@ namespace nashville::view
 {
 
 song_tab::song_tab(std::unique_ptr<model::song> song,
+                   std::optional<song_id> id,
                    database& db,
                    QWidget* parent)
     : QWidget(parent)
     , song_(std::move(song))
+    , id_(id)
     , db_(db)
 {
     auto* vl = new QVBoxLayout(this);
@@ -42,7 +44,18 @@ song_tab::song_tab(std::unique_ptr<model::song> song,
     // song_body_widget), so we install on the body specifically.
     widget_->installEventFilter(this);
     if (auto* body = widget_->body())
+    {
         body->installEventFilter(this);
+
+        // A title change is the one edit the debounced, content-blind save
+        // path can't handle on its own: flush it now so the database row is
+        // renamed by id immediately, then tell the host so it can update the
+        // tab label and the song list.
+        connect(body, &song_body_widget::title_changed, this, [this]() {
+            flush_save();
+            emit renamed();
+        });
+    }
 }
 
 song_tab::~song_tab()
@@ -105,14 +118,17 @@ void song_tab::save()
     // the host has called suppress_destructor_save.
     if (save_suppressed_)
         return;
-    // insert_song does an upsert by song name in the existing schema
-    // (it looks up an existing row by name and overwrites bars /
-    // annotations under its id).  We don't currently support rename
-    // — that would require keeping a "previous name" snapshot to
-    // delete the old row — but that's a separate feature.
+    // Saves are keyed by row identity, not by name.  The first save for a
+    // never-persisted song inserts and records the id; every save after
+    // updates that row by id.  Because the row is located by id, a title
+    // change is written as an ordinary column update — there is no rename
+    // path and no way to orphan the old row.
     try
     {
-        db_.insert_song(*song_);
+        if (id_)
+            db_.update_song(*id_, *song_);
+        else
+            id_ = db_.insert_song(*song_);
     }
     catch (const std::exception& e)
     {
@@ -120,8 +136,8 @@ void song_tab::save()
         // and the user is mid-session — we can't pop a dialog every
         // second.  The loggable base on database carries an spdlog
         // logger but we don't have access to it from here; rely on
-        // insert_song's own logging.  If save failures become a real
-        // problem we can add a status-bar indicator.
+        // the database layer's own logging.  If save failures become a
+        // real problem we can add a status-bar indicator.
         (void)e;
     }
 }

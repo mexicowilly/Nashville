@@ -2159,8 +2159,11 @@ void song_body_widget::edit_title()
             QString trimmed = text.trimmed();
             if (trimmed.isEmpty())
                 return false;  // revert: leave the model name untouched
+            const bool changed = (trimmed.toStdString() != song_.name());
             song_.name(trimmed.toStdString());
             rebuild();
+            if (changed)
+                emit title_changed();
             return true;
         },
         QString::fromUtf8(k_title_placeholder));

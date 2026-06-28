@@ -96,6 +96,27 @@ public:
     void confirm_delete_song(const std::string& name);
     void confirm_delete_playlist(const std::string& name);
 
+    // Save entry points, wired to the File menu.
+    //   save()    — Ctrl+S.  While the database is in memory (untitled) this
+    //               is the same as save_as(), since there's no path yet.  Once
+    //               file-backed it just flushes every open tab to make the
+    //               continuous auto-save durable this instant (the file is
+    //               already live, so there's nothing else to do).
+    //   save_as() — always prompts for a path, flushes every open tab so the
+    //               last few seconds of edits are included, then moves the
+    //               database to that file via database::move_to_file().  On
+    //               failure the database layer guarantees we're left on the
+    //               intact in-memory database with no file damaged, so the
+    //               handler just reports the error and returns.  Returns true
+    //               iff the database was actually written to a file.
+    //   prompt_open() — open a different file as the workspace.  If the
+    //               current session is unsaved scratch, first offers to save
+    //               it; then asks for a file and switches the live database to
+    //               it (database::open_file), closing the old tabs.
+    void save();
+    bool save_as();
+    void prompt_open();
+
 signals:
     // Emitted when the current tab changes or when a tab opens /
     // closes — basically any state change that affects what
@@ -113,6 +134,15 @@ private:
     // Linear scan — number of open tabs is small (a handful at
     // most), so hashing is overkill.
     int find_tab_by_name(const std::string& name) const;
+
+    // Reflect the current database file (or "Untitled" when in memory) in
+    // the top-level window title.  Called after a successful save.
+    void update_window_title();
+
+    // Show the Open dialog and, if a file is chosen, switch the live database
+    // to it and rebuild the UI around the new file.  The caller (prompt_open)
+    // has already dealt with saving/discarding the current workspace.
+    void open_replacing_current();
 
     database&     db_;
     QToolButton*  hamburger_  = nullptr;

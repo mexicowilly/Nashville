@@ -27,6 +27,7 @@ qt_add_executable(nashville
     app.hpp
     database.cpp
     database.hpp
+    db_ids.hpp
     loggable.cpp
     loggable.hpp
     model/annotations.cpp
