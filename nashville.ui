@@ -48,6 +48,8 @@
     <addaction name="actionNewSong"/>
     <addaction name="actionDeleteSong"/>
     <addaction name="actionPrint"/>
+    <addaction name="actionBarsPerLine"/>
+    <addaction name="actionInfo"/>
     <addaction name="separator"/>
     <addaction name="actionInsertTextBox"/>
     <addaction name="actionInsertLine"/>
@@ -72,6 +74,7 @@
     <addaction name="menuRepeat"/>
     <addaction name="actionVoltas"/>
     <addaction name="actionCustomBeats"/>
+    <addaction name="actionModulation"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -154,6 +157,11 @@
     <string>Custom beats...</string>
    </property>
   </action>
+  <action name="actionModulation">
+   <property name="text">
+    <string>Modulation...</string>
+   </property>
+  </action>
   <action name="actionInsertBefore">
    <property name="text">
     <string>Insert 1 before</string>
@@ -202,6 +210,16 @@
   <action name="actionPrint">
    <property name="text">
     <string>Print...</string>
+   </property>
+  </action>
+  <action name="actionBarsPerLine">
+   <property name="text">
+    <string>Bars per line...</string>
+   </property>
+  </action>
+  <action name="actionInfo">
+   <property name="text">
+    <string>Info...</string>
    </property>
   </action>
   <action name="actionTextNormal">

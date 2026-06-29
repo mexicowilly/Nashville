@@ -10,6 +10,18 @@ bar::bar()
 {
 }
 
+bool bar::operator==(const bar& other) const
+{
+    return chords_          == other.chords_          &&
+           time_signature_  == other.time_signature_  &&
+           is_eol_          == other.is_eol_          &&
+           section_         == other.section_         &&
+           repeat_          == other.repeat_          &&
+           voltas_          == other.voltas_          &&
+           number_of_beats_ == other.number_of_beats_ &&
+           modulation_      == other.modulation_;
+}
+
 chord& bar::add_chord()
 {
     return chords_.emplace_back(chord());

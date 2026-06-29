@@ -29,6 +29,17 @@ public:
     song();
     song(const std::string& nm);
 
+    // Content equality used to decide whether a save should advance the
+    // modification time.  Compares every persisted aspect of the song —
+    // name, key, time signature, tempo, bars-per-line, margin width, all
+    // bars (and thus all chords), annotations, and the descriptive
+    // metadata (authors, performer, album, release date, notes) — but
+    // deliberately EXCLUDES creation_time and modification_time
+    // themselves.  Excluding them is what lets the save path stamp
+    // modification_time only when something the user can see or edit has
+    // actually changed, rather than on every content-blind autosave.
+    bool same_content_as(const song& other) const;
+
     bar& add_bar();
     annotations& annotes();
     const annotations& annotes() const;

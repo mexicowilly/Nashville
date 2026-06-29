@@ -8,6 +8,9 @@
 #include <QVBoxLayout>
 #include <QActionGroup>
 #include <QAction>
+#include <QMenuBar>
+#include <QMenu>
+#include <QFont>
 #include <QKeySequence>
 #include <QList>
 #include <QPalette>
@@ -46,6 +49,40 @@ app::app(int argc, char* argv[])
 {
     nashville_win_.setupUi(&main_win_);
 
+    // The desktop theme here is dark, so the menu bar and its dropdowns come
+    // up dark and a touch oversized against the app's white "paper" look.
+    // Style them the way MuseScore does: a slightly smaller font and white
+    // backgrounds with black text for the bar and every menu, with a light
+    // hover highlight.  The bar's stylesheet cascades to its child QMenus
+    // (the dropdowns and submenus) for colours; the font is set on the bar
+    // and on each menu explicitly, since popup menus don't reliably inherit
+    // the bar's font.
+    if (auto* mb = nashville_win_.menubar)
+    {
+        QFont mf = mb->font();
+        if (mf.pointSizeF() > 0.0)
+            mf.setPointSizeF(mf.pointSizeF() * 0.9);
+        else if (mf.pixelSize() > 0)
+            mf.setPixelSize(static_cast<int>(mf.pixelSize() * 0.9));
+        mb->setFont(mf);
+        for (QMenu* m : mb->findChildren<QMenu*>())
+            m->setFont(mf);
+
+        mb->setStyleSheet(
+            "QMenuBar { background-color:#ffffff; color:#000000;"
+            "           border-bottom:1px solid #d8d8d8; }"
+            "QMenuBar::item { background:transparent; padding:3px 10px; }"
+            "QMenuBar::item:selected { background-color:#e6e6e6; }"
+            "QMenuBar::item:pressed  { background-color:#dcdcdc; }"
+            "QMenu { background-color:#ffffff; color:#000000;"
+            "        border:1px solid #c8c8c8; }"
+            "QMenu::item { padding:4px 24px 4px 20px; }"
+            "QMenu::item:selected { background-color:#e6e6e6; color:#000000; }"
+            "QMenu::item:disabled { color:#b0b0b0; }"
+            "QMenu::separator { height:1px; background:#e0e0e0; margin:4px 8px; }"
+        );
+    }
+
     // Open the single application-wide database.  Default-constructed
     // database picks its own on-disk location (see database.cpp);
     // future versions could honor a command-line override or a
@@ -77,6 +114,12 @@ app::app(int argc, char* argv[])
     wire_view_menu();
     main_win_.setFocus();
     main_win_.show();
+
+    // The database is open and the UI is fully wired: reopen the songs that
+    // were in tabs when this database was last closed.  Done here (rather than
+    // in main_window's constructor) so the menu wiring is already connected to
+    // current_tab_changed when the restored tabs announce themselves.
+    main_window_->restore_open_tabs();
 }
 
 app::~app()
@@ -93,6 +136,10 @@ app::~app()
     if (main_window_)
     {
         main_window_->flush_all_tabs();
+        // Record which songs are open BEFORE we tear the tabs down, while the
+        // database is still alive.  flush_all_tabs above has assigned a row id
+        // to any never-saved song, so all open songs are now persistable.
+        main_window_->persist_open_tabs();
         main_window_->close_all_tabs_without_saving();
     }
 }
@@ -155,6 +202,9 @@ void app::wire_bar_menu()
     QObject::connect(nashville_win_.actionCustomBeats, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->prompt_beats_for_selection(); });
 
+    QObject::connect(nashville_win_.actionModulation, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->prompt_modulation_for_selection(); });
+
     QObject::connect(nashville_win_.actionInsertBefore, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->insert_bar_relative_to_selection(/*after=*/false); });
     QObject::connect(nashville_win_.actionInsertAfter, &QAction::triggered,
@@ -187,6 +237,7 @@ void app::wire_bar_menu()
             nashville_win_.menuRepeat->setEnabled(sel);
             nashville_win_.actionVoltas->setEnabled(sel);
             nashville_win_.actionCustomBeats->setEnabled(sel);
+            nashville_win_.actionModulation->setEnabled(sel);
             nashville_win_.actionDelete->setEnabled(sel);
         });
 
@@ -256,6 +307,11 @@ void app::wire_file_menu()
 //                        song_widget::print; this just supplies a
 //                        QPrinter for the visible tab.  Bound to Ctrl+P
 //                        and disabled when no tab is open.
+//   * Bars per line... — prompt for the song's preferred bars-per-line
+//                        and reflow the chart's line breaks to match.
+//                        Targets current_body() (it rewrites the chart's
+//                        per-bar is_eol flags) and is disabled with no
+//                        open tab.
 //   * Insert text box / line / arrow — the existing one-shot
 //                        annotation tools, unchanged.
 //
@@ -294,6 +350,17 @@ void app::wire_song_menu()
             }
         });
 
+    // Bars per line: a song-level layout preference that reflows the
+    // chart.  Targets current_body() because the reflow rewrites the
+    // chart's per-bar line-break flags.  Gated on an open tab below.
+    QObject::connect(nashville_win_.actionBarsPerLine, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->prompt_bars_per_line(); });
+
+    // Info: swap the focused tab's content area to the metadata Info page.
+    // Targets the song_tab (it owns the page swap), not current_body().
+    QObject::connect(nashville_win_.actionInfo, &QAction::triggered,
+        [this]() { if (auto* tab = main_window_->current_tab()) tab->show_info(); });
+
     QObject::connect(nashville_win_.actionInsertTextBox, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->set_annotation_tool(tool::text_box); });
     QObject::connect(nashville_win_.actionInsertLine, &QAction::triggered,
@@ -309,6 +376,8 @@ void app::wire_song_menu()
             const bool has_tab = current_body() != nullptr;
             nashville_win_.actionDeleteSong   ->setEnabled(has_tab);
             nashville_win_.actionPrint        ->setEnabled(has_tab);
+            nashville_win_.actionBarsPerLine  ->setEnabled(has_tab);
+            nashville_win_.actionInfo         ->setEnabled(has_tab);
             nashville_win_.actionInsertTextBox->setEnabled(has_tab);
             nashville_win_.actionInsertLine   ->setEnabled(has_tab);
             nashville_win_.actionInsertArrow  ->setEnabled(has_tab);

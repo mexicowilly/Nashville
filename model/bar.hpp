@@ -22,6 +22,16 @@ public:
 
     bar();
 
+    // Content equality: true iff every musical field matches (chords —
+    // compared via chord::operator==, which covers extensions,
+    // articulations, ties, pushes and durations — plus the bar-level
+    // time signature, line-break flag, section label, repeat flags,
+    // voltas, custom beat count and modulation).  Used by
+    // song::same_content_as to decide whether the song's modification
+    // time should advance on save.  loggable carries no comparable state.
+    bool operator==(const bar& other) const;
+    bool operator!=(const bar& other) const { return !(*this == other); }
+
     chord& add_chord();
     bar& add_volta(unsigned v);
     bar& clear_voltas();
@@ -30,6 +40,8 @@ public:
     bool empty() const;
     bool is_eol() const;
     bar& is_eol(bool state);
+    const std::string& modulation() const;
+    bar& modulation(const std::string& mod);
     const std::optional<unsigned>& number_of_beats() const;
     bar& number_of_beats(const std::optional<unsigned>& num);
     bar& parse_user_input(const std::string& str);
@@ -61,6 +73,8 @@ private:
     // If left unset, then the number is taken from the count
     // of the time signature of the song.
     std::optional<unsigned> number_of_beats_;
+    // The name of the new key. Empty means no modulation.
+    std::string modulation_;
 };
 
 inline bar& bar::add_volta(unsigned v)
@@ -94,6 +108,17 @@ inline bool bar::empty() const
 inline bool bar::is_eol() const
 {
     return is_eol_;
+}
+
+inline const std::string& bar::modulation() const
+{
+    return modulation_;
+}
+
+inline bar& bar::modulation(const std::string& mod)
+{
+    modulation_ = mod;
+    return *this;
 }
 
 inline const std::optional<unsigned>& bar::number_of_beats() const

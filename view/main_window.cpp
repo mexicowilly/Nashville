@@ -450,6 +450,12 @@ void main_window::open_song(const std::string& name)
         return;
     }
 
+    add_tab(std::move(song), id);
+}
+
+void main_window::add_tab(std::unique_ptr<model::song> song,
+                          std::optional<song_id> id)
+{
     auto* tab = new song_tab(std::move(song), id, db_, this);
     // Give the body widget access to the overlay so its prompts
     // (Voltas, Custom beats) use the Wayland-safe in-widget overlay
@@ -488,6 +494,44 @@ void main_window::open_song(const std::string& name)
     });
 
     tabs_->setCurrentIndex(idx);
+}
+
+void main_window::restore_open_tabs()
+{
+    // Pull the songs the database recorded as open last time and reopen a tab
+    // for each.  A malformed/garbled list must never block the app from
+    // opening, so failures here are swallowed — worst case the user starts
+    // with no tabs.
+    std::vector<stored_song> songs;
+    try
+    {
+        songs = db_.last_open_songs();
+    }
+    catch (const std::exception&)
+    {
+        return;
+    }
+
+    for (auto& ss : songs)
+        add_tab(std::make_unique<model::song>(std::move(ss.value)), ss.id);
+
+    // add_tab focuses each tab as it's added; leave the first one focused.
+    if (tabs_->count() > 0)
+        tabs_->setCurrentIndex(0);
+
+    emit current_tab_changed(current_tab());
+}
+
+void main_window::persist_open_tabs()
+{
+    // Record the row id of every open tab, in tab order.  Tabs for songs that
+    // have never been saved have no id yet and are simply omitted.
+    std::vector<song_id> ids;
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
+            if (auto id = tab->song_identity())
+                ids.push_back(*id);
+    db_.last_open_songs(ids);
 }
 
 void main_window::close_tab_at(int index)
@@ -638,6 +682,11 @@ void main_window::open_replacing_current()
     if (chosen.isEmpty())
         return;  // cancelled — keep the current workspace
 
+    // Record the current workspace's open tabs into the current (about-to-be-
+    // replaced) database, so reopening this file later restores them.  The
+    // caller (prompt_open) has already flushed/saved, so ids exist.
+    persist_open_tabs();
+
     try
     {
         db_.open_file(std::filesystem::path(chosen.toStdString()));
@@ -657,6 +706,10 @@ void main_window::open_replacing_current()
     close_all_tabs_without_saving();
     refresh_lists();
     update_window_title();
+
+    // Reopen whatever tabs the newly-opened file had open when it was last
+    // closed.
+    restore_open_tabs();
 }
 
 void main_window::update_window_title()

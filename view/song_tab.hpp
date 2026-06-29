@@ -8,6 +8,8 @@
 #include <memory>
 #include <optional>
 
+class QStackedWidget;
+
 namespace nashville
 {
 class database;
@@ -15,6 +17,8 @@ class database;
 
 namespace nashville::view
 {
+
+class song_info_panel;
 
 // One open editing context: owns the in-memory song, hosts the
 // editable song_widget, and runs a debounced auto-save back to the
@@ -59,6 +63,13 @@ public:
              QWidget* parent = nullptr);
     ~song_tab() override;
 
+    // Swap the content area between the chart and the metadata Info page.
+    // The "Song > Info..." menu action calls show_info(); the Info page's
+    // own back control calls show_chart() (wired in the constructor).  Both
+    // are no-ops if already on that page.
+    void show_info();
+    void show_chart();
+
     // The name shown in the QTabWidget tab.  Reads through to
     // song_->name() so a future rename feature would be a one-liner
     // (mutate the model, ask the host to refresh tab text).
@@ -68,6 +79,11 @@ public:
     // consults this when opening a song to avoid loading the same
     // name twice.
     const std::string& song_name() const { return song_->name(); }
+
+    // The song's database row id, or empty for a song that has never been
+    // saved (and so has no row yet).  Used by the host to record which songs
+    // are open when the database closes, so they can be reopened next time.
+    std::optional<song_id> song_identity() const { return id_; }
 
     // Force a synchronous write to the database, regardless of timer
     // state.  Used on tab-close, app-quit, and anywhere else the
@@ -112,6 +128,14 @@ private:
     void save();   // hits the database
 
     std::unique_ptr<model::song> song_;
+    // Snapshot of the song's content as of the last successful save (and
+    // of the initial load, taken in the constructor).  save() compares
+    // *song_ against this via same_content_as to decide whether to
+    // advance modification_time — see save() for the rationale.  It is a
+    // full copy rather than a fingerprint so the comparison stays exact
+    // and automatically covers any field added later.  Its annotations
+    // anchor-resolver is never installed/invoked, so the copy is inert.
+    std::unique_ptr<model::song> last_saved_;
     // Row identity for this song, once it has one.  Empty only for a song
     // that has never been saved; the first save() inserts and records the
     // id, and every save after that updates by id.  Because saves are keyed
@@ -120,6 +144,10 @@ private:
     std::optional<song_id>       id_;
     database&                    db_;
     song_widget*                 widget_ = nullptr;
+    // Content area swaps between the chart (widget_) and the metadata Info
+    // page (info_panel_).  The chart is index 0 so a fresh tab opens on it.
+    QStackedWidget*              stack_      = nullptr;
+    song_info_panel*             info_panel_ = nullptr;
     QTimer                       save_timer_;
     // Set when the host is tearing down the application and the
     // database is going away.  Once set, both the debounce timer

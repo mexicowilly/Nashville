@@ -1,7 +1,9 @@
 #pragma once
 
+#include "../db_ids.hpp"
 #include <QWidget>
 #include <memory>
+#include <optional>
 #include <string>
 
 class QTabWidget;
@@ -10,6 +12,7 @@ class QToolButton;
 namespace nashville
 {
 class database;
+namespace model { class song; }
 }
 
 namespace nashville::view
@@ -48,6 +51,19 @@ public:
     // caller's UI usually only offers names from the songs list, so
     // this is mostly defensive).
     void open_song(const std::string& name);
+
+    // Open a tab for every song the database recorded as open when it was
+    // last closed.  Called when a database becomes the live workspace: at
+    // startup (by app, once the UI is wired) and after switching files.  A
+    // no-op when nothing was recorded.  Safe to call on a clean slate only —
+    // it assumes no tabs are currently open.
+    void restore_open_tabs();
+
+    // Record the set of currently-open songs into the live database so they
+    // can be reopened next time it's opened.  Called when the database is
+    // about to close: on app quit (after flushing) and before switching
+    // files.  Songs without a row id yet (never saved) are skipped.
+    void persist_open_tabs();
 
     // Force a save on every open tab.  Called by app on quit so no
     // in-flight edits are lost.  Each tab's flush_save handles its
@@ -129,6 +145,12 @@ private:
     // the QTabWidget, refreshes the side panel (since save may
     // have updated it).  Wired to QTabWidget::tabCloseRequested.
     void close_tab_at(int index);
+
+    // Create a tab around an already-loaded song (and its optional row id),
+    // wire its close button and rename handler, append it, and focus it.
+    // Shared by open_song (load-by-name) and restore_open_tabs (bulk reopen),
+    // so both produce identically-wired tabs.
+    void add_tab(std::unique_ptr<model::song> song, std::optional<song_id> id);
 
     // Find the index of the tab editing `name`, or -1 if none.
     // Linear scan — number of open tabs is small (a handful at

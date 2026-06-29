@@ -161,6 +161,41 @@ public:
     // input only when there's an unambiguous starting value to show.
     std::optional<std::set<unsigned>> common_voltas_of_selection() const;
 
+    // Opens a modal prompt for the modulation (new key) that the selected
+    // bar(s) begin.  Prefilled from the selection iff every selected bar
+    // carries the same modulation string.  An empty string clears the
+    // modulation on the selection — symmetric with the section / voltas /
+    // beats editors.  The text is stored verbatim in the model (e.g. "Bb",
+    // "F#m"); the renderer substitutes the proper accidental glyphs for
+    // display.  Public because both the right-click context menu and the
+    // menubar "Bar > Modulation..." action invoke it.
+    void prompt_modulation_for_selection();
+
+    // Sets (or clears, when mod is empty) the modulation string on every
+    // selected bar and rebuilds.
+    void apply_modulation_to_selection(const std::string& mod);
+
+    // Returns the shared modulation string across all selected bars iff
+    // they all agree (including all empty), nullopt otherwise.  The
+    // "Modulation..." dialog uses this to prefill only when unambiguous.
+    std::optional<std::string> common_modulation_of_selection() const;
+
+    // Opens a modal prompt for the song's preferred bars-per-line, then
+    // reflows the chart to honour it.  Song-level (no bar selection
+    // required).  Public because the menubar "Song > Bars per line..."
+    // action invokes it.
+    void prompt_bars_per_line();
+
+    // Sets the song's bars_per_line preference to n and reflows the
+    // existing layout while PRESERVING the user's line breaks: existing
+    // is_eol flags are never removed or moved and lines are never merged.
+    // Only a line longer than n bars is split (a break inserted every n
+    // bars within it).  Raising bars-per-line thus leaves the current
+    // layout untouched; lowering it splits the over-long lines.  Section
+    // labels (which ride on each line's first bar) are never orphaned.
+    // n == 0 is ignored.
+    void apply_bars_per_line(unsigned n);
+
     // Inserts a new bar adjacent to the selection: at the position of
     // the lowest selected index when `after` is false ("Insert 1
     // before"), or one past the highest selected index when `after` is

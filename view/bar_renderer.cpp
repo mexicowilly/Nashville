@@ -24,6 +24,118 @@ constexpr qreal k_dot_r     = 1.6;   // dot radius
 constexpr qreal k_dot_inset = 4.0;   // dot offset from the bar's centre
 constexpr qreal k_wing_len  = 6.0;   // length of each wing stroke
 constexpr qreal k_wing_dy   = 3.0;   // vertical drop from bar end to wing tip
+
+// --- Modulation indicator geometry ---------------------------------------
+// The modulation key name is drawn inside a thin black circle, just like the
+// key circle in the song margin, but shrunk so it fits within the bar's
+// vertical extent.  These constants describe that fit:
+constexpr qreal k_mod_v_gutter   = 2.0;  // clearance above & below the circle
+constexpr qreal k_mod_text_pad   = 3.0;  // padding from text to circle edge (radius)
+constexpr qreal k_mod_chord_gap  = 4.0;  // gap between circle and first chord
+constexpr qreal k_mod_min_pt     = 6.0;  // floor font size before we stop shrinking
+constexpr qreal k_mod_min_radius = 4.0;  // never collapse the circle below this
+
+// Resolved geometry for one bar's modulation indicator.  `present` is false
+// when the bar carries no modulation, in which case the other fields are
+// unused.  compute_mod_layout sizes the font down (from the chord modifier
+// font) until the circle fits within `height`, mirroring the margin key's
+// shrink-to-fit behaviour.
+struct mod_layout
+{
+    bool    present = false;
+    QFont   font;
+    qreal   radius  = 0.0;
+    qreal   text_w  = 0.0;
+    QString text;
+};
+
+// Convert a raw modulation key string (as stored in the model, e.g. "Bb",
+// "F#m") into the display form shown in the circle.  This mirrors
+// margin_renderer::parse_key exactly so a modulation reads identically to
+// the margin key circle: the note letter is upper-cased and a flat/sharp
+// marker immediately following it becomes the proper Unicode glyph
+// (♭ / ♯).  The rest of the string (mode suffix etc.) is preserved as-is.
+// The substitution is deliberately targeted at that one accidental
+// position rather than every 'b'/'#' in the string, so suffixes like
+// "bebop" or arbitrary text are never mangled.  Done in the view only —
+// the model keeps the user's literal "Bb" / "F#" spelling.
+QString format_modulation_display(const std::string& raw)
+{
+    if (raw.empty())
+        return QString();
+
+    static constexpr QChar k_flat (0x266D);  // ♭
+    static constexpr QChar k_sharp(0x266F);  // ♯
+
+    QString out;
+    out += QChar(QChar(static_cast<ushort>(
+                   static_cast<unsigned char>(raw[0]))).toUpper());
+
+    std::size_t consumed = 1;
+    if (raw.size() > 1)
+    {
+        char acc = raw[1];
+        if (acc == 'b' || acc == 'B') { out += k_flat;  consumed = 2; }
+        else if (acc == '#')          { out += k_sharp; consumed = 2; }
+    }
+    if (consumed < raw.size())
+        out += QString::fromStdString(raw.substr(consumed));
+    return out;
+}
+
+mod_layout compute_mod_layout(const nashville::model::bar& bar,
+                              qreal height,
+                              const nashville::view::chord_renderer::Fonts& fonts)
+{
+    mod_layout ml;
+    if (bar.modulation().empty())
+        return ml;
+
+    ml.present = true;
+    ml.text    = format_modulation_display(bar.modulation());
+
+    // Cap the circle so its diameter stays within the bar's vertical height
+    // (less a small gutter top and bottom).  The text font then shrinks from
+    // the chord modifier size until the natural circle radius fits the cap.
+    const qreal max_radius = std::max(k_mod_min_radius,
+                                      height / 2.0 - k_mod_v_gutter);
+
+    QFont f = fonts.modifier;
+    qreal try_pt   = f.pointSizeF();
+    qreal natural_r = 0.0;
+    while (true)
+    {
+        f.setPointSizeF(try_pt);
+        QFontMetricsF fm(f);
+        qreal tw = fm.horizontalAdvance(ml.text);
+        qreal th = fm.height();
+        natural_r = std::max(tw, th) / 2.0 + k_mod_text_pad;
+        if (natural_r <= max_radius || try_pt <= k_mod_min_pt)
+            break;
+        try_pt -= 0.5;
+    }
+
+    f.setPointSizeF(std::max(try_pt, k_mod_min_pt));
+    QFontMetricsF fm(f);
+    ml.font   = f;
+    ml.text_w = fm.horizontalAdvance(ml.text);
+    ml.radius = std::min(natural_r, max_radius);
+    return ml;
+}
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// Public: modulation_slot_width
+// ---------------------------------------------------------------------------
+qreal bar_renderer::modulation_slot_width(const model::bar& bar,
+                                          qreal height,
+                                          const chord_renderer::Fonts& fonts)
+{
+    mod_layout ml = compute_mod_layout(bar, height, fonts);
+    if (!ml.present)
+        return 0.0;
+    // Circle diameter plus the gap to the first chord.
+    return ml.radius * 2.0 + k_mod_chord_gap;
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +145,8 @@ qreal bar_renderer::width_hint(const model::bar& bar,
                               qreal /*height*/,
                               const chord_renderer::Fonts& fonts,
                               bool draw_begin_repeat,
-                              bool draw_end_repeat)
+                              bool draw_end_repeat,
+                              qreal modulation_slot_w)
 {
     if (bar.empty())
     {
@@ -50,6 +163,7 @@ qreal bar_renderer::width_hint(const model::bar& bar,
         qreal w = k_time_sig_slot_w + k_empty_bar_chord_slot_w;
         if (draw_begin_repeat) w += k_repeat_slot_w;
         if (draw_end_repeat)   w += k_repeat_slot_w;
+        w += modulation_slot_w;
         return w;
     }
 
@@ -59,6 +173,13 @@ qreal bar_renderer::width_hint(const model::bar& bar,
 
     total_width += k_inter_chord_spacing * (bar.chords().size() - 1);
     total_width += k_time_sig_slot_w;
+
+    // Modulation indicator (circled key name) sits between the time-sig slot
+    // and the chord column.  The width is the column-wide reservation passed
+    // in by the layout (max over the column), NOT this bar's own circle, so
+    // every bar in the column reserves the same space and the chords stay
+    // aligned across lines.
+    total_width += modulation_slot_w;
 
     // Repeat marks each consume a dedicated slot so the chord row never
     // ends up sharing horizontal space with the dots and wings.  Width
@@ -127,7 +248,8 @@ void bar_renderer::paint(QPainter& painter,
                          bool line_has_articulation,
                          bool draw_begin_repeat,
                          bool draw_end_repeat,
-                         bool draw_beat_parens)
+                         bool draw_beat_parens,
+                         qreal modulation_slot_w)
 {
     if (bar.empty())
         return;
@@ -210,6 +332,22 @@ void bar_renderer::paint(QPainter& painter,
                                  line_y + sep + fm.ascent()),
                          kindStr);
         painter.restore();
+    }
+
+    // --- Modulation indicator ---
+    // The modulation slot is reserved COLUMN-WIDE (the value passed in by
+    // the layout is the max over every bar in this column), so the chords
+    // shift right by the same amount on every line — modulating or not —
+    // keeping the chord columns aligned across lines.  We always advance
+    // chords_left by the reserved width; we only paint a circle when THIS
+    // bar actually starts a modulation.  The circle is drawn at the slot's
+    // left edge so it sits just after the time-sig slot, with the chords
+    // following the full reserved width.
+    if (modulation_slot_w > 0.0)
+    {
+        if (!bar.modulation().empty())
+            paint_modulation(painter, rect, chords_left, bar, fonts);
+        chords_left += modulation_slot_w;
     }
 
     QRectF chord_slot_rect(chords_left,
@@ -505,6 +643,46 @@ void bar_renderer::paint_repeat_mark(QPainter& painter,
     qreal dot_dy = std::max(4.0, (bottom - top) / 6.0);
     painter.drawEllipse(QPointF(dot_x, centre_y - dot_dy), k_dot_r, k_dot_r);
     painter.drawEllipse(QPointF(dot_x, centre_y + dot_dy), k_dot_r, k_dot_r);
+
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Private: paint_modulation
+// ---------------------------------------------------------------------------
+// Mirrors the song-margin key circle (margin_renderer): a thin black ellipse
+// with the label centred inside, the accidental left as-is (modulation keys
+// are short names like "Bb" / "F#m" and read fine at this size).  Sized down
+// via compute_mod_layout so the circle clears the bar's vertical limits.
+void bar_renderer::paint_modulation(QPainter& painter,
+                                    const QRectF& bar_rect,
+                                    qreal slot_left,
+                                    const model::bar& bar,
+                                    const chord_renderer::Fonts& fonts)
+{
+    mod_layout ml = compute_mod_layout(bar, bar_rect.height(), fonts);
+    if (!ml.present)
+        return;
+
+    // Circle centred horizontally in its slot (the circle occupies the slot
+    // minus the trailing chord gap) and vertically in the full bar height.
+    const QPointF center(slot_left + ml.radius, bar_rect.center().y());
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    // Same look as the margin key circle, just a thinner stroke to stay in
+    // proportion with the smaller radius.
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(Qt::black, 1.2));
+    painter.drawEllipse(center, ml.radius, ml.radius);
+
+    QFontMetricsF fm(ml.font);
+    painter.setFont(ml.font);
+    painter.setPen(QPen(Qt::black, 1.0));
+    const qreal text_x   = center.x() - ml.text_w / 2.0;
+    const qreal baseline = center.y() + (fm.ascent() - fm.descent()) / 2.0;
+    painter.drawText(QPointF(text_x, baseline), ml.text);
 
     painter.restore();
 }

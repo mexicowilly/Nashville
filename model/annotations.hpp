@@ -21,6 +21,12 @@ struct text_box
     std::uint64_t id = 0;     // stable across edits; assigned by container
     QRectF rect;              // song-local coords
     QString text;
+
+    bool operator==(const text_box& o) const
+    {
+        return id == o.id && rect == o.rect && text == o.text;
+    }
+    bool operator!=(const text_box& o) const { return !(*this == o); }
 };
 
 // One end of a connector.  Two flavors:
@@ -78,6 +84,20 @@ struct connector_endpoint
         e.anchor_index = idx;
         return e;
     }
+
+    // Kind-aware equality: only the fields meaningful for the active
+    // kind participate, so a free endpoint and an anchored endpoint are
+    // never equal, and stale storage in the inactive fields never causes
+    // a spurious difference.
+    bool operator==(const connector_endpoint& o) const
+    {
+        if (k != o.k)
+            return false;
+        if (k == kind::free)
+            return free_pos == o.free_pos;
+        return text_box_id == o.text_box_id && anchor_index == o.anchor_index;
+    }
+    bool operator!=(const connector_endpoint& o) const { return !(*this == o); }
 };
 
 // A straight line with optional arrowheads.  Each endpoint is either
@@ -92,6 +112,14 @@ struct connector
     connector_endpoint end;
     bool arrow_at_start = false;
     bool arrow_at_end   = true;
+
+    bool operator==(const connector& o) const
+    {
+        return id == o.id && start == o.start && end == o.end &&
+               arrow_at_start == o.arrow_at_start &&
+               arrow_at_end == o.arrow_at_end;
+    }
+    bool operator!=(const connector& o) const { return !(*this == o); }
 };
 
 class annotations : public loggable
@@ -105,6 +133,15 @@ public:
     // operations should hold the id, not a pointer.
     const std::vector<text_box>&  text_boxes()  const { return text_boxes_; }
     const std::vector<connector>& connectors() const { return connectors_; }
+
+    // Content equality: compares the text boxes and connectors only.  The
+    // anchor_resolver is deliberately excluded — it is view-installed
+    // behaviour, not song content, and std::function isn't comparable
+    // anyway.  Used by song::same_content_as.
+    bool same_content_as(const annotations& o) const
+    {
+        return text_boxes_ == o.text_boxes_ && connectors_ == o.connectors_;
+    }
 
     // Returns a reference to the newly-appended item.  Reference
     // validity ends at the next mutation, same caveat as above.

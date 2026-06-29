@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <map>
+#include <sstream>
 #include <system_error>
 // Annotation binding/reading uses these directly; they're pulled in
 // transitively via model/annotations.hpp, but listing them explicitly
@@ -21,6 +22,13 @@ namespace
 const char* schema = R"(
 PRAGMA encoding = 'UTF-8';
 PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS metadata
+(
+    version INTEGER,
+    -- This is a comma-separated list of song ids
+    last_open_song_ids TEXT
+);
 
 CREATE TABLE IF NOT EXISTS chord
 (
@@ -47,6 +55,7 @@ CREATE TABLE IF NOT EXISTS bar
     repeat INTEGER,
     voltas TEXT,
     number_of_beats INTEGER,
+    modulation TEXT,
     FOREIGN KEY(time_sig_id) REFERENCES time_signature(id)
 );
 
@@ -215,15 +224,16 @@ SELECT bar.is_eol,
        time_signature.count,
        bar.repeat,
        bar.voltas,
-       bar.number_of_beats
+       bar.number_of_beats,
+       bar.modulation
 FROM bar
 LEFT JOIN time_signature ON time_signature.id = bar.time_sig_id
 WHERE bar.id = ?1;
 )";
 
 const char* INSERT_BAR_SQL = R"(
-INSERT INTO bar (time_sig_id, is_eol, section, repeat, voltas, number_of_beats)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+INSERT INTO bar (time_sig_id, is_eol, section, repeat, voltas, number_of_beats, modulation)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 RETURNING id;
 )";
 
@@ -242,19 +252,6 @@ INSERT INTO bar_chords (chord_id, bar_id, chord_index)
 VALUES (?1, ?2, ?3)
 RETURNING id;
 )";
-
-//const char* SELECT_SONGS_SQL = R"(
-//SELECT song.id,
-       //song.name,
-       //song.key,
-       //song.bars_per_line,
-       //song.beats_per_minute,
-       //song.beats_unit,
-       //time_signature.beat_type,
-       //time_signature.count
-//FROM song
-//LEFT JOIN time_signature ON time_signature.id = song.time_sig_id;
-//)";
 
 const char* SELECT_SONG_SQL = R"(
 SELECT song.id,
@@ -543,6 +540,7 @@ database::database(const std::filesystem::path& file_name)
             "' is not a valid Nashville database: " + msg);
     }
     lgr()->debug("Successfully loaded the schema");
+    check_version();
     try
     {
         struct stmt_def { statement key; const char* sql; };
@@ -607,6 +605,38 @@ database::~database()
     sqlite3_close(db_);
 }
 
+void database::check_version()
+{
+    std::string ver_str;
+    prepared sel_ver(db_, "SELECT version FROM metadata;");
+    int rc = sqlite3_step(sel_ver.ptr());
+    if (rc == SQLITE_DONE)
+    {
+        prepared ins_ver(db_, "INSERT INTO metadata (version) VALUES (?1);");
+        sqlite3_bind_int(ins_ver.ptr(), 1, CURRENT_VERSION);
+        int rc2 = sqlite3_step(ins_ver.ptr());
+        if (rc2 != SQLITE_DONE)
+            throw std::runtime_error("Unable to insert the version into the database: "s + error_msg(rc2));
+    }
+    else if (rc == SQLITE_ROW)
+    {
+        auto found = sqlite3_column_int(sel_ver.ptr(), 0);
+        if (found > MAX_SUPPORTED_VERSION)
+        {
+            throw std::runtime_error("The database version "s +
+                    std::to_string(found) +
+                    " is not supported in version " +
+                    std::to_string(CURRENT_VERSION) +
+                    " of Nashville");
+        }
+    }
+    else
+    {
+        throw std::runtime_error("Unexpected error while checking the database version: "s + error_msg(rc));
+    }
+    lgr()->debug("Version check succeeded");
+}
+
 std::string database::error_msg(int rc) const
 {
     return std::string(sqlite3_errstr(rc)) + "-" + sqlite3_errmsg(db_);
@@ -644,6 +674,8 @@ std::uint64_t database::insert_bar(const model::bar& b)
     }
     if (b.number_of_beats())
         sqlite3_bind_int(raw, 6, *b.number_of_beats());
+    if (!b.modulation().empty())
+        sqlite3_bind_text(raw, 7, b.modulation().c_str(), b.modulation().length(), SQLITE_STATIC);
     auto rc = sqlite3_step(raw);
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not insert a bar: "s + error_msg(rc));
@@ -1364,6 +1396,10 @@ std::vector<model::bar> database::select_bars(std::uint64_t song_id)
             bar.number_of_beats(sqlite3_column_int(sel_b->ptr(), 6));
         else
             assert(sqlite3_column_type(sel_b->ptr(), 6) == SQLITE_NULL);
+        if (sqlite3_column_type(sel_b->ptr(), 7) == SQLITE_TEXT)
+            bar.modulation(reinterpret_cast<const char*>(sqlite3_column_text(sel_b->ptr(), 7)));
+        else
+            assert(sqlite3_column_type(sel_b->ptr(), 7) == SQLITE_NULL);
 
         bar.chords(select_chords(bar_id));
         bars.push_back(bar);
@@ -1661,6 +1697,66 @@ std::uint64_t database::time_signature_id(const model::time_signature& ts)
         throw std::runtime_error("Could not insert a time signature: "s + error_msg(rc));
     assert(sqlite3_column_count(raw) == 1);
     return sqlite3_column_int64(raw, 0);
+}
+
+std::vector<stored_song> database::last_open_songs()
+{
+    std::vector<stored_song> result;
+    prepared sel_ids(db_, "SELECT last_open_song_ids FROM metadata;");
+    int rc = sqlite3_step(sel_ids.ptr());
+    if (rc == SQLITE_ROW)
+    {
+        if (sqlite3_column_type(sel_ids.ptr(), 0) == SQLITE_TEXT)
+        {
+            prepared sel_name(db_, "SELECT name FROM song WHERE id = ?1;");
+            std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(sel_ids.ptr(), 0)));
+            std::string id;
+            while (std::getline(in, id, ',') && !id.empty())
+            {
+                sel_name.reset();
+                sqlite3_bind_int64(sel_name.ptr(), 1, std::stol(id));
+                int rc2 = sqlite3_step(sel_name.ptr());
+                try
+                {
+                    if (rc2 == SQLITE_ROW)
+                        result.push_back(select_song(reinterpret_cast<const char*>(sqlite3_column_text(sel_name.ptr(), 0))));
+                    else
+                        lgr()->warn("Unable to look up previously open song with id "s + id + ": " + error_msg(rc2));
+                }
+                catch (std::runtime_error& e)
+                {
+                    lgr()->warn("Error loading previously open song with id "s + id + ": " + e.what());
+                }
+            }
+        }
+    }
+    else if (rc != SQLITE_DONE)
+    {
+        throw std::runtime_error("Error looking up last open songs: "s + error_msg(rc));
+    }
+    return result;
+}
+
+void database::last_open_songs(const std::vector<song_id>& opens)
+{
+    prepared ins(db_, "UPDATE metadata SET last_open_song_ids = ?1;");
+    if (opens.empty())
+    {
+        sqlite3_bind_null(ins.ptr(), 1);
+    }
+    else
+    {
+        std::ostringstream out;
+        for (const auto& cur : opens)
+            out << static_cast<std::uint64_t>(cur) << ',';
+        std::string text = out.str();
+        if (!text.empty())
+            text.pop_back();
+        sqlite3_bind_text(ins.ptr(), 1, text.c_str(), text.length(), SQLITE_STATIC);
+    }
+    int rc = sqlite3_step(ins.ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Unable to set the last open songs in the database: "s + error_msg(rc));
 }
 
 }

@@ -1,6 +1,8 @@
 #include "song_tab.hpp"
+#include "song_info_panel.hpp"
 #include "../database.hpp"
 #include <QVBoxLayout>
+#include <QStackedWidget>
 #include <QEvent>
 
 namespace nashville::view
@@ -15,9 +17,22 @@ song_tab::song_tab(std::unique_ptr<model::song> song,
     , id_(id)
     , db_(db)
 {
+    // Baseline for change detection.  Taken before the song_widget is
+    // built so the snapshot predates the view installing its annotation
+    // anchor-resolver — the copy is pure content, no captured callback.
+    // A freshly-loaded or freshly-created song therefore reads as
+    // "unchanged" until the user actually edits something, so opening a
+    // song never spuriously advances its modification time.
+    last_saved_ = std::make_unique<model::song>(*song_);
+
     auto* vl = new QVBoxLayout(this);
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(0);
+
+    // Content area: a stack of [chart, info page].  Chart is index 0 so the
+    // tab always opens showing the chart.
+    stack_ = new QStackedWidget(this);
+    vl->addWidget(stack_);
 
     // song_widget takes a reference to the song; we own the song
     // outright via unique_ptr, so handing it &*song_ is stable for
@@ -25,7 +40,21 @@ song_tab::song_tab(std::unique_ptr<model::song> song,
     // parent-deletion cascade takes care of teardown order before
     // song_ is destroyed.
     widget_ = new song_widget(*song_, this);
-    vl->addWidget(widget_);
+    stack_->addWidget(widget_);          // index 0
+
+    // The metadata Info page.  It mutates song_->meta() in place on Save and
+    // tells us via committed(); we respond by kicking the debounced save,
+    // which persists the change and advances modification_time (the save
+    // path's same_content_as already covers every metadata field).  Its back
+    // control returns to the chart.
+    info_panel_ = new song_info_panel(*song_, this);
+    stack_->addWidget(info_panel_);      // index 1
+    connect(info_panel_, &song_info_panel::committed, this, [this]() {
+        save_timer_.start();
+    });
+    connect(info_panel_, &song_info_panel::closed, this, [this]() {
+        show_chart();
+    });
 
     // Save debounce.  Single-shot so we don't re-fire while the user
     // is mid-burst; each paintEvent restarts the timer in
@@ -71,6 +100,22 @@ song_tab::~song_tab()
 QString song_tab::tab_name() const
 {
     return QString::fromStdString(song_->name());
+}
+
+void song_tab::show_info()
+{
+    // Always (re)enter the Info page in read-only view mode showing fresh
+    // model data, so it never opens mid-edit from a previous visit.
+    if (info_panel_)
+        info_panel_->show_view_mode();
+    if (stack_)
+        stack_->setCurrentWidget(info_panel_);
+}
+
+void song_tab::show_chart()
+{
+    if (stack_)
+        stack_->setCurrentWidget(widget_);
 }
 
 bool song_tab::eventFilter(QObject* /*watched*/, QEvent* event)
@@ -123,12 +168,50 @@ void song_tab::save()
     // updates that row by id.  Because the row is located by id, a title
     // change is written as an ordinary column update — there is no rename
     // path and no way to orphan the old row.
+
+    // Advance modification_time iff the song's content actually changed
+    // since the last persisted snapshot.  The autosave is content-blind —
+    // any repaint can trigger it, including selection and hover — so this
+    // guard is what keeps a mere click from bumping the timestamp.
+    // Comparing whole-song content (rather than instrumenting mutators)
+    // also captures edits that never pass through a song setter, such as
+    // the in-place custom-beats change and every annotation edit: if the
+    // diff can see it, it counts. creation_time is left untouched.
+    const bool content_changed =
+        !last_saved_ || !song_->same_content_as(*last_saved_);
+    if (content_changed)
+    {
+        using namespace std::chrono;
+        const auto now = time_point_cast<milliseconds>(system_clock::now());
+        auto& mt = song_->meta().modification_time;
+        // Only ever move the modification time forward.  The wall clock can
+        // step backward (NTP correction, a manual clock change), and a song
+        // may have been last saved on a machine whose clock runs ahead of
+        // this one; in either case stamping a raw "now" could move the
+        // timestamp backward.  Advancing to at least the previous value plus
+        // one millisecond keeps it strictly monotonic across edits, while
+        // still tracking real time whenever the clock is sane.  The exact
+        // instant is secondary; never going backward is the contract.
+        const auto floor = mt + milliseconds(1);
+        mt = (now > floor) ? now : floor;
+    }
+
     try
     {
         if (id_)
             db_.update_song(*id_, *song_);
         else
             id_ = db_.insert_song(*song_);
+        // Refresh the baseline only after a successful write, so a failed
+        // save leaves last_saved_ reflecting what's really in the database
+        // and the next attempt re-evaluates (and, if needed, re-stamps).
+        last_saved_ = std::make_unique<model::song>(*song_);
+
+        // Keep the Info page's read-only "Modified" line current.  Cheap and
+        // harmless when the chart is showing or the panel is mid-edit (it
+        // only rebuilds the hidden view page).
+        if (info_panel_)
+            info_panel_->refresh_view();
     }
     catch (const std::exception& e)
     {

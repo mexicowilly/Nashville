@@ -65,6 +65,8 @@ qt_add_executable(nashville
     view/side_panel.hpp
     view/song_body_widget.cpp
     view/song_body_widget.hpp
+    view/song_info_panel.cpp
+    view/song_info_panel.hpp
     view/song_tab.cpp
     view/song_tab.hpp
     view/song_widget.cpp

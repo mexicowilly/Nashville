@@ -19,17 +19,24 @@ using stored_song = stored<song_id, model::song>;
 class database : loggable
 {
 public:
+    static constexpr int CURRENT_VERSION = 1;
+    static constexpr int MAX_SUPPORTED_VERSION = 1;
+
     database();
     database(const std::filesystem::path& file_name);
     ~database();
 
     std::filesystem::path file_name() const;
+    std::uint64_t file_version() const;
     bool in_memory() const;
     playlist_id insert_playlist(const model::playlist& pl);
     song_id insert_song(const model::song& s);
+    std::vector<stored_song> last_open_songs();
+    void last_open_songs(const std::vector<song_id>& opens);
     void update_song(song_id id, const model::song& s);
     void move_to_file(const std::filesystem::path& file_name);
     void open_file(const std::filesystem::path& file_name);
+    std::vector<std::string> open_songs_on_last_save() const;
     void remove_playlist(const std::string& pl);
     void remove_song(const std::string& s);
     void rename_playlist(playlist_id id, const std::string& new_name);
@@ -108,6 +115,7 @@ private:
         bool is_active_;
     };
 
+    void check_version();
     std::string error_msg(int rc) const;
     void bind_song_columns(sqlite3_stmt* raw, const model::song& s);
     void write_song_body(std::int64_t song_id, const model::song& s);

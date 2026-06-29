@@ -20,7 +20,8 @@ public:
                            qreal height,
                            const chord_renderer::Fonts& fonts,
                            bool draw_begin_repeat = false,
-                           bool draw_end_repeat   = false);
+                           bool draw_end_repeat   = false,
+                           qreal modulation_slot_w = 0.0);
 
     // Paints the bar into rect.
     // line_duration_mode: true if any bar on this line is duration-mode,
@@ -37,7 +38,8 @@ public:
                       bool line_has_articulation,
                       bool draw_begin_repeat = false,
                       bool draw_end_repeat   = false,
-                      bool draw_beat_parens  = false);
+                      bool draw_beat_parens  = false,
+                      qreal modulation_slot_w = 0.0);
 
     // Returns the y-coordinate at the vertical centre of the number row
     // for a bar laid out into `rect`.  Match this value when placing any
@@ -63,6 +65,25 @@ public:
     // Public so paint_beat_dots in song_body_widget can align the dot row
     // with the chord column.
     static constexpr qreal k_time_sig_slot_w = 20.0;
+
+    // Horizontal space consumed by the modulation indicator — the circled
+    // key name painted immediately before the chord column on a bar that
+    // starts a modulation (non-empty bar.modulation()).  Returns 0 when the
+    // bar carries no modulation.  The width tracks the circle diameter,
+    // which is sized from `height` so the circle fits within the bar's full
+    // vertical extent (articulations + durations included).
+    //
+    // This is a PER-BAR measurement.  The layout pass takes the maximum
+    // across every bar in a column to obtain one uniform per-column slot
+    // width, then feeds that value back into width_hint() / paint() /
+    // song_body_widget::paint_beat_dots() for EVERY bar in the column —
+    // modulating or not.  Reserving the slot column-wide keeps the chord
+    // columns aligned across lines (a modulation on one line shifts that
+    // column's chords on every line by the same amount) rather than nudging
+    // only the modulating bar out of alignment with its column.
+    static qreal modulation_slot_width(const model::bar& bar,
+                                       qreal height,
+                                       const chord_renderer::Fonts& fonts);
 
     // Vertical split ratios for duration-mode bars (public so callers can derive heights)
     static constexpr qreal k_chord_slot_ratio = 0.60;
@@ -94,6 +115,19 @@ private:
     static void paint_repeat_mark(QPainter& painter,
                                   const QRectF& mark_rect,
                                   bool is_begin);
+
+    // Paints the modulation indicator: the bar's modulation() key name
+    // inside a thin black circle, mirroring the key circle in the song
+    // margin but sized down to fit the bar.  The circle is centred
+    // vertically in `bar_rect` (the full bar height, so it sits midway
+    // through the articulation + number + duration stack) and horizontally
+    // in the slot whose left edge is `slot_left`.  Drawn only when the bar
+    // has a non-empty modulation; callers gate on modulation_slot_width().
+    static void paint_modulation(QPainter& painter,
+                                 const QRectF& bar_rect,
+                                 qreal slot_left,
+                                 const model::bar& bar,
+                                 const chord_renderer::Fonts& fonts);
 
     // Width given to the (otherwise zero-width) chord row of an empty
     // bar — i.e. one with no chords yet, as produced by the "Insert 1

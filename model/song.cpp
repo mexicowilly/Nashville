@@ -26,6 +26,33 @@ song& song::bars_per_line(unsigned num)
     return *this;
 }
 
+bool song::same_content_as(const song& other) const
+{
+    // Cheap scalar/string/container comparisons first, then the heavier
+    // bars and annotations.  creation_time and modification_time are
+    // intentionally omitted (see header).
+    if (name_           != other.name_)           return false;
+    if (key_            != other.key_)            return false;
+    if (!(time_signature_ == other.time_signature_)) return false;
+    if (tempo_          != other.tempo_)          return false;
+    if (bars_per_line_  != other.bars_per_line_)  return false;
+    if (margin_width_   != other.margin_width_)   return false;
+
+    const metadata& a = metadata_;
+    const metadata& b = other.metadata_;
+    if (a.authors                     != b.authors)                     return false;
+    if (a.original_performer          != b.original_performer)          return false;
+    if (a.original_album              != b.original_album)              return false;
+    if (a.notes                       != b.notes)                       return false;
+    if (a.original_album_release_date != b.original_album_release_date) return false;
+
+    if (!annotations_.same_content_as(other.annotations_)) return false;
+
+    // bars_ last: vector== short-circuits on size, then defers to
+    // bar::operator== element-wise.
+    return bars_ == other.bars_;
+}
+
 song& song::key(const std::string& k)
 {
     key_ = k;

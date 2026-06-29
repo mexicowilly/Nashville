@@ -546,6 +546,27 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     qreal bars_left = content_rect.left() + section_col_w;
     std::vector<qreal> col_widths;
 
+    // Per-column modulation slot width.  A modulation circle on any line
+    // reserves space in its column for EVERY line, so the chords in that
+    // column stay aligned across lines instead of only the modulating bar
+    // shifting right.  We take the max modulation slot over all bars in the
+    // column (usually just one bar carries a modulation, but taking the max
+    // is correct and cheap when several do, possibly at differing heights).
+    std::vector<qreal> col_mod_w;
+    for (const auto& raw : raw_lines)
+    {
+        qreal bar_h = line_bar_height(raw.bars);
+        for (std::size_t j = 0; j < raw.bars.size(); ++j)
+        {
+            qreal mw = bar_renderer::modulation_slot_width(*raw.bars[j].bar,
+                                                           bar_h, fonts_);
+            if (j >= col_mod_w.size())
+                col_mod_w.push_back(mw);
+            else
+                col_mod_w[j] = std::max(col_mod_w[j], mw);
+        }
+    }
+
     for (const auto& raw : raw_lines)
     {
         qreal bar_h = line_bar_height(raw.bars);
@@ -555,12 +576,15 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             // Width must include the repeat-mark slots when present:
             // they sit outside the chord row and consume real horizontal
             // space.  Looking up the flags by song_index keeps this in
-            // sync with what paint() will eventually draw.
+            // sync with what paint() will eventually draw.  The modulation
+            // slot is the column-wide reservation so every bar in the
+            // column budgets the same width.
             const auto& rb = raw.bars[j];
             bool begin_r = repeat_flags[rb.song_index].first;
             bool end_r   = repeat_flags[rb.song_index].second;
             qreal w = bar_renderer::width_hint(*rb.bar, bar_h, fonts_,
-                                              begin_r, end_r) + k_bar_padding;
+                                              begin_r, end_r, col_mod_w[j])
+                      + k_bar_padding;
             if (j >= col_widths.size())
                 col_widths.push_back(w);
             else
@@ -648,6 +672,7 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             bl.is_duration_mode = bar_renderer::is_duration_mode(*b);
             bl.draw_begin_repeat = repeat_flags[rb.song_index].first;
             bl.draw_end_repeat   = repeat_flags[rb.song_index].second;
+            bl.modulation_slot_w = col_mod_w[j];
 
             // Beat parens: this bar has a custom beat count that differs
             // from the song's time signature.
@@ -1190,7 +1215,7 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
         bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
                             line.has_articulation,
                             bl.draw_begin_repeat, bl.draw_end_repeat,
-                            bl.draw_beat_parens);
+                            bl.draw_beat_parens, bl.modulation_slot_w);
 
         if (bl.draw_beat_parens)
             paint_beat_dots(painter, bl);
@@ -1305,7 +1330,14 @@ void song_body_widget::paint_beat_dots(QPainter& painter,
                                 + (bl.draw_begin_repeat ? bar_renderer::k_repeat_slot_w : 0.0);
     const qreal interior_right = bl.rect.right()
                                  - (bl.draw_end_repeat  ? bar_renderer::k_repeat_slot_w : 0.0);
-    const qreal chords_left    = interior_left + bar_renderer::k_time_sig_slot_w;
+    // The modulation indicator (if any) sits between the time-sig slot and
+    // the chords, so the chord column starts after it.  Use the column-wide
+    // reserved width stored on the layout (the same value bar_renderer::paint
+    // shifts by) so the dots stay centred over the chords even when a bar
+    // carries both a custom beat count and a modulation — and stay aligned
+    // with non-modulating bars in the same column.
+    const qreal chords_left    = interior_left + bar_renderer::k_time_sig_slot_w
+                                 + bl.modulation_slot_w;
 
     // Replicate bar_renderer's walk exactly:
     //   x advances by slot_width (= natural_width * scale) between chords,
@@ -3198,7 +3230,57 @@ void song_body_widget::apply_voltas_to_selection(const std::set<unsigned>& volta
 }
 
 // ---------------------------------------------------------------------------
-// apply_end_line_to_selection
+// apply_modulation_to_selection
+// ---------------------------------------------------------------------------
+// Sets the modulation (new key) string on every selected bar, or clears it
+// when `mod` is empty.  Same copy-mutate-publish shape as the voltas /
+// end-line setters, with an any_changed guard so a no-op selection skips
+// the rebuild.  The string is stored exactly as given — accidental glyph
+// substitution ("Bb" → "B♭") happens only at render time in bar_renderer.
+void song_body_widget::apply_modulation_to_selection(const std::string& mod)
+{
+    if (selected_bars_.empty())
+        return;
+
+    std::vector<model::bar> bars_copy = song_.bars();
+    bool any_changed = false;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars_copy.size())
+            continue;
+        if (bars_copy[idx].modulation() == mod)
+            continue;
+        bars_copy[idx].modulation(mod);
+        any_changed = true;
+    }
+    if (!any_changed)
+        return;
+    song_.bars(bars_copy);
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
+// common_modulation_of_selection
+// ---------------------------------------------------------------------------
+std::optional<std::string>
+song_body_widget::common_modulation_of_selection() const
+{
+    if (selected_bars_.empty())
+        return std::nullopt;
+
+    const auto& bars = song_.bars();
+    std::optional<std::string> shared;
+    for (std::size_t idx : selected_bars_)
+    {
+        if (idx >= bars.size())
+            continue;
+        if (!shared)
+            shared = bars[idx].modulation();
+        else if (*shared != bars[idx].modulation())
+            return std::nullopt;
+    }
+    return shared;
+}
 // ---------------------------------------------------------------------------
 // Sets is_eol = true on every selected bar.  Same copy-mutate-publish
 // pattern as the other selection-driven setters.  Idempotent: if every
@@ -3563,6 +3645,139 @@ void song_body_widget::prompt_voltas_for_selection()
 }
 
 // ---------------------------------------------------------------------------
+// prompt_modulation_for_selection
+// ---------------------------------------------------------------------------
+// Modal prompt for the new key the selected bar(s) modulate to.  The field
+// is prefilled from the selection iff every selected bar carries the same
+// modulation (so a mixed selection opens blank rather than silently
+// overwriting differing values).  An empty string is a deliberate "clear
+// the modulation" gesture — symmetric with the section / voltas / beats
+// editors.  Whatever the user types is stored verbatim ("Bb", "F#m", …);
+// the renderer is responsible for turning the accidental into ♭ / ♯.
+void song_body_widget::prompt_modulation_for_selection()
+{
+    if (!has_selection() || !overlay_)
+        return;
+
+    QString initial;
+    if (auto shared = common_modulation_of_selection())
+        initial = QString::fromStdString(*shared);
+
+    overlay_->prompt_text(
+        tr("Modulation"),
+        tr("New key (empty to clear):"),
+        [this](std::optional<QString> result) {
+            if (!result)
+                return;  // user cancelled — leave the selection untouched
+            // No early-return on empty: an empty string clears the
+            // modulation on every selected bar (model treats "" as
+            // "no modulation").
+            apply_modulation_to_selection(result->trimmed().toStdString());
+        },
+        initial,
+        /*allow_empty=*/true,
+        /*select_all=*/true);
+}
+
+// ---------------------------------------------------------------------------
+// apply_bars_per_line
+// ---------------------------------------------------------------------------
+// Stores the new preference and reflows the chart, PRESERVING the user's
+// existing line breaks.  Line breaks live in the per-bar is_eol flags; this
+// reflow never removes or moves an existing flag and never merges two lines.
+// It only SPLITS a line that runs longer than n bars, inserting a break
+// every n bars within that line.
+//
+// Consequences (intended):
+//   * Raising bars-per-line leaves the current layout untouched — no
+//     existing line exceeds the new, larger cap — and simply affects future
+//     insertions.
+//   * Lowering it splits the over-long lines, pushing the overflow onto new
+//     lines.  Changing bars-per-line on a chart that's already laid out is
+//     rare, and the resulting shuffle is the small "stuff moves around"
+//     headache the user accepts when they do it.
+//   * Manual "End line" breaks stay exactly where the user placed them, and
+//     because splits only ever create new line-starts at n-bar offsets from
+//     an existing line-start, the section labels that ride on each line's
+//     first bar are never orphaned.
+//
+// The debounced autosave (driven by the repaint rebuild() schedules)
+// persists both the preference and any new is_eol flags.
+void song_body_widget::apply_bars_per_line(unsigned n)
+{
+    if (n == 0)
+        return;  // 0 bars per line is meaningless; ignore defensively
+
+    song_.bars_per_line(n);
+
+    std::vector<model::bar> bars = song_.bars();
+    if (!bars.empty())
+    {
+        unsigned count = 0;   // bars seen so far in the current line
+        for (std::size_t i = 0; i < bars.size(); ++i)
+        {
+            ++count;
+
+            if (bars[i].is_eol())
+            {
+                // Existing break (manual or from a prior reflow): keep it
+                // untouched and start counting the next line afresh.
+                count = 0;
+                continue;
+            }
+
+            const bool is_last = (i + 1 == bars.size());
+            if (!is_last && count >= n)
+            {
+                bars[i].is_eol(true);   // split an over-long line
+                count = 0;
+            }
+        }
+        song_.bars(bars);
+    }
+
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
+// prompt_bars_per_line
+// ---------------------------------------------------------------------------
+// Song-level modal prompt for the preferred bars-per-line, prefilled with
+// the current value.  Accepts a positive integer; anything else (empty,
+// non-numeric, zero, or implausibly large) is rejected and leaves the
+// layout untouched.  On accept, apply_bars_per_line reflows the chart.
+void song_body_widget::prompt_bars_per_line()
+{
+    if (!overlay_)
+        return;
+
+    overlay_->prompt_text(
+        tr("Bars per line"),
+        tr("Bars per line:"),
+        [this](std::optional<QString> result) {
+            if (!result)
+                return;  // user cancelled — leave the layout untouched
+
+            const QString text = result->trimmed();
+            if (text.isEmpty())
+                return;  // empty is not a valid bars-per-line; ignore
+
+            bool num_ok = false;
+            unsigned n = text.toUInt(&num_ok);
+            // Reject non-numeric, zero, or implausibly large values.  32 is
+            // a sane UI ceiling — a line wider than that won't fit the page
+            // — even though the model itself stores an unbounded unsigned.
+            if (!num_ok || n == 0 || n > 32)
+                return;
+
+            apply_bars_per_line(n);
+        },
+        QString::number(song_.bars_per_line()),
+        /*allow_empty=*/false,
+        /*select_all=*/true);
+}
+
+// ---------------------------------------------------------------------------
 // show_bar_context_menu
 // ---------------------------------------------------------------------------
 // Builds the Bar context menu fresh each call so the checked-states on
@@ -3644,6 +3859,11 @@ void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
     QAction* beats_act = menu.addAction(tr("Custom beats..."));
     connect(beats_act, &QAction::triggered, this, [this]() {
         prompt_beats_for_selection();
+    });
+
+    QAction* modulation_act = menu.addAction(tr("Modulation..."));
+    connect(modulation_act, &QAction::triggered, this, [this]() {
+        prompt_modulation_for_selection();
     });
 
     menu.exec(global_pos);

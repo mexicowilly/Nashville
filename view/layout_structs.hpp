@@ -26,6 +26,15 @@ struct bar_layout
     bool draw_beat_parens = false;
     unsigned beat_count   = 0;     // number of dots to draw (valid iff draw_beat_parens)
 
+    // --- Modulation indicator ---
+    // Column-wide reserved width for the circled key name that marks a
+    // modulation.  Computed by the layout as the max modulation slot over
+    // every bar in this column, then applied to EVERY bar in the column so
+    // the chords shift uniformly and stay aligned across lines (only bars
+    // whose model carries a modulation actually paint a circle).  Zero when
+    // no bar in the column starts a modulation.
+    qreal modulation_slot_w = 0.0;
+
     // --- Repeat marks ---
     // These are derived from the model's repeat() flag at layout time and
     // from the volta analysis: a non-final volta ends with an implicit end
