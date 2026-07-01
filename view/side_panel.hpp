@@ -3,10 +3,13 @@
 #include <QWidget>
 #include <vector>
 #include <string>
+#include <utility>
 
 class QListWidget;
+class QTreeWidget;
 class QPropertyAnimation;
 class QToolButton;
+class QComboBox;
 
 namespace nashville::view
 {
@@ -38,8 +41,25 @@ public:
     // refresh hooks after open/close.
     void set_song_names(const std::vector<std::string>& names);
 
+    // Replace the songs list with name + secondary-value rows.  The secondary
+    // value (shown right-aligned, dimmed) is whatever the current sort key
+    // resolves to for each song — e.g. the album when sorting by album.  An
+    // empty secondary (as when sorting by name) shows just the name.
+    void set_song_rows(
+        const std::vector<std::pair<std::string, std::string>>& rows);
+
     // Same for playlists.
     void set_playlist_names(const std::vector<std::string>& names);
+
+    // Select the sort-key dropdown entry whose token matches `token`, without
+    // emitting sort_key_changed (this reflects state the host loaded from the
+    // database, it isn't a user action).  Unknown tokens leave the current
+    // selection unchanged.
+    void set_sort_key(const QString& token);
+
+    // Reflect the stored sort direction in the toggle (true = descending),
+    // without emitting sort_direction_changed.
+    void set_sort_direction(bool descending);
 
     // Animation control.  These can be called repeatedly with the
     // same target state — they're no-ops if we're already there
@@ -81,6 +101,15 @@ signals:
     void add_song_requested();
     void add_playlist_requested();
 
+    // Emitted when the user picks a different sort key from the dropdown.
+    // Carries the stable token for that key (e.g. "name", "modified").  The
+    // host persists it and re-sorts the list; the side panel doesn't sort
+    // itself (it doesn't have the metadata to sort by).
+    void sort_key_changed(const QString& token);
+
+    // Emitted when the user toggles ascending/descending.  true = descending.
+    void sort_direction_changed(bool descending);
+
     // Emitted when the user picks "Delete" from a row's right-click
     // context menu.  Carries the name that was right-clicked.  The
     // host handles confirmation and the actual database delete; the
@@ -102,8 +131,16 @@ protected:
 private:
     void rebuild_list(QListWidget* list, const std::vector<std::string>& names);
 
-    QListWidget* songs_     = nullptr;
+    // Size the song list's columns so their full content is reachable: the
+    // last visible column is grown to fill leftover width (no stray boundary
+    // line), or to its content width when that's wider (so the horizontal
+    // scrollbar can pan to it).  Runs on populate and on resize.
+    void fit_song_columns();
+
+    QTreeWidget* songs_     = nullptr;   // two columns: name | sort value
     QListWidget* playlists_ = nullptr;
+    QComboBox*   sort_combo_ = nullptr;
+    QToolButton* dir_btn_    = nullptr;   // ascending / descending toggle
     // Floating "+" buttons, parented to the corresponding list
     // widgets (NOT to the side_panel).  Kept as side_panel members
     // so the eventFilter can find them by which list raised the

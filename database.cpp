@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <map>
+#include <set>
 #include <sstream>
 #include <system_error>
 // Annotation binding/reading uses these directly; they're pulled in
@@ -27,7 +28,12 @@ CREATE TABLE IF NOT EXISTS metadata
 (
     version INTEGER,
     -- This is a comma-separated list of song ids
-    last_open_song_ids TEXT
+    last_open_song_ids TEXT,
+    -- Token naming the field the song list is sorted by, e.g. "name",
+    -- "authors", "modified".  Purely a UI preference; the sort itself is
+    -- performed in the UI, this is just where the choice is remembered.
+    song_list_sort TEXT,
+    song_list_sort_desc BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS chord
@@ -1757,6 +1763,79 @@ void database::last_open_songs(const std::vector<song_id>& opens)
     int rc = sqlite3_step(ins.ptr());
     if (rc != SQLITE_DONE)
         throw std::runtime_error("Unable to set the last open songs in the database: "s + error_msg(rc));
+}
+
+std::string database::song_list_sort()
+{
+    prepared sel(db_, "SELECT song_list_sort FROM metadata;");
+    if (sqlite3_step(sel.ptr()) == SQLITE_ROW)
+        if (const unsigned char* txt = sqlite3_column_text(sel.ptr(), 0))
+            return reinterpret_cast<const char*>(txt);
+    // NULL / no row yet: the UI decides the default; "name" is the natural one.
+    return "name";
+}
+
+void database::song_list_sort(const std::string& key)
+{
+    prepared upd(db_, "UPDATE metadata SET song_list_sort = ?1;");
+    sqlite3_bind_text(upd.ptr(), 1, key.c_str(),
+                      static_cast<int>(key.length()), SQLITE_TRANSIENT);
+    int rc = sqlite3_step(upd.ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Unable to set the song list sort key: "s + error_msg(rc));
+}
+
+bool database::song_list_sort_descending()
+{
+    prepared sel(db_, "SELECT song_list_sort_desc FROM metadata;");
+    if (sqlite3_step(sel.ptr()) == SQLITE_ROW)
+        return sqlite3_column_int(sel.ptr(), 0) != 0;   // NULL reads as 0 (asc)
+    return false;
+}
+
+void database::song_list_sort_descending(bool descending)
+{
+    prepared upd(db_, "UPDATE metadata SET song_list_sort_desc = ?1;");
+    sqlite3_bind_int(upd.ptr(), 1, descending ? 1 : 0);
+    int rc = sqlite3_step(upd.ptr());
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Unable to set the song list sort direction: "s + error_msg(rc));
+}
+
+std::vector<song_summary> database::song_summaries()
+{
+    // The metadata columns only — no chart data, and deliberately no ORDER BY:
+    // the UI performs the sort, this just hands it the rows.  Missing values
+    // come back as NULL, which we normalise to empty strings.
+    std::vector<song_summary> result;
+    prepared sel(db_,
+        "SELECT name, authors, original_performer, original_album, "
+        "original_album_release_date, notes, creation_time, modification_time "
+        "FROM song;");
+
+    auto text_at = [](sqlite3_stmt* s, int col) -> std::string {
+        if (const unsigned char* t = sqlite3_column_text(s, col))
+            return reinterpret_cast<const char*>(t);
+        return {};
+    };
+
+    int rc;
+    while ((rc = sqlite3_step(sel.ptr())) == SQLITE_ROW)
+    {
+        song_summary s;
+        s.name         = text_at(sel.ptr(), 0);
+        s.authors      = text_at(sel.ptr(), 1);
+        s.performer    = text_at(sel.ptr(), 2);
+        s.album        = text_at(sel.ptr(), 3);
+        s.release_date = text_at(sel.ptr(), 4);
+        s.notes        = text_at(sel.ptr(), 5);
+        s.created      = text_at(sel.ptr(), 6);
+        s.modified     = text_at(sel.ptr(), 7);
+        result.push_back(std::move(s));
+    }
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could not retrieve song summaries: "s + error_msg(rc));
+    return result;
 }
 
 }

@@ -22,6 +22,7 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <algorithm>
+#include <utility>
 
 namespace nashville::view
 {
@@ -393,6 +394,37 @@ main_window::main_window(database& db, QWidget* parent)
             confirm_delete_playlist(name.toStdString());
         });
 
+    // Sort-key change: persist the new key to the database's metadata, then
+    // refresh the list so it re-sorts by it.  Persisting here (rather than
+    // only on quit) means the choice survives a crash and is already durable
+    // when a file is saved.
+    connect(panel_, &side_panel::sort_key_changed,
+        [this](const QString& token) {
+            try
+            {
+                db_.song_list_sort(token.toStdString());
+            }
+            catch (const std::exception&)
+            {
+                // Persisting the preference failed; still re-sort the visible
+                // list so the user's pick takes effect this session.
+            }
+            refresh_lists();
+        });
+
+    // Sort-direction toggle: persist and re-sort, same shape as the key.
+    connect(panel_, &side_panel::sort_direction_changed,
+        [this](bool descending) {
+            try
+            {
+                db_.song_list_sort_descending(descending);
+            }
+            catch (const std::exception&)
+            {
+            }
+            refresh_lists();
+        });
+
     // Populate lists on construction.  The database is already open
     // at this point (app constructs it before us), so these queries
     // return the current names.
@@ -404,11 +436,91 @@ main_window::main_window(database& db, QWidget* parent)
     overlay_ = new modal_overlay(this);
 }
 
+namespace
+{
+// Case-insensitive compare of two stored text values.  Reused for every sort
+// field: plain text sorts naturally, and the date columns are ISO 8601, which
+// sorts chronologically as text — so one comparator covers them all.
+int ci_compare(const std::string& a, const std::string& b)
+{
+    return QString::fromStdString(a)
+        .compare(QString::fromStdString(b), Qt::CaseInsensitive);
+}
+
+// Map a sort token (from side_panel's dropdown) to the song_summary field it
+// orders by.  Keep these tokens in step with k_sort_options in side_panel.cpp.
+const std::string& sort_field(const song_summary& s, const std::string& token)
+{
+    if (token == "authors")      return s.authors;
+    if (token == "performer")    return s.performer;
+    if (token == "album")        return s.album;
+    if (token == "release_date") return s.release_date;
+    if (token == "notes")        return s.notes;
+    if (token == "created")      return s.created;
+    if (token == "modified")     return s.modified;
+    return s.name;   // "name" and any unrecognised token
+}
+
+// Three-way compare on the chosen field, breaking ties by name so equal keys
+// group predictably.  Returns <0, 0, >0; the caller applies direction.
+int compare_summaries(const song_summary& a, const song_summary& b,
+                      const std::string& token)
+{
+    const int primary = ci_compare(sort_field(a, token), sort_field(b, token));
+    if (primary != 0)
+        return primary;
+    return ci_compare(a.name, b.name);
+}
+
+// The value shown to the right of the name for the current sort key.  Empty
+// for "name" (it would just repeat the name).  Timestamps are trimmed to
+// "YYYY-MM-DD HH:MM" for the narrow column; the raw ISO is still what's sorted.
+std::string display_value(const song_summary& s, const std::string& token)
+{
+    if (token == "name")
+        return {};
+    std::string v = sort_field(s, token);
+    if (token == "created" || token == "modified")
+    {
+        if (v.size() > 16)
+            v.resize(16);              // drop seconds / fractional / zone
+        for (char& c : v)
+            if (c == 'T') c = ' ';     // "...T..." -> "... ..."
+    }
+    return v;
+}
+
+// Sort summaries by key and direction, and pair each name with its display
+// value for the second column.
+std::vector<std::pair<std::string, std::string>>
+build_song_rows(std::vector<song_summary> rows, const std::string& token, bool descending)
+{
+    std::sort(rows.begin(), rows.end(),
+        [&](const song_summary& a, const song_summary& b) {
+            const int c = compare_summaries(a, b, token);
+            return descending ? c > 0 : c < 0;
+        });
+
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(rows.size());
+    for (auto& r : rows)
+        out.emplace_back(r.name, display_value(r, token));
+    return out;
+}
+} // namespace
+
 void main_window::refresh_lists()
 {
     try
     {
-        panel_->set_song_names(db_.select_song_names());
+        // The sort key and direction live in the database (UI preferences in
+        // the metadata table); the sort itself happens here.  Reflect both in
+        // the panel, then fetch the unsorted summaries and order them.
+        const std::string key  = db_.song_list_sort();
+        const bool        desc = db_.song_list_sort_descending();
+        panel_->set_sort_key(QString::fromStdString(key));
+        panel_->set_sort_direction(desc);
+        panel_->set_song_rows(build_song_rows(db_.song_summaries(), key, desc));
         panel_->set_playlist_names(db_.select_playlist_names());
     }
     catch (const std::exception&)
