@@ -14,6 +14,8 @@
 #include <QPalette>
 #include <QAbstractButton>
 #include <QPainter>
+#include <QPixmap>
+#include <QIcon>
 #include <QPainterPath>
 #include <QEnterEvent>
 #include <QMouseEvent>
@@ -26,6 +28,28 @@
 
 namespace nashville::view
 {
+
+namespace
+{
+// Three thin black horizontal lines on a transparent ground — a minimal
+// hamburger glyph drawn as crisp 1px rules (rather than the heavy U+2630
+// character), sized to sit unobtrusively in the tab bar's corner.
+QIcon make_hamburger_icon()
+{
+    constexpr int w = 16, h = 12;
+    QPixmap pm(w, h);
+    pm.fill(Qt::transparent);
+    {
+        QPainter p(&pm);
+        const QColor ink(0, 0, 0);
+        const int x = 2, line_w = w - 4;   // small side inset
+        p.fillRect(x, 1, line_w, 1, ink);  // three evenly spaced 1px rules
+        p.fillRect(x, 5, line_w, 1, ink);
+        p.fillRect(x, 9, line_w, 1, ink);
+    }
+    return QIcon(pm);
+}
+} // namespace
 
 // ---------------------------------------------------------------------------
 // tab_close_button — custom close button for tab chrome
@@ -123,6 +147,27 @@ protected:
     {
         QSize s = QTabBar::tabSizeHint(index);
         s.setWidth(s.width() + 2 * int(k_radius_bottom) + 8);
+        s.setHeight(std::max(s.height(), k_min_height));
+        return s;
+    }
+
+    // With zero tabs, QTabBar::sizeHint() has no per-tab sizes to fold in and
+    // collapses to a sliver a few pixels tall.  QTabWidget sizes the whole
+    // tab-bar row — and therefore the corner widget (our hamburger) that
+    // lives in it — off of this, so with no songs open the hamburger row
+    // would shrink to near-nothing and the button would effectively vanish.
+    // Floor both hints at k_min_height so the row (and hamburger) stay put
+    // whether or not there are any tabs.
+    QSize sizeHint() const override
+    {
+        QSize s = QTabBar::sizeHint();
+        s.setHeight(std::max(s.height(), k_min_height));
+        return s;
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        QSize s = QTabBar::minimumSizeHint();
         s.setHeight(std::max(s.height(), k_min_height));
         return s;
     }
@@ -275,7 +320,8 @@ main_window::main_window(database& db, QWidget* parent)
 
     // --- Layout ---
     // Outer: [side_panel] [main column]
-    // Main column: [top bar with hamburger] [tab widget]
+    // Main column: [tab widget].  The sidebar toggle is a corner widget in the
+    // tab bar (see below), so it no longer needs a row of its own.
     auto* outer = new QHBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
@@ -288,42 +334,19 @@ main_window::main_window(database& db, QWidget* parent)
     main_col->setSpacing(0);
     outer->addLayout(main_col, /*stretch=*/1);
 
-    // Top bar with the hamburger.  A thin row holding just the
-    // toggle button, left-aligned.  We pad it slightly so the button
-    // doesn't kiss the window edge.  Using a QHBoxLayout for the bar
-    // even though it has one widget so a future right-side affordance
-    // (e.g. an account menu, a sync indicator) can be added without
-    // restructuring.
-    auto* top_bar = new QHBoxLayout;
-    top_bar->setContentsMargins(4, 4, 4, 0);
-    top_bar->setSpacing(0);
-
-    hamburger_ = new QToolButton(this);
-    // The Unicode triple-bar U+2630 is the universal hamburger glyph;
-    // using it avoids shipping an icon file.  Size up the font a touch
-    // so the symbol is easy to hit.
-    hamburger_->setText(QString::fromUtf8("\xE2\x98\xB0"));
-    QFont hf = hamburger_->font();
-    hf.setPointSize(hf.pointSize() + 4);
-    hamburger_->setFont(hf);
-    hamburger_->setToolTip(tr("Show songs and playlists"));
-    hamburger_->setAutoRaise(true);   // flat until hovered — keeps
-                                      // the toolbar visually quiet
-                                      // alongside the chart
-    connect(hamburger_, &QToolButton::clicked,
-            panel_, &side_panel::toggle_animated);
-    top_bar->addWidget(hamburger_);
-    top_bar->addStretch(1);
-
-    main_col->addLayout(top_bar);
-
     // The tab widget.  Tabs are closable; close requests come back to
     // close_tab_at where we flush-save and drop the tab.  Tabs are
     // movable so users can reorder their workspace.
     tabs_ = new chrome_tab_widget(this);
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
-    tabs_->setDocumentMode(true);   // less chrome, more chart-like
+    // documentMode is intentionally left OFF.  It would draw a tab-bar "base"
+    // line, and Qt mis-places that line part-way up the tabs when the tab
+    // widget has a top-left corner widget (our hamburger) — a light rule that
+    // runs straight through the tab labels.  We don't need documentMode for the
+    // look anyway: the flat, chart-like appearance comes entirely from the
+    // custom chrome_tab_bar painting plus the borderless white pane stylesheet
+    // below, both of which are unaffected by this flag.
 
     // The Chrome-style tab bar is installed by chrome_tab_widget's constructor
     // (QTabWidget::setTabBar is protected, so it can't be called from here).
@@ -361,6 +384,21 @@ main_window::main_window(database& db, QWidget* parent)
         [this](int /*idx*/) {
             emit current_tab_changed(current_tab());
         });
+
+    // Sidebar toggle: three thin lines, placed in the tab bar's top-left
+    // corner so it sits level with the tab labels and reads like a leading
+    // element of the tab strip rather than occupying its own row above it.
+    hamburger_ = new QToolButton(this);
+    hamburger_->setIcon(make_hamburger_icon());
+    hamburger_->setIconSize(QSize(16, 12));
+    hamburger_->setAutoRaise(true);         // flat until hovered
+    hamburger_->setFocusPolicy(Qt::NoFocus);
+    hamburger_->setCursor(Qt::PointingHandCursor);
+    hamburger_->setToolTip(tr("Show songs and playlists"));
+    connect(hamburger_, &QToolButton::clicked,
+            panel_, &side_panel::toggle_animated);
+    tabs_->setCornerWidget(hamburger_, Qt::TopLeftCorner);
+
     main_col->addWidget(tabs_, /*stretch=*/1);
 
     // Wire side-panel signals.  Songs open into tabs.  Playlist

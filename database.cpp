@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS metadata
     -- "authors", "modified".  Purely a UI preference; the sort itself is
     -- performed in the UI, this is just where the choice is remembered.
     song_list_sort TEXT,
-    song_list_sort_desc BOOLEAN
+    -- 0/1: whether the song list sort is descending.  UI preference, like
+    -- song_list_sort above.  NULL is treated as ascending.
+    song_list_sort_desc INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS chord

@@ -32,8 +32,16 @@ namespace nashville::view
 class side_panel : public QWidget
 {
     Q_OBJECT
+    // The animated/resized width.  Writing it pins the panel to an exact width
+    // (min == max), which is what lets the panel grow past its content's
+    // natural size when the user drags it wider.  The collapse/expand
+    // animation drives this property between 0 and the expanded width.
+    Q_PROPERTY(int panelWidth READ panelWidth WRITE setPanelWidth)
 public:
     explicit side_panel(QWidget* parent = nullptr);
+
+    int  panelWidth() const { return maximumWidth(); }
+    void setPanelWidth(int w) { setMinimumWidth(w); setMaximumWidth(w); }
 
     // Replace the contents of the songs list with `names`.  Order
     // preserved.  Currently selected name (if still present in the
@@ -79,10 +87,14 @@ public:
     QString selected_song_name() const;
     QString selected_playlist_name() const;
 
-    // The width the panel takes when fully expanded.  Exposed so the
-    // host can calculate layout margins or know how far to offset
-    // sibling widgets if it ever cares to.
-    static constexpr int k_expanded_width = 240;
+    // The width the panel takes when fully expanded, by default.  The user can
+    // drag the right edge to make it wider or narrower (clamped to
+    // [k_min_width, k_max_width]); the current expanded width is remembered for
+    // the session.  Widened enough, the name and the sort-value column fit
+    // side by side without horizontal scrolling.
+    static constexpr int k_expanded_width = 290;
+    static constexpr int k_min_width      = 190;
+    static constexpr int k_max_width      = 640;
 
 signals:
     // Emitted on double-click of a song / playlist name.  The string
@@ -128,6 +140,10 @@ protected:
     // owning panel.
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    // Keep the right-edge resize grip pinned to the panel's edge as the panel
+    // resizes (including during the slide animation).
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
     void rebuild_list(QListWidget* list, const std::vector<std::string>& names);
 
@@ -149,6 +165,14 @@ private:
     QToolButton* playlists_add_btn_ = nullptr;
     QPropertyAnimation* anim_ = nullptr;
     bool expanded_ = false;
+
+    // Right-edge drag grip and the state captured when a drag begins.  The
+    // panel's expanded width is user-adjustable and remembered here so the
+    // next expand animation returns to the width the user chose.
+    QWidget* resize_grip_ = nullptr;
+    int      expanded_width_ = k_expanded_width;
+    int      drag_start_x_   = 0;
+    int      drag_start_w_   = 0;
 };
 
 } // namespace nashville::view

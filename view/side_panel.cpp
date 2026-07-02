@@ -17,6 +17,9 @@
 #include <QAction>
 #include <QEvent>
 #include <QScrollBar>
+#include <QMouseEvent>
+#include <QResizeEvent>
+#include <algorithm>
 
 namespace nashville::view
 {
@@ -143,6 +146,11 @@ side_panel::side_panel(QWidget* parent)
         sort_combo_ = new QComboBox(this);
         for (const auto& opt : k_sort_options)
             sort_combo_->addItem(tr(opt.label), QString::fromLatin1(opt.token));
+        // Size the dropdown to its widest entry and keep it there — it
+        // shouldn't grow or shrink as the sidebar is resized, and every sort
+        // key must show without clipping.
+        sort_combo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+        sort_combo_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         connect(sort_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
                 if (idx < 0) return;
@@ -164,14 +172,24 @@ side_panel::side_panel(QWidget* parent)
         });
 
         sort_row->addWidget(sort_label);
-        sort_row->addWidget(sort_combo_, /*stretch=*/1);
+        sort_row->addWidget(sort_combo_);
         sort_row->addWidget(dir_btn_);
+        sort_row->addStretch(1);
         vl->addLayout(sort_row);
     }
 
     songs_ = new QTreeWidget(this);
     songs_->setColumnCount(2);
     songs_->setHeaderLabels({ tr("Name"), QString() });
+    // Draw the header's underline across the full width of the list (on the
+    // QHeaderView itself), not just under the sections — otherwise the line
+    // stops at the end of the (snug) value column, leaving the top-right corner
+    // bare.  Sections stay white/black with a faint divider between them.
+    songs_->header()->setStyleSheet(
+        "QHeaderView { background: #ffffff; border: none; "
+        "  border-bottom: 1px solid #c4c4c4; }"
+        "QHeaderView::section { background: #ffffff; color: #000000; "
+        "  padding: 2px 6px; border: none; border-right: 1px solid #e2e2e2; }");
     songs_->setRootIsDecorated(false);   // flat list, no expand triangles
     songs_->setIndentation(0);
     songs_->setUniformRowHeights(true);
@@ -302,7 +320,7 @@ side_panel::side_panel(QWidget* parent)
     // by most slide-out drawers in mobile UIs.
     setMinimumWidth(0);
     setMaximumWidth(0);
-    anim_ = new QPropertyAnimation(this, "maximumWidth", this);
+    anim_ = new QPropertyAnimation(this, "panelWidth", this);
     anim_->setDuration(200);
     anim_->setEasingCurve(QEasingCurve::OutCubic);
 
@@ -333,6 +351,31 @@ side_panel::side_panel(QWidget* parent)
     pal.setColor(QPalette::HighlightedText,  Qt::black);
     setPalette(pal);
     setAutoFillBackground(true);
+
+    // Right-edge resize grip: a thin strip the user drags to set the panel's
+    // width.  A faint edge line hints at it; the resize cursor and the drag
+    // itself are handled in eventFilter().  Positioned in resizeEvent() so it
+    // tracks the panel's edge through the slide animation and manual drags.
+    resize_grip_ = new QWidget(this);
+    resize_grip_->setObjectName("panelResizeGrip");
+    resize_grip_->setFixedWidth(6);
+    resize_grip_->setCursor(Qt::SizeHorCursor);
+    resize_grip_->setStyleSheet(
+        "#panelResizeGrip { background: transparent; "
+        "border-right: 1px solid #cccccc; }");
+    resize_grip_->installEventFilter(this);
+    resize_grip_->raise();
+}
+
+void side_panel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (resize_grip_)
+    {
+        const int gw = resize_grip_->width();
+        resize_grip_->setGeometry(width() - gw, 0, gw, height());
+        resize_grip_->raise();
+    }
 }
 
 void side_panel::set_song_names(const std::vector<std::string>& names)
@@ -376,23 +419,25 @@ void side_panel::fit_song_columns()
 {
     if (!songs_)
         return;
-    // The last visible column carries the "rest of the width".  Single column
-    // (sort by name): that's the name column, which should fill the panel so
-    // there's no boundary line down an empty right-hand strip.  Two columns:
-    // it's the value column.  In both cases we set it to whichever is larger —
-    // the leftover width (so it fills) or its own content width (so a long
-    // value overflows and the horizontal scrollbar can reach it).
     const bool two_col = !songs_->isColumnHidden(1);
     const int  last    = two_col ? 1 : 0;
-    const int  used    = two_col ? songs_->columnWidth(0) : 0;
-    const int  avail   = songs_->viewport()->width() - used;
-    // Measure the column's content width via the public resize call, then keep
-    // whichever is larger — the leftover width (fill) or the content (scroll).
+
+    // Size the last visible column to its content.
     songs_->resizeColumnToContents(last);
-    const int content = songs_->columnWidth(last);
-    const int w       = qMax(avail, content);
-    if (w > 0)
-        songs_->setColumnWidth(last, w);
+
+    if (!two_col)
+    {
+        // Sort by name (single column): fill the panel so there's no boundary
+        // line down an empty right-hand strip.  A long name still overflows
+        // and stays reachable via the horizontal scrollbar.
+        const int content = songs_->columnWidth(last);
+        songs_->setColumnWidth(last, qMax(songs_->viewport()->width(), content));
+    }
+    // Two columns: leave the value column snug to its content (the
+    // resizeColumnToContents above).  Filling it to the panel edge left a wide
+    // empty gutter for short, uniform values like timestamps, and could trip a
+    // spurious horizontal scrollbar when a vertical scrollbar later narrowed
+    // the viewport.  A long value still overflows and is reachable by scrolling.
 }
 
 void side_panel::set_playlist_names(const std::vector<std::string>& names)
@@ -480,7 +525,7 @@ void side_panel::show_animated()
     // point for the new direction.
     anim_->stop();
     anim_->setStartValue(maximumWidth());
-    anim_->setEndValue(k_expanded_width);
+    anim_->setEndValue(expanded_width_);
     anim_->start();
 }
 
@@ -514,6 +559,38 @@ QString side_panel::selected_playlist_name() const
 
 bool side_panel::eventFilter(QObject* watched, QEvent* event)
 {
+    // Right-edge grip: drag to resize the panel.  We capture the pointer's
+    // global x and the panel's width at press time, then set an absolute width
+    // from the pointer delta (clamped) — no drift, and the panel follows the
+    // cursor exactly.  Writing panelWidth pins min == max so the panel can grow
+    // past its content's natural size.
+    if (watched == resize_grip_)
+    {
+        if (event->type() == QEvent::MouseButtonPress)
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton && expanded_)
+            {
+                drag_start_x_ = int(me->globalPosition().x());
+                drag_start_w_ = width();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::MouseMove)
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if ((me->buttons() & Qt::LeftButton) && expanded_)
+            {
+                int w = drag_start_w_ + int(me->globalPosition().x()) - drag_start_x_;
+                w = std::clamp(w, k_min_width, k_max_width);
+                expanded_width_ = w;
+                setPanelWidth(w);
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Reposition the floating "+" button when its parent list is
     // resized (which happens on side-panel resize, on app window
     // resize, and on the side-panel slide-in/out animation while

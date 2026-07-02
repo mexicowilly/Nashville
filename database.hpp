@@ -148,7 +148,6 @@ private:
     };
 
     void check_version();
-
     std::string error_msg(int rc) const;
     void bind_song_columns(sqlite3_stmt* raw, const model::song& s);
     void write_song_body(std::int64_t song_id, const model::song& s);
