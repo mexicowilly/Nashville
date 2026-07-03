@@ -129,7 +129,7 @@ chord& chord::parse_user_input(const std::string& usr)
         throw std::invalid_argument("The chord description cannot be empty");
     chord saved(*this);
     *this = chord();
-    auto re = std::regex("([tdsp]+:)?([b#])?([1-7rR])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
+    auto re = std::regex("([tTdDsSpP]+:)?([b#])?([1-7rR])(-|dim|\\+)?([^\\/:]+)?(\\/([b#])?([1-7]))?(:([sSeEqQhHwW]\\.?))?");
     std::smatch result;
     if (std::regex_match(usr, result, re))
     {
@@ -140,15 +140,19 @@ chord& chord::parse_user_input(const std::string& usr)
                 switch (c)
                 {
                 case 't':
+                case 'T':
                     is_tied_ = true;
                     break;
                 case 'd':
+                case 'D':
                     is_diamond_ = true;
                     break;
                 case 's':
+                case 'S':
                     is_staccato_ = true;
                     break;
                 case 'p':
+                case 'P':
                     is_pushed_ = true;
                     break;
                 default:;

@@ -146,7 +146,8 @@ qreal bar_renderer::width_hint(const model::bar& bar,
                               const chord_renderer::Fonts& fonts,
                               bool draw_begin_repeat,
                               bool draw_end_repeat,
-                              qreal modulation_slot_w)
+                              qreal modulation_slot_w,
+                              bool draw_beat_parens)
 {
     if (bar.empty())
     {
@@ -186,6 +187,38 @@ qreal bar_renderer::width_hint(const model::bar& bar,
     // is identical on both sides for visual symmetry.
     if (draw_begin_repeat) total_width += k_repeat_slot_w;
     if (draw_end_repeat)   total_width += k_repeat_slot_w;
+
+    // Beat-count parentheses.  paint() clamps this bar's chord-scaling to
+    // never exceed 1.0 (see the scale computation there), so a beat-
+    // parens bar never stretches to fill extra column width — the parens
+    // always hug their content tightly at a fixed offset from
+    // chords_left.  The opening '(' fits inside the existing
+    // k_time_sig_slot_w reservation without needing anything extra here
+    // (paren glyph + 2px gap is comfortably under that slot's width).
+    //
+    // The closing ')' is different: it sits past the last chord, inside
+    // whatever trailing slack k_bar_padding gives this bar's column —
+    // which is enough to avoid clipping, but eats into the same budget
+    // that would otherwise be an ordinary bar's full breathing room
+    // before the next thing (crucially, the continuation dot after an
+    // extended line's last bar).  Reserve just the closing glyph's own
+    // width so a beat-parens bar's trailing gap comes out close to an
+    // ordinary bar's, rather than measurably tighter.
+    //
+    // Deliberately NOT reserving for the opening paren too (a bar with
+    // beat parens used to reserve both sides here): this column width is
+    // maxed across every line sharing the column, so anything reserved
+    // for one line's beat-parens bar pushes every other line's
+    // continuation dot in that column rightward too. Reserving only what
+    // the closing paren actually needs — instead of double-counting both
+    // glyphs — keeps that shared impact as small as it can be while
+    // still closing most of the gap.
+    if (draw_beat_parens)
+    {
+        QFontMetricsF pfm(fonts.number);
+        constexpr qreal k_paren_gap = 2.0;
+        total_width += pfm.horizontalAdvance(")") + k_paren_gap;
+    }
 
     return total_width;
 }
@@ -370,6 +403,22 @@ void bar_renderer::paint(QPainter& painter,
     qreal available_width = chord_slot_rect.width()
                            - k_inter_chord_spacing * (bar.chords().size() - 1);
     qreal scale = (total_chord_width > 0.0) ? available_width / total_chord_width : 1.0;
+
+    // A beat-parens bar never stretches to fill extra column width — only
+    // shrinks if its own content genuinely doesn't fit (scale < 1, kept
+    // as the existing safety behaviour).  Ordinary bars DO stretch, which
+    // is intentional column-filling; but for a beat-parens bar, letting
+    // the parens hug their content tightly and always sit at a fixed
+    // offset from chords_left is what keeps their position predictable
+    // regardless of how wide the shared alignment column ends up being
+    // (padding, or a wider bar sharing the same column on another line).
+    // That predictability is what makes rect.right() usable again as the
+    // continuation-dot anchor for these bars too — anything fancier here
+    // broke vertical alignment between extended lines' dots, since
+    // rect.right() (not any bar-specific content position) is the one
+    // value guaranteed identical across every line sharing a column.
+    if (draw_beat_parens)
+        scale = std::min(scale, 1.0);
 
     qreal x = chords_left;
     qreal last_chord_right = chords_left;   // unscaled, used for multi-chord underline

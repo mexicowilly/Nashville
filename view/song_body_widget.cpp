@@ -542,7 +542,10 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     };
 
     // --- Pass 3: compute per-column bar widths ---
-    constexpr qreal k_bar_padding = 16.0;
+    // k_bar_padding is a class-level constant (see header) — shared with
+    // continuation-dot placement, which needs the same margin value to
+    // reproduce natural spacing when anchoring to a bar's content edge
+    // instead of its rect.
     qreal bars_left = content_rect.left() + section_col_w;
     std::vector<qreal> col_widths;
 
@@ -582,8 +585,23 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
             const auto& rb = raw.bars[j];
             bool begin_r = repeat_flags[rb.song_index].first;
             bool end_r   = repeat_flags[rb.song_index].second;
+
+            // Mirrors the draw_beat_parens determination in Pass 4 below —
+            // a bar whose custom beat count differs from the song's time
+            // signature gets its chord numbers wrapped in parentheses.
+            // Computing it here too (rather than deferring to Pass 4) is
+            // required: this is the pass that sizes the shared column
+            // width, and the closing paren needs its own reserved space
+            // or it bleeds into whatever sits immediately to the right —
+            // most visibly the continuation dot after an extended line's
+            // last bar.
+            const unsigned sig_beats = song_.time_sig().count();
+            bool beat_parens = rb.bar->number_of_beats().has_value()
+                             && *rb.bar->number_of_beats() != sig_beats;
+
             qreal w = bar_renderer::width_hint(*rb.bar, bar_h, fonts_,
-                                              begin_r, end_r, col_mod_w[j])
+                                              begin_r, end_r, col_mod_w[j],
+                                              beat_parens)
                       + k_bar_padding;
             if (j >= col_widths.size())
                 col_widths.push_back(w);
@@ -955,6 +973,48 @@ int song_body_widget::hit_test_bar(const QPointF& p, QRectF* out_rect) const
 }
 
 // ---------------------------------------------------------------------------
+// compute_drop_target
+// ---------------------------------------------------------------------------
+std::optional<song_body_widget::bar_drop_target>
+song_body_widget::compute_drop_target(const QPointF& p) const
+{
+    // An existing bar, not part of the current selection: drop before it.
+    QRectF bar_rect;
+    int bar_idx = hit_test_bar(p, &bar_rect);
+    if (bar_idx >= 0 && !selected_bars_.count(static_cast<std::size_t>(bar_idx)))
+    {
+        bar_drop_target t;
+        t.insert_at      = static_cast<std::size_t>(bar_idx);
+        t.force_new_line = false;
+        t.indicator_rect = bar_rect;
+        return t;
+    }
+
+    // Otherwise, an insertion slot: same_line appends to the end of that
+    // line (insert_at is already "one past that line's last bar" — see
+    // insertion_slot_kind's doc comment); next_line starts a whole new
+    // line at the end of the song.  first_bar (empty song) never
+    // produces a target — there's nothing to have selected/dragged.
+    int slot_idx = hit_test_insertion_slot(p);
+    if (slot_idx >= 0)
+    {
+        const auto& slot = insertion_slots_[static_cast<std::size_t>(slot_idx)];
+        if (slot.kind == insertion_slot_kind::same_line
+            || slot.kind == insertion_slot_kind::next_line)
+        {
+            bar_drop_target t;
+            t.insert_at      = slot.insert_at;
+            t.force_new_line = (slot.kind == insertion_slot_kind::next_line);
+            t.extends_line   = (slot.kind == insertion_slot_kind::same_line);
+            t.indicator_rect = slot.rect;
+            return t;
+        }
+    }
+
+    return std::nullopt;
+}
+
+// ---------------------------------------------------------------------------
 // hit_test_section_col
 // ---------------------------------------------------------------------------
 // The section column rect is centred vertically on the bar's number row,
@@ -1077,6 +1137,8 @@ void song_body_widget::paintEvent(QPaintEvent*)
             first_bar_index += line.bars.size();
         }
     }
+
+    paint_drag_indicator(painter);
 
     // Only the hovered slot is painted — the others stay invisible until
     // the cursor enters them.  Skipped while an inline editor is open
@@ -1300,6 +1362,37 @@ void song_body_widget::paint_continuation_dot(QPainter& painter,
 }
 
 // ---------------------------------------------------------------------------
+// paint_drag_indicator
+// ---------------------------------------------------------------------------
+// A solid vertical bar at the drop target's left edge, spanning its full
+// height plus a little overhang top and bottom so it reads clearly even
+// against a bar with no articulation/beat-dot zone above it.  Blue is
+// otherwise unused anywhere in the chart's black-on-white palette, so it
+// reads unambiguously as "live interaction chrome," matching how the
+// divider grabber and slot outlines are the only other non-monochrome
+// elements.
+void song_body_widget::paint_drag_indicator(QPainter& painter) const
+{
+    if (!dragging_bars_ || !drag_drop_target_.has_value())
+        return;
+    const QRectF& target_rect = drag_drop_target_->indicator_rect;
+    if (target_rect.isNull())
+        return;
+
+    painter.save();
+    constexpr qreal k_overhang = 4.0;
+    constexpr qreal k_width    = 3.0;
+    QColor indicator(52, 120, 246);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(indicator);
+    painter.drawRect(QRectF(target_rect.left() - k_width / 2.0,
+                            target_rect.top() - k_overhang,
+                            k_width,
+                            target_rect.height() + 2.0 * k_overhang));
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
 // paint_beat_dots
 // ---------------------------------------------------------------------------
 // Draws one filled dot per beat, centred horizontally over the bar's chord
@@ -1316,7 +1409,7 @@ void song_body_widget::paint_beat_dots(QPainter& painter,
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    constexpr qreal dot_r = 2.2;
+    constexpr qreal dot_r = 1.1;
     const qreal zone_top  = bl.rect.top() - k_beat_dot_zone_height;
     const qreal dot_cy    = zone_top + k_beat_dot_zone_height / 2.0;
 
@@ -1351,7 +1444,13 @@ void song_body_widget::paint_beat_dots(QPainter& painter,
     const std::size_t nc = bl.bar->chords().size();
     const qreal available_w = (interior_right - chords_left)
                               - k_inter * (nc > 0 ? nc - 1 : 0);
-    const qreal scale = (total_chord_width > 0.0) ? available_w / total_chord_width : 1.0;
+    qreal scale = (total_chord_width > 0.0) ? available_w / total_chord_width : 1.0;
+    // paint_beat_dots only ever runs for beat-parens bars (guarded at the
+    // call site), which never stretch to fill their column — see the
+    // matching clamp in bar_renderer::paint.  Must stay in lockstep or
+    // the dot row drifts out of alignment with the (unscaled) chords and
+    // parens it's supposed to sit above.
+    scale = std::min(scale, 1.0);
 
     qreal x = chords_left;
     qreal last_chord_right = chords_left;
@@ -1597,7 +1696,22 @@ void song_body_widget::mousePressEvent(QMouseEvent* event)
         else if (ctrl)
             toggle_bar_in_selection(idx);
         else
-            select_bar_only(idx);
+        {
+            // Plain click on a bar: arm a potential drag regardless of
+            // whether the click also changes the selection.  If this
+            // bar is already part of a multi-bar selection, don't
+            // collapse to just this one yet — defer that to
+            // mouseReleaseEvent (see there) so that pressing on an
+            // existing multi-selection and dragging moves the whole
+            // selection, matching the usual file-manager convention.
+            // Only a plain click that turns out NOT to be a drag
+            // collapses the selection.
+            if (!selected_bars_.count(idx))
+                select_bar_only(idx);
+            drag_armed_     = true;
+            drag_press_bar_ = idx;
+            drag_press_pos_ = event->pos();
+        }
         return;
     }
 
@@ -1704,6 +1818,44 @@ void song_body_widget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void song_body_widget::mouseMoveEvent(QMouseEvent* event)
 {
+    // Bar drag in progress: track the drop target under the cursor and
+    // bypass every other hover affordance (divider proximity, insertion
+    // slots, section column, annotation cursors) for the duration — none
+    // of those are meaningful targets while a bar drag is live.
+    if (dragging_bars_)
+    {
+        auto new_target = compute_drop_target(event->pos());
+        bool changed = new_target.has_value() != drag_drop_target_.has_value()
+                    || (new_target.has_value() && drag_drop_target_.has_value()
+                        && (new_target->insert_at != drag_drop_target_->insert_at
+                            || new_target->force_new_line != drag_drop_target_->force_new_line));
+        if (changed)
+        {
+            drag_drop_target_ = new_target;
+            update();
+        }
+        setCursor(new_target.has_value() ? Qt::DragMoveCursor : Qt::ForbiddenCursor);
+        return;
+    }
+
+    // A bar press is armed but hasn't crossed the drag-start threshold
+    // yet.  Promote to an actual drag once it does; until then, suppress
+    // the normal hover logic below (a pending drag on a bar shouldn't
+    // also be flickering slot/section hover outlines under the cursor).
+    if (drag_armed_)
+    {
+        if ((event->pos() - drag_press_pos_).manhattanLength()
+            >= QApplication::startDragDistance())
+        {
+            dragging_bars_    = true;
+            drag_armed_       = false;
+            drag_drop_target_ = compute_drop_target(event->pos());
+            setCursor(drag_drop_target_.has_value() ? Qt::DragMoveCursor : Qt::ForbiddenCursor);
+            update();
+        }
+        return;
+    }
+
     if (dragging_divider_)
     {
         int delta     = event->pos().x() - drag_start_x_;
@@ -1844,6 +1996,34 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
 
 void song_body_widget::mouseReleaseEvent(QMouseEvent* event)
 {
+    // Commit or cancel a bar drag before anything else gets a look at
+    // the release — an in-progress bar drag isn't something the
+    // annotation layer or divider logic should ever see.
+    if (dragging_bars_)
+    {
+        dragging_bars_ = false;
+        if (event->button() == Qt::LeftButton && drag_drop_target_.has_value())
+            move_selected_bars(drag_drop_target_->insert_at,
+                              drag_drop_target_->force_new_line,
+                              drag_drop_target_->extends_line);
+        drag_drop_target_.reset();
+        unsetCursor();
+        update();
+        return;
+    }
+    if (drag_armed_)
+    {
+        // No drag occurred — this was a plain click.  If the pressed bar
+        // was already part of a multi-bar selection, collapse to just
+        // this one now (deferred from mousePressEvent so that pressing
+        // on an existing multi-selection and dragging moves the whole
+        // thing instead of first collapsing it to a single bar).
+        drag_armed_ = false;
+        if (selected_bars_.size() > 1 && selected_bars_.count(drag_press_bar_))
+            select_bar_only(drag_press_bar_);
+        return;
+    }
+
     // The annotation layer claims the release iff it had a drag in
     // flight; on release it commits the new/moved annotation and
     // repaints.  Tested first so that a connector drop is treated as
@@ -1895,6 +2075,20 @@ void song_body_widget::leaveEvent(QEvent*)
 // shortcuts here can't fire mid-edit — exactly the right behavior.
 void song_body_widget::keyPressEvent(QKeyEvent* event)
 {
+    // Cancel an in-progress bar drag on Esc without moving anything.
+    // Checked before the active_editor_ guard below since a drag can't
+    // coexist with an open editor anyway, and before the annotation
+    // layer so a drag always wins over whatever Esc would otherwise do.
+    if (event->key() == Qt::Key_Escape && (dragging_bars_ || drag_armed_))
+    {
+        dragging_bars_ = false;
+        drag_armed_    = false;
+        drag_drop_target_.reset();
+        unsetCursor();
+        update();
+        return;
+    }
+
     // Defensive: with the editor open, route everything to the base
     // class.  The editor's own event filter handles its Esc; we don't
     // want a stray "Esc clears selection" running while the user is
@@ -2088,6 +2282,165 @@ void song_body_widget::delete_selection()
     song_.bars(bars_copy);
     selected_bars_.clear();
     selection_anchor_.reset();
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
+// line_index_of_each_bar
+// ---------------------------------------------------------------------------
+std::vector<std::size_t> song_body_widget::line_index_of_each_bar() const
+{
+    const auto& bars = song_.bars();
+    std::vector<std::size_t> line_of(bars.size());
+    std::size_t line_idx = 0;
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        line_of[i] = line_idx;
+        if (bars[i].is_eol())
+            ++line_idx;
+    }
+    return line_of;
+}
+
+// ---------------------------------------------------------------------------
+// move_selected_bars
+// ---------------------------------------------------------------------------
+void song_body_widget::move_selected_bars(std::size_t insert_at, bool force_new_line,
+                                          bool extends_line)
+{
+    if (selected_bars_.empty())
+        return;
+    const auto& bars = song_.bars();
+    if (insert_at > bars.size())
+        return;
+    // The "dropping on one of the dragged bars themselves" guard only
+    // makes sense for a plain insert-before-an-existing-bar target,
+    // where insert_at names a *specific bar* to land in front of and
+    // that bar being part of the drag is genuinely undefined (it won't
+    // exist there once removed).  For extends_line/force_new_line
+    // targets, insert_at is a line-boundary position, not a particular
+    // bar — it can coincide with a dragged bar's current flat index
+    // (e.g. dragging a line's immediate successor bar back into that
+    // line) without being a no-op; new_insert_at below already accounts
+    // for removed bars shifting the boundary correctly.
+    if (!extends_line && !force_new_line
+        && insert_at < bars.size() && selected_bars_.count(insert_at))
+        return;
+
+    const auto line_of = line_index_of_each_bar();
+
+    // Extract the dragged bars as copies, in their original relative
+    // order, always clearing is_eol.  is_eol means "this bar is the
+    // last one in its line" — a dragged bar essentially never keeps
+    // that role at its new position.  The one case where it should
+    // become true again — extending a line's own end — is handled
+    // explicitly below via old_terminal_is_eol, which sets it on
+    // whichever bar ends up last in the dragged block.  Whichever
+    // line(s) actually lose their terminal bar to the drag get a
+    // replacement further down via lines_losing_terminal, regardless of
+    // whether the drop lands on the same line the bar came from or a
+    // different one — so unlike an earlier version of this function,
+    // there's no need to special-case "same line" here at all: doing so
+    // used to preserve is_eol on a dragged bar that happened to be its
+    // line's terminal, which — if that bar moved to anywhere other than
+    // the line's actual end — split the line right there while
+    // lines_losing_terminal *also* (correctly) gave the terminal role
+    // to whatever bar was really left last, leaving two markers where
+    // there should only be one.
+    std::vector<model::bar> dragged;
+    dragged.reserve(selected_bars_.size());
+    for (auto idx : selected_bars_)
+    {
+        model::bar b = bars[idx];
+        b.is_eol(false);
+        dragged.push_back(std::move(b));
+    }
+
+    // extends_line: if this line's current last bar explicitly carries
+    // is_eol = true, that boundary must move to the end of the dragged
+    // block, regardless of the same_line result above — otherwise the
+    // block lands right after the old boundary and starts a new line
+    // instead of actually extending this one.  This applies even when
+    // the target line is the song's last line: is_eol on the last bar
+    // is inert on its own (nothing follows it to split from), but it
+    // becomes a real boundary the moment something IS inserted after
+    // it, which is exactly what's happening here.  Whether the OLD
+    // terminal bar survives this move or was itself dragged away, its
+    // is_eol is handled separately below (cleared if it survives;
+    // reassigned via lines_losing_terminal if not) — here we only need
+    // to set the NEW terminal.
+    const bool old_terminal_is_eol = extends_line && !force_new_line
+                                    && bars[insert_at - 1].is_eol();
+    if (old_terminal_is_eol && !dragged.empty())
+        dragged.back().is_eol(true);
+
+    // For every original line whose terminal bar (is_eol, or the song's
+    // last bar) is being dragged away, find the last surviving
+    // (non-dragged) bar still in that line — it needs to inherit
+    // is_eol = true so the line still ends where its remaining bars
+    // stop, rather than silently merging into whatever used to follow.
+    std::set<std::size_t> lines_losing_terminal;
+    std::map<std::size_t, std::size_t> last_surviving_in_line;
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        bool is_terminal = bars[i].is_eol() || (i + 1 == bars.size());
+        bool is_dragged   = selected_bars_.count(i) > 0;
+        if (!is_dragged)
+            last_surviving_in_line[line_of[i]] = i;
+        if (is_terminal && is_dragged)
+            lines_losing_terminal.insert(line_of[i]);
+    }
+
+    // Build the bars vector without the dragged bars, applying the
+    // is_eol fixup above, and track where the target lands after
+    // removal.
+    std::vector<model::bar> remaining;
+    remaining.reserve(bars.size() - selected_bars_.size());
+    std::size_t new_insert_at = 0;
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        if (selected_bars_.count(i))
+            continue;
+        if (i < insert_at)
+            ++new_insert_at;
+        model::bar b = bars[i];
+        if (lines_losing_terminal.count(line_of[i])
+            && last_surviving_in_line[line_of[i]] == i)
+        {
+            b.is_eol(true);
+        }
+        // extends_line: the old terminal (if it survives here) is no
+        // longer the line's last bar — the dragged block took that
+        // place — so its is_eol must be cleared.  Guarded to the exact
+        // original bar so this can't clobber a same_line-preserved or
+        // lines_losing_terminal-assigned flag on some other bar.
+        if (old_terminal_is_eol && i == insert_at - 1)
+        {
+            b.is_eol(false);
+        }
+        remaining.push_back(std::move(b));
+    }
+
+    // force_new_line: the bar that will now immediately precede the
+    // dropped block (if any survives there) must end its line so the
+    // block actually starts a fresh one, rather than continuing
+    // whatever used to follow it.
+    if (force_new_line && new_insert_at > 0)
+        remaining[new_insert_at - 1].is_eol(true);
+
+    remaining.insert(remaining.begin() + static_cast<std::ptrdiff_t>(new_insert_at),
+                     std::make_move_iterator(dragged.begin()),
+                     std::make_move_iterator(dragged.end()));
+
+    song_.bars(remaining);
+
+    // Selection follows the moved bars to their new home so the user
+    // can see what just happened and immediately act on it again.
+    selected_bars_.clear();
+    for (std::size_t i = 0; i < dragged.size(); ++i)
+        selected_bars_.insert(new_insert_at + i);
+    selection_anchor_ = new_insert_at;
+
     rebuild();
 }
 

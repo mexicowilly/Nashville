@@ -15,13 +15,18 @@ public:
     // Returns the minimum width needed to render this bar.  The repeat-
     // mark flags grow the width when set so the painted glyphs have
     // dedicated horizontal space at the bar's left/right edges and don't
-    // squeeze the chord row.
+    // squeeze the chord row.  draw_beat_parens mirrors the flag paint()
+    // takes: when set, extra width is reserved so the parenthesis glyphs
+    // wrapping a custom beat-count bar's chords have room to sit without
+    // encroaching on whatever follows (a neighbouring bar, or the
+    // continuation dot after an extended line's last bar).
     static qreal width_hint(const model::bar& bar,
                            qreal height,
                            const chord_renderer::Fonts& fonts,
                            bool draw_begin_repeat = false,
                            bool draw_end_repeat   = false,
-                           qreal modulation_slot_w = 0.0);
+                           qreal modulation_slot_w = 0.0,
+                           bool draw_beat_parens   = false);
 
     // Paints the bar into rect.
     // line_duration_mode: true if any bar on this line is duration-mode,

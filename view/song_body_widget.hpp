@@ -495,6 +495,109 @@ private:
     // guide line and darken the grabber; cleared on leave.
     bool hovered_divider_   = false;
 
+    // --- Bar drag-to-reorder ---
+    // A plain press on a bar always arms a potential drag (drag_armed_)
+    // without necessarily collapsing an existing multi-bar selection —
+    // if the pressed bar is already selected, we defer the "click just
+    // selects this one bar" behaviour to mouseReleaseEvent so that
+    // pressing-then-dragging an existing multi-selection moves the whole
+    // thing, matching the usual file-manager convention.  Once the
+    // cursor moves past Qt's drag-start threshold, drag_armed_ promotes
+    // to dragging_bars_ and every subsequent move re-resolves
+    // drag_drop_target_ via compute_drop_target (nullopt when over empty
+    // space or one of the dragged bars themselves).  Release commits the
+    // move via move_selected_bars; Esc cancels without moving anything.
+    bool                        drag_armed_       = false;
+    bool                        dragging_bars_    = false;
+    std::size_t                 drag_press_bar_   = 0;
+    QPoint                      drag_press_pos_;
+
+    // A resolved drop location.  insert_at is a flat song::bars() index
+    // in [0, bars().size()] — the position to insert the dragged block
+    // before (bars().size() itself means "append at the very end").
+    // indicator_rect is whatever rect (an existing bar's, or an
+    // insertion slot's ghost rect) the drop-point indicator should hug
+    // the left edge of.  force_new_line is set only for the "append a
+    // new line" slot at the end of the song: it means the bar
+    // immediately before insert_at must be given is_eol = true (if it
+    // doesn't already have it) so the dropped block actually starts a
+    // fresh line rather than continuing the last one.  extends_line is
+    // set only for a same_line slot target: it means insert_at is "the
+    // end of a specific line" rather than "immediately before whatever
+    // bar happens to live at this flat index" — which matters because
+    // when that line isn't the song's last, insert_at numerically lands
+    // on the *next* line's first bar, and naively treating that as an
+    // ordinary "insert before this bar" both misattributes which line
+    // the drop belongs to and — because the target line's old last bar
+    // keeps its is_eol marker exactly where it was — leaves the dropped
+    // block stranded after that boundary, i.e. it starts the next line
+    // instead of actually extending this one.  See move_selected_bars.
+    struct bar_drop_target
+    {
+        std::size_t insert_at      = 0;
+        bool        force_new_line = false;
+        bool        extends_line   = false;
+        QRectF      indicator_rect;
+    };
+    std::optional<bar_drop_target> drag_drop_target_;
+
+    // Resolves the drop target under point `p`, or nullopt if there
+    // isn't a valid one there.  Checks, in order: an existing bar (not
+    // part of the current selection) — drop before it; a same_line
+    // insertion slot — drop at the end of that line; a next_line
+    // insertion slot — drop as a new line at the end of the song.
+    // first_bar slots (empty song) never produce a target since there's
+    // nothing to have dragged in the first place.
+    std::optional<bar_drop_target> compute_drop_target(const QPointF& p) const;
+
+    // Returns the flat index into song_.bars() belonging to the same
+    // "line" as bar `flat_idx`, where a line is the run of bars ending
+    // at (and including) the next bar with is_eol() set, or the end of
+    // the song.  Used by move_selected_bars to decide whether a drop
+    // target shares the dragged bars' original line.
+    std::vector<std::size_t> line_index_of_each_bar() const;
+
+    // Moves the currently-selected bars (selected_bars_) so they land,
+    // as a contiguous block in their original relative order, at
+    // `insert_at` (a flat song::bars() index; bars().size() appends at
+    // the very end).  No-op if nothing is selected, insert_at is out of
+    // range, or insert_at points at one of the selected bars themselves.
+    //
+    // is_eol handling: every dragged bar's is_eol is unconditionally
+    // cleared first — is_eol marks "the last bar of a line," and a
+    // dragged bar essentially never keeps that role at its new
+    // position, whether the drop lands within its own original line or
+    // a different one.  From there:
+    //   * extends_line (and not force_new_line): insert_at is "the end
+    //     of a specific line," which may numerically coincide with the
+    //     next line's first bar's index — so if that line's old last
+    //     bar explicitly has is_eol = true, that flag is moved to the
+    //     end of the dragged block instead (and cleared from the old
+    //     bar, if it survives here rather than being dragged away
+    //     itself).  This is what makes the block actually extend the
+    //     line rather than start a new one immediately after it — and
+    //     it applies even when there's no next line yet, since is_eol
+    //     on a line's current last bar becomes a real boundary the
+    //     moment anything is inserted after it.
+    //   * force_new_line: the bar immediately before insert_at (if any
+    //     survives there) is given is_eol = true, so the block starts a
+    //     genuinely new line.
+    //   * plain insert-before-an-existing-bar (neither flag set): no
+    //     further action — the dragged block simply merges into
+    //     whatever line insert_at falls into.
+    //   * In every case, if the bars dragged away included their
+    //     original line's terminal (is_eol) bar and that line isn't the
+    //     one being extended above, that flag is transferred to
+    //     whichever bar is now last among that line's survivors, so the
+    //     vacated line still ends in a sensible place instead of
+    //     silently merging with whatever used to follow it.
+    void move_selected_bars(std::size_t insert_at, bool force_new_line, bool extends_line);
+
+    // Paints the vertical insertion-point indicator at the left edge of
+    // drag_drop_target_'s indicator_rect while a bar drag is in
+    // progress.  No-op when not dragging or no valid target is hovered.
+    void paint_drag_indicator(QPainter& painter) const;
+
     // --- Constants ---
     // Padding above and below the title text.  Kept tight: a Nashville chart
     // treats vertical space as a primary resource, so the title hugs the top
@@ -514,6 +617,11 @@ private:
     static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
     static constexpr qreal k_line_spacing_normal = 10.0;  // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
+    // Horizontal padding baked into every bar's own reserved column width,
+    // beyond what its content (chords, time sig, parens, etc.) strictly
+    // needs.  Gives a bar's trailing edge natural breathing room before
+    // whatever comes next.
+    static constexpr qreal k_bar_padding         = 16.0;
     // Vertical zone reserved above the bar row when a line carries any
     // volta numbers.  Houses the labelled volta bracket (label text + a
     // small downward hook).  Lines without voltas don't reserve this so
