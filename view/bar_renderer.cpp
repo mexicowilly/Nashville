@@ -2,9 +2,14 @@
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <cmath>
+#include <algorithm>
 
 namespace nashville::view
 {
+
+// Forward declaration: defined below alongside the other beat-arithmetic
+// helpers, but needed by paint() which appears earlier in this file.
+static unsigned duration_in_16ths(model::chord::time t);
 
 // ---------------------------------------------------------------------------
 // Repeat-mark geometry
@@ -282,12 +287,41 @@ void bar_renderer::paint(QPainter& painter,
                          bool draw_begin_repeat,
                          bool draw_end_repeat,
                          bool draw_beat_parens,
-                         qreal modulation_slot_w)
+                         qreal modulation_slot_w,
+                         const model::time_signature& effective_time_sig)
 {
     if (bar.empty())
         return;
 
     bool duration_mode = is_duration_mode(bar);
+
+    // Beat-safe note splitting (see expand_rhythm_units) happens before
+    // beaming, and beaming runs over the expanded sequence rather than the
+    // raw chord list — a note that gets split can produce a new
+    // eighth/sixteenth piece that's beam-eligible and adjacent to a real
+    // neighbouring note (the classic case: an eighth followed by what
+    // would be an off-beat dotted quarter splits into an eighth tied to a
+    // quarter, and that new eighth piece beams with the first eighth
+    // exactly as two ordinary adjacent eighths would).
+    std::vector<rhythm_unit> units;
+    std::vector<model::chord> unit_chords;
+    std::vector<beam_group> beam_groups;
+    std::vector<int> beam_group_of;  // unit index -> beam_groups index, or -1
+    if (duration_mode)
+    {
+        const unsigned beat_16ths = compute_beat_16ths(effective_time_sig);
+        units = expand_rhythm_units(bar.chords(), beat_16ths);
+
+        unit_chords.reserve(units.size());
+        for (const auto& u : units)
+            unit_chords.push_back(u.piece);
+
+        beam_groups = compute_beam_groups(unit_chords, effective_time_sig, bar.number_of_beats());
+        beam_group_of.assign(units.size(), -1);
+        for (std::size_t g = 0; g < beam_groups.size(); ++g)
+            for (std::size_t i = beam_groups[g].start; i <= beam_groups[g].end; ++i)
+                beam_group_of[i] = static_cast<int>(g);
+    }
 
     constexpr qreal top_pad = 2.0;  // fixed top pad, independent of line height
 
@@ -423,13 +457,19 @@ void bar_renderer::paint(QPainter& painter,
     qreal x = chords_left;
     qreal last_chord_right = chords_left;   // unscaled, used for multi-chord underline
     qreal last_slot_right  = chords_left;   // scaled slot right edge, used for ')'
+    std::vector<chord_renderer::StemInfo> stems(units.size());
+    std::size_t unit_idx = 0;
+    const qreal rhythm_row_bottom = line_y + 1.0 + rhythm_row_h;
     for (std::size_t i = 0; i < bar.chords().size(); ++i)
     {
         qreal slot_width = chord_widths[i] * scale;
         QRectF slot_rect(x, chord_slot_rect.top(), slot_width, chord_slot_h);
 
         // Pass line_has_articulation normally — chord_renderer carves the art
-        // zone from the top of the (now correctly sized) chord slot.
+        // zone from the top of the (now correctly sized) chord slot. This is
+        // unaffected by beat-safe splitting: the chord number/articulations
+        // are properties of the original chord and are drawn once regardless
+        // of how many rhythm-row pieces it expands into below.
         chord_renderer::paint(painter, slot_rect, bar.chords()[i], fonts, duration_mode,
                               line_has_articulation);
 
@@ -438,11 +478,78 @@ void bar_renderer::paint(QPainter& painter,
 
         if (duration_mode && line_duration_mode)
         {
-            QRectF rhythm_rect(x, line_y + 1.0, slot_width, rhythm_row_h);
-            chord_renderer::paint_rhythm(painter, rhythm_rect, bar.chords()[i], fonts);
+            // This chord's pieces are contiguous in `units` (expand_rhythm_units
+            // preserves chord order and only ever grows one chord into several
+            // consecutive entries), so a single scan forward finds its range.
+            std::size_t first_unit = unit_idx;
+            std::size_t last_unit  = unit_idx;
+            while (last_unit < units.size() && units[last_unit].chord_index == i)
+                ++last_unit;
+
+            if (last_unit - first_unit <= 1)
+            {
+                // Common case: this chord needed no beat-safe splitting.
+                QRectF rhythm_rect(x, line_y + 1.0, slot_width, rhythm_row_h);
+                const bool beamed = beam_group_of[first_unit] >= 0;
+                stems[first_unit] = chord_renderer::paint_rhythm(painter, rhythm_rect,
+                                                                 units[first_unit].piece,
+                                                                 fonts, beamed);
+            }
+            else
+            {
+                // Split into multiple tied pieces — divide this chord's own
+                // slot width across them in proportion to each piece's share
+                // of the total duration, so e.g. an eighth-tied-to-quarter
+                // gives the quarter twice the eighth's width.
+                unsigned total_16ths = 0;
+                for (std::size_t u = first_unit; u < last_unit; ++u)
+                    total_16ths += duration_in_16ths(*units[u].piece.duration());
+
+                qreal piece_x = x;
+                for (std::size_t u = first_unit; u < last_unit; ++u)
+                {
+                    const unsigned len = duration_in_16ths(*units[u].piece.duration());
+                    const qreal piece_w = slot_width
+                                        * (static_cast<qreal>(len) / total_16ths);
+                    QRectF piece_rect(piece_x, line_y + 1.0, piece_w, rhythm_row_h);
+                    const bool beamed = beam_group_of[u] >= 0;
+                    stems[u] = chord_renderer::paint_rhythm(painter, piece_rect,
+                                                            units[u].piece, fonts, beamed);
+                    piece_x += piece_w;
+                }
+            }
+
+            unit_idx = last_unit;
         }
 
         x += slot_width + k_inter_chord_spacing;
+    }
+
+    // --- Beams ---
+    // Drawn as a pass separate from the per-chord loop above because a beam
+    // is shared geometry spanning several chord slots, not a property of
+    // any single one. Operates on the expanded unit sequence (unit_chords),
+    // not the raw chord list — see the comment where units/beam_groups are
+    // computed for why a split piece needs to be beam-eligible too.
+    if (duration_mode && line_duration_mode)
+    {
+        for (const beam_group& group : beam_groups)
+            paint_beam(painter, unit_chords, stems, group);
+
+        // Tie arcs between pieces of the same original note (beat-safe
+        // splitting) — NOT the pre-existing chord-level is_tied() arc,
+        // which is a different indicator for a tie between two distinct
+        // chords and is left completely alone here.
+        for (std::size_t k = 0; k + 1 < units.size(); ++k)
+        {
+            if (units[k].tie_to_next
+                && units[k].chord_index == units[k + 1].chord_index
+                && stems[k].has_stem && stems[k + 1].has_stem)
+            {
+                paint_split_tie(painter, stems[k].stem_x, stems[k + 1].stem_x,
+                                rhythm_row_bottom);
+            }
+        }
     }
 
     // Single underline from chords-left to just past the last chord glyph
@@ -751,6 +858,460 @@ bool bar_renderer::is_duration_mode(const model::bar& bar)
         if (ch.duration().has_value() || ch.is_rest())
             return true;
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Private: duration_in_16ths — helper local to compute_beam_groups
+// ---------------------------------------------------------------------------
+// The chord::time enum's underlying integer values are not the notes'
+// actual relative lengths (DOTTED_EIGHTH = 12 is not "1.5x" anything else
+// in that encoding) — they look intended for sorting/display, not beat
+// arithmetic. This is the real duration, in sixteenth-note units, needed
+// to track position through a bar.
+static unsigned duration_in_16ths(model::chord::time t)
+{
+    switch (t)
+    {
+        case model::chord::time::WHOLE:          return 16;
+        case model::chord::time::DOTTED_HALF:    return 12;
+        case model::chord::time::HALF:           return 8;
+        case model::chord::time::DOTTED_QUARTER: return 6;
+        case model::chord::time::QUARTER:        return 4;
+        case model::chord::time::DOTTED_EIGHTH:  return 3;
+        case model::chord::time::EIGHTH:         return 2;
+        case model::chord::time::SIXTEENTH:      return 1;
+    }
+    return 4;  // unreachable; keeps position tracking sane if the enum grows
+}
+
+// A note is a beam *candidate* purely by virtue of its own duration —
+// whether it ends up in an actual multi-note beam_group also depends on
+// its neighbours, decided below in compute_beam_groups.
+static bool is_beam_candidate(const model::chord& ch)
+{
+    if (ch.is_rest() || !ch.duration())
+        return false;
+    switch (*ch.duration())
+    {
+        case model::chord::time::EIGHTH:
+        case model::chord::time::DOTTED_EIGHTH:
+        case model::chord::time::SIXTEENTH:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Private: compute_beat_16ths
+// ---------------------------------------------------------------------------
+unsigned bar_renderer::compute_beat_16ths(const model::time_signature& ts)
+{
+    const bool is_compound = ts.kind() == model::time_signature::beat_type::EIGHTH
+                            && ts.count() % 3 == 0
+                            && ts.count() >= 6;
+    if (is_compound)
+        return 6;  // dotted quarter = 3 eighths
+
+    switch (ts.kind())
+    {
+        case model::time_signature::beat_type::HALF:   return 8;
+        case model::time_signature::beat_type::EIGHTH: return 2;
+        case model::time_signature::beat_type::QUARTER:
+        default:                                        return 4;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Private: compute_beam_groups
+// ---------------------------------------------------------------------------
+std::vector<bar_renderer::beam_group> bar_renderer::compute_beam_groups(
+    const std::vector<model::chord>& chords,
+    const model::time_signature& ts,
+    const std::optional<unsigned>& beat_count_override)
+{
+    // --- Beat structure implied by the time signature ---
+    const bool is_compound = ts.kind() == model::time_signature::beat_type::EIGHTH
+                            && ts.count() % 3 == 0
+                            && ts.count() >= 6;
+
+    const unsigned beat_16ths = compute_beat_16ths(ts);
+    unsigned beat_count = is_compound ? ts.count() / 3 : ts.count();
+
+    // A bar with a custom beat count (a pickup bar, say) has a different
+    // number of beats than the time signature's nominal count — and
+    // therefore a different mid-bar point — even though beat_16ths (how
+    // long one beat lasts) is unchanged.
+    if (beat_count_override)
+        beat_count = *beat_count_override;
+
+    // Only simple meters (quarter/half beat) with an even beat count get
+    // the eighth-note merge-across-a-beat-boundary pass; see the rationale
+    // in the header comment on compute_beam_groups.
+    const bool allow_eighth_merge = !is_compound
+                                   && ts.kind() != model::time_signature::beat_type::EIGHTH
+                                   && beat_count % 2 == 0;
+
+    // The beat index where the second half of the bar begins. A merge is
+    // only ever allowed to bring two adjacent beat-runs together when they
+    // both fall on the same side of this line — this is the actual rule
+    // ("a beam must never cross a mid-bar boundary"), checked directly by
+    // position rather than by the beat_index parity trick this used to
+    // rely on. Parity only happens to match the true midpoint when
+    // beat_count is a multiple of 4 (as in 4/4: midpoint at beat 2, which
+    // is even); for other even beat counts — 6/4, say, midpoint at beat 3
+    // — a parity check would happily merge beats 2 and 3 straight across
+    // the middle. This check is correct for every even beat_count.
+    const unsigned half_boundary = beat_count / 2;
+
+    // --- Pass 1: one run per beat (or fragment of a beat, if a rest splits it) ---
+    struct beat_run
+    {
+        std::size_t start;
+        std::size_t end;          // inclusive
+        unsigned    beat_index;
+        bool        has_sixteenth;
+    };
+    std::vector<beat_run> runs;
+
+    unsigned position_16ths = 0;
+    bool     in_run         = false;
+    beat_run current{};
+
+    auto close_run = [&]()
+    {
+        if (in_run)
+            runs.push_back(current);
+        in_run = false;
+    };
+
+    for (std::size_t i = 0; i < chords.size(); ++i)
+    {
+        const model::chord& ch = chords[i];
+        const unsigned beat_index = position_16ths / beat_16ths;
+
+        if (is_beam_candidate(ch))
+        {
+            const bool is_sixteenth = (*ch.duration() == model::chord::time::SIXTEENTH);
+            if (in_run && current.beat_index == beat_index && current.end + 1 == i)
+            {
+                current.end = i;
+                current.has_sixteenth = current.has_sixteenth || is_sixteenth;
+            }
+            else
+            {
+                close_run();
+                current = beat_run{i, i, beat_index, is_sixteenth};
+                in_run  = true;
+            }
+        }
+        else
+        {
+            close_run();
+        }
+
+        // Advance position by this chord's duration. A chord with no
+        // duration (and not a rest) contributes nothing — nothing is
+        // painted for it in the rhythm row either (see paint_rhythm),
+        // so it can't shift where later notes land.
+        if (ch.is_rest())
+            position_16ths += ch.duration() ? duration_in_16ths(*ch.duration()) : 16;
+        else if (ch.duration())
+            position_16ths += duration_in_16ths(*ch.duration());
+    }
+    close_run();
+
+    // --- Pass 2: merge adjacent pure-eighth runs, never across half_boundary ---
+    std::vector<beam_group> groups;
+    std::size_t r = 0;
+    while (r < runs.size())
+    {
+        beat_run merged = runs[r];
+        if (allow_eighth_merge && !merged.has_sixteenth
+            && r + 1 < runs.size())
+        {
+            const beat_run& next = runs[r + 1];
+            const bool would_cross_midbar = merged.beat_index < half_boundary
+                                           && next.beat_index >= half_boundary;
+            if (!next.has_sixteenth
+                && next.beat_index == merged.beat_index + 1
+                && next.start == merged.end + 1
+                && !would_cross_midbar)
+            {
+                merged.end = next.end;
+                ++r;  // consumed the next run too
+            }
+        }
+
+        if (merged.end > merged.start)  // only actual multi-note groups
+            groups.push_back(beam_group{merged.start, merged.end});
+
+        ++r;
+    }
+
+    return groups;
+}
+
+// ---------------------------------------------------------------------------
+// Private: paint_beam
+// ---------------------------------------------------------------------------
+void bar_renderer::paint_beam(QPainter& painter,
+                              const std::vector<model::chord>& chords,
+                              const std::vector<chord_renderer::StemInfo>& stems,
+                              const beam_group& group)
+{
+    if (group.end <= group.start || !stems[group.start].has_stem)
+        return;
+
+    // Snap everything to whole pixels and turn antialiasing off for these
+    // fills: beams here are always plain axis-aligned rectangles, and
+    // antialiasing a rect whose edge lands within rounding error of a
+    // pixel boundary can leave that edge only partially covered — visible
+    // as a missing corner pixel where the beam meets the stem. A hard,
+    // integer-aligned fill has no such edge case.
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::black);
+
+    const qreal notehead_h = stems[group.start].notehead_h;
+    // beam_y is the top of every note's stem in this group (identical for
+    // all of them — same rhythm row) — i.e. exactly where each note's
+    // flag used to start. The primary beam's TOP edge belongs there too,
+    // extending downward, so the stem visually runs straight into the
+    // beam with no gap or overlap. Centering the beam on beam_y instead
+    // (an earlier version of this code did) leaves half the beam's
+    // thickness above the point the stem actually reaches — nothing
+    // underneath it, reading as misaligned.
+    const qreal beam_y    = std::round(stems[group.start].beam_y);
+    const qreal thickness = std::round(std::max(1.0, notehead_h * 0.20));
+    const qreal gap       = std::round(std::max(1.0, notehead_h * 0.30));
+
+    // Beam level for a chord: 2 for a sixteenth (gets a second beam), 1
+    // for anything else beam-eligible (eighth/dotted-eighth — the dot
+    // doesn't add a beam, just the augmentation dot chord_renderer already
+    // draws). Chords land in a beam_group only when eligible, so no 0 case
+    // is expected here, but a rest/undurationed chord defensively reads 0.
+    auto beam_level = [](const model::chord& ch) -> int
+    {
+        if (!ch.duration())
+            return 0;
+        return (*ch.duration() == model::chord::time::SIXTEENTH) ? 2 : 1;
+    };
+
+    const qreal x_start = std::round(stems[group.start].stem_x);
+    const qreal x_end   = std::round(stems[group.end].stem_x);
+
+    // Primary beam: one solid bar spanning the full group, top-aligned to
+    // the stem tip and extending down toward the noteheads.
+    painter.drawRect(QRectF(x_start, beam_y, x_end - x_start, thickness));
+
+    // Secondary (sixteenth) beam, stacked directly below the primary with
+    // a small visible gap, one adjacent pair at a time. A full segment
+    // when both notes are sixteenths; otherwise a short partial stub
+    // reaching from the sixteenth note toward its non-sixteenth
+    // neighbour, the standard way of notating e.g. a dotted-eighth
+    // followed by a sixteenth within one beamed group.
+    const qreal secondary_y    = beam_y + thickness + gap;
+    constexpr qreal k_stub_max = 6.0;
+    for (std::size_t i = group.start; i < group.end; ++i)
+    {
+        const int   lvl_a = beam_level(chords[i]);
+        const int   lvl_b = beam_level(chords[i + 1]);
+        const qreal xa    = std::round(stems[i].stem_x);
+        const qreal xb    = std::round(stems[i + 1].stem_x);
+
+        if (lvl_a >= 2 && lvl_b >= 2)
+        {
+            painter.drawRect(QRectF(xa, secondary_y, xb - xa, thickness));
+        }
+        else if (lvl_a >= 2)
+        {
+            const qreal stub = std::round(std::min(k_stub_max, (xb - xa) * 0.5));
+            painter.drawRect(QRectF(xa, secondary_y, stub, thickness));
+        }
+        else if (lvl_b >= 2)
+        {
+            const qreal stub = std::round(std::min(k_stub_max, (xb - xa) * 0.5));
+            painter.drawRect(QRectF(xb - stub, secondary_y, stub, thickness));
+        }
+    }
+
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Private: value_for_16ths — inverse of duration_in_16ths
+// ---------------------------------------------------------------------------
+static model::chord::time value_for_16ths(unsigned len)
+{
+    switch (len)
+    {
+        case 16: return model::chord::time::WHOLE;
+        case 12: return model::chord::time::DOTTED_HALF;
+        case 8:  return model::chord::time::HALF;
+        case 6:  return model::chord::time::DOTTED_QUARTER;
+        case 4:  return model::chord::time::QUARTER;
+        case 3:  return model::chord::time::DOTTED_EIGHTH;
+        case 2:  return model::chord::time::EIGHTH;
+        case 1:
+        default: return model::chord::time::SIXTEENTH;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Private: decompose_into_valid_values
+// ---------------------------------------------------------------------------
+// Greedy largest-fits-first decomposition of a length (in sixteenth-note
+// units) into a sequence of this app's representable note values. Only
+// needed when a length isn't itself one of those values outright — e.g. a
+// 5-sixteenth remainder becomes [4, 1] (quarter tied to sixteenth). Always
+// terminates: 1 (sixteenth) is in the value set, so worst case a length
+// dissolves entirely into single sixteenths.
+static std::vector<unsigned> decompose_into_valid_values(unsigned length_16ths)
+{
+    static constexpr unsigned k_valid_desc[] = {16, 12, 8, 6, 4, 3, 2, 1};
+    std::vector<unsigned> result;
+    while (length_16ths > 0)
+    {
+        for (unsigned v : k_valid_desc)
+        {
+            if (v <= length_16ths)
+            {
+                result.push_back(v);
+                length_16ths -= v;
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Private: split_note_across_beats
+// ---------------------------------------------------------------------------
+// A note starting exactly on a beat may run for any length, crossing as
+// many further beat boundaries as it likes, with no splitting needed — a
+// half note starting on beat 1 spanning into beat 2 is completely normal.
+// The problem is only ever a note that starts OFF the beat and would then
+// reach or cross the next beat boundary, obscuring where that beat starts:
+// that gets split at the boundary, with everything from there on already
+// beat-aligned and therefore needing no further boundary-driven split
+// (though decompose_into_valid_values may still break a leftover length
+// into more than one tied piece if it isn't a single representable value).
+static std::vector<unsigned> split_note_across_beats(unsigned start, unsigned total,
+                                                     unsigned beat_16ths)
+{
+    std::vector<unsigned> pieces;
+    if (beat_16ths == 0)
+    {
+        return decompose_into_valid_values(total);  // defensive; shouldn't happen
+    }
+
+    if (start % beat_16ths != 0)
+    {
+        const unsigned next_boundary = ((start / beat_16ths) + 1) * beat_16ths;
+        const unsigned gap  = next_boundary - start;
+        const unsigned take = std::min(gap, total);
+        for (unsigned v : decompose_into_valid_values(take))
+            pieces.push_back(v);
+        start += take;
+        total -= take;
+    }
+
+    if (total > 0)
+        for (unsigned v : decompose_into_valid_values(total))
+            pieces.push_back(v);
+
+    return pieces;
+}
+
+// ---------------------------------------------------------------------------
+// Private: expand_rhythm_units
+// ---------------------------------------------------------------------------
+std::vector<bar_renderer::rhythm_unit> bar_renderer::expand_rhythm_units(
+    const std::vector<model::chord>& chords,
+    unsigned beat_16ths)
+{
+    std::vector<rhythm_unit> units;
+    unsigned position_16ths = 0;
+
+    for (std::size_t i = 0; i < chords.size(); ++i)
+    {
+        const model::chord& ch = chords[i];
+
+        // Rests, and chords with no duration set, are never split — see
+        // the header comment on expand_rhythm_units.
+        if (ch.is_rest() || !ch.duration())
+        {
+            rhythm_unit u;
+            u.chord_index = i;
+            u.piece       = ch;
+            u.first_piece = true;
+            u.tie_to_next = false;
+            units.push_back(u);
+        }
+        else
+        {
+            const unsigned total = duration_in_16ths(*ch.duration());
+            std::vector<unsigned> piece_lengths =
+                split_note_across_beats(position_16ths, total, beat_16ths);
+
+            for (std::size_t p = 0; p < piece_lengths.size(); ++p)
+            {
+                rhythm_unit u;
+                u.chord_index = i;
+                u.piece       = model::chord();
+                u.piece.number(1);  // any non-REST value; is_rest()/duration() are
+                                     // all chord_renderer's rhythm-row painting reads
+                u.piece.duration(value_for_16ths(piece_lengths[p]));
+                u.first_piece = (p == 0);
+                // Internal pieces (artifacts of the same original note) are
+                // always tied to the next piece; the last piece carries the
+                // original chord's own tie-to-the-next-CHORD flag, unchanged.
+                u.tie_to_next = (p + 1 < piece_lengths.size()) ? true : ch.is_tied();
+                units.push_back(u);
+            }
+        }
+
+        if (ch.is_rest())
+            position_16ths += ch.duration() ? duration_in_16ths(*ch.duration()) : 16;
+        else if (ch.duration())
+            position_16ths += duration_in_16ths(*ch.duration());
+    }
+
+    return units;
+}
+
+// ---------------------------------------------------------------------------
+// Private: paint_split_tie
+// ---------------------------------------------------------------------------
+// A short tie arc between two rhythm-row noteheads that are pieces of the
+// same original note (see expand_rhythm_units) — distinct from the
+// existing chord-level is_tied() arc, which lives in the number row and
+// indicates a tie between two different chords. This one arcs below the
+// noteheads (opposite the stems, which point up), the conventional side.
+void bar_renderer::paint_split_tie(QPainter& painter, qreal from_x, qreal to_x,
+                                   qreal row_bottom)
+{
+    if (to_x <= from_x)
+        return;
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(Qt::black, 1.0));
+    painter.setBrush(Qt::NoBrush);
+
+    const qreal base_y = row_bottom + 1.0;
+    const qreal bulge   = std::min(4.0, (to_x - from_x) * 0.3);
+
+    QPainterPath path;
+    path.moveTo(from_x, base_y);
+    path.quadTo((from_x + to_x) / 2.0, base_y + bulge, to_x, base_y);
+    painter.drawPath(path);
+
+    painter.restore();
 }
 
 } // namespace nashville::view

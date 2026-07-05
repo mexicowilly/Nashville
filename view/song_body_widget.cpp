@@ -1244,6 +1244,25 @@ void song_body_widget::paint_divider(QPainter& painter) const
 // ---------------------------------------------------------------------------
 // paint_line
 // ---------------------------------------------------------------------------
+// A bar's own time_sig() override, once set, is meant to hold going forward
+// exactly like a time-signature change on a printed staff — the UI only
+// paints the glyph on the bar that introduces it (see bar_renderer::paint's
+// "Paint glyphs only when this bar actually has a time sig change"), so
+// resolving what's actually in effect for beaming purposes means walking
+// backward from bar_index for the nearest override, falling back to the
+// song's default if none of the preceding bars set one either.
+model::time_signature song_body_widget::effective_time_signature(std::size_t bar_index) const
+{
+    const auto& bars = song_.bars();
+    for (std::size_t i = bar_index + 1; i-- > 0; )
+    {
+        if (bars[i].time_sig())
+            return *bars[i].time_sig();
+    }
+    return song_.time_sig();
+}
+
+// ---------------------------------------------------------------------------
 // The selection background is painted before the bar contents so the
 // glyphs stay sharp on top of it.  `first_bar_index` is the flat index
 // into song_.bars() of this line's first bar — accumulated by the
@@ -1277,7 +1296,8 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
         bar_renderer::paint(painter, bl.rect, *bl.bar, fonts_, line.is_duration_mode,
                             line.has_articulation,
                             bl.draw_begin_repeat, bl.draw_end_repeat,
-                            bl.draw_beat_parens, bl.modulation_slot_w);
+                            bl.draw_beat_parens, bl.modulation_slot_w,
+                            effective_time_signature(bar_idx));
 
         if (bl.draw_beat_parens)
             paint_beat_dots(painter, bl);
@@ -3717,12 +3737,12 @@ song_body_widget::common_voltas_of_selection() const
 // expectation that a "Insert 1 before/after" menu action behaves like a
 // structural-change command (akin to Delete or End line) rather than an
 // edit-affordance opener: the action either succeeds visibly, or
-// nothing changes.  The new bar is left selected so a follow-up click
-// (or any Bar-menu action) acts on it without an extra step; clicking
-// it opens the inline editor via the existing double-click path.  An
-// empty bar carries a small reserved chord-slot width
-// (bar_renderer::k_empty_bar_chord_slot_w) so it reads as a recognisable
-// column even before chords are entered.
+// nothing changes.  The new bar is left selected, and its inline editor
+// is opened immediately (see edit_bar_by_index below) so the user can
+// start typing a value right away instead of having to double-click the
+// blank bar first.  An empty bar carries a small reserved chord-slot
+// width (bar_renderer::k_empty_bar_chord_slot_w) so it reads as a
+// recognisable column even before chords are entered.
 //
 // Anchor position:
 //   * "before" → at the lowest selected index N.  After insertion the
@@ -3838,16 +3858,15 @@ void song_body_widget::insert_bar_relative_to_selection(bool after)
     song_.bars(bars);
     rebuild();
 
-    // Leave the newly inserted bar selected so follow-up Bar-menu
-    // actions (e.g. Repeat or Voltas...) act on it without requiring
-    // an extra click, and so the selection background visibly marks
-    // where the bar landed.  Deliberately *do not* open an inline
-    // editor here: the user invoked a structural-change menu item, not
-    // an edit affordance, and forcing them into edit mode would steal
-    // focus from the menu they were just using.  Clicking (or
-    // double-clicking) the new bar opens the editor via the existing
-    // mouse path.
+    // Select the newly inserted bar, then drop straight into its inline
+    // editor: an empty bar is useless until it has a value, so having
+    // the user double-click it just to start typing is an unnecessary
+    // extra step.  edit_bar_by_index() re-walks the freshly-rebuilt
+    // lines_ to find pos's current rect and opens the same inline
+    // editor used by the mouse double-click path (see edit_bar), so
+    // behaviour stays consistent between the two entry points.
     select_bar_only(pos);
+    edit_bar_by_index(pos);
 }
 
 // ---------------------------------------------------------------------------

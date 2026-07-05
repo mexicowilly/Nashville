@@ -4,6 +4,9 @@
 #include "chord_renderer.hpp"
 #include <QPainter>
 #include <QRectF>
+#include <vector>
+#include <cstddef>
+#include <optional>
 
 namespace nashville::view
 {
@@ -35,6 +38,11 @@ public:
     // left / right edge of the bar.  The renderer reserves matching slot
     // widths internally (mirroring width_hint), so the chord row stays
     // visually balanced regardless of which side carries a mark.
+    // effective_time_sig: the time signature actually in effect for this
+    // bar (the song's default, or the nearest preceding bar-level override
+    // — the caller resolves that chain since bar_renderer only ever sees
+    // one bar at a time). Used purely to decide how eighth/sixteenth notes
+    // in the rhythm row group under beams; irrelevant outside duration mode.
     static void paint(QPainter& painter,
                       const QRectF& rect,
                       const model::bar& bar,
@@ -44,7 +52,8 @@ public:
                       bool draw_begin_repeat = false,
                       bool draw_end_repeat   = false,
                       bool draw_beat_parens  = false,
-                      qreal modulation_slot_w = 0.0);
+                      qreal modulation_slot_w = 0.0,
+                      const model::time_signature& effective_time_sig = model::time_signature());
 
     // Returns the y-coordinate at the vertical centre of the number row
     // for a bar laid out into `rect`.  Match this value when placing any
@@ -146,6 +155,131 @@ private:
 
     // Horizontal gap between chords within a bar
     static constexpr qreal k_inter_chord_spacing = 6.0;
+
+    // --- Beaming ---
+    //
+    // A beam_group is a contiguous run of chord indices (into
+    // bar.chords()) — start and end both inclusive — that should share a
+    // beam instead of each carrying its own eighth/sixteenth flag. Only
+    // runs of two or more notes are ever recorded here; an isolated
+    // beamable note keeps its individual flag and never appears in this
+    // list. See compute_beam_groups() for the grouping rules themselves.
+    struct beam_group
+    {
+        std::size_t start = 0;
+        std::size_t end   = 0;
+    };
+
+    // Works out how eighth/sixteenth notes in `chords` should be grouped
+    // under beams, given the beat structure implied by `ts`. Rules
+    // (confirmed with the person requesting this feature, since beaming
+    // conventions have real disagreement between sources):
+    //   - Never beam across a bar line (moot here — one call is one bar).
+    //   - Sixteenth notes are always grouped by beat: a run containing a
+    //     sixteenth is confined to the single beat it started in, and
+    //     never merges with a neighbouring beat's run, whatever that
+    //     neighbour contains.
+    //   - A run made up entirely of eighths/dotted-eighths (no sixteenth)
+    //     MAY merge with the adjacent beat's run within the same half of
+    //     the bar — e.g. beats 1+2 or 3+4 in 4/4 — giving the familiar
+    //     "four eighths under one beam" look. It never merges across the
+    //     bar's primary division (beat 2 into beat 3 in 4/4).
+    //   - A rest, or a chord with no duration set, breaks any run it
+    //     falls inside (rests are not beamed over).
+    //   - Compound meters (8-kind, count a multiple of 3 and >= 6, e.g.
+    //     6/8, 9/8, 12/8) use a dotted-quarter beat (3 eighths / 6
+    //     sixteenths) and never merge beyond that one compound beat —
+    //     that already matches "group by beat" for the sixteenth case,
+    //     and matches the standard "two groups of three" look for 6/8
+    //     eighths, so no separate merge pass is needed for them.
+    //   - The eighth-merge pass above only applies to simple meters
+    //     (quarter- or half-note beat) with an even number of beats;
+    //     odd beat counts (3/4 etc.) fall back to one group per beat,
+    //     which every source treats as always correct even where a
+    //     wider grouping would also be acceptable.
+    //   - A merge is only allowed on the same side of the bar's true
+    //     mid-point (beat_count / 2), computed directly rather than
+    //     inferred from beat_index parity — the two agree whenever
+    //     beat_count is a multiple of 4 (4/4, 8/4...), but parity alone
+    //     would incorrectly permit a merge straight across the middle
+    //     for other even beat counts (e.g. 6/4, midpoint at beat 3).
+    // beat_count_override: a bar's own number_of_beats(), when set —
+    // pickup/partial bars have a different beat count (and therefore a
+    // different mid-point) than the time signature's nominal count, even
+    // though how long one beat lasts (beat_16ths) doesn't change.
+    static std::vector<beam_group> compute_beam_groups(
+        const std::vector<model::chord>& chords,
+        const model::time_signature& ts,
+        const std::optional<unsigned>& beat_count_override = std::nullopt);
+
+    // Draws one beam (primary line, plus any secondary sixteenth-level
+    // segments/partial stubs) across the notes in `group`. `stems` holds
+    // the geometry chord_renderer::paint_rhythm handed back for every
+    // chord in the bar, indexed the same way as `chords`.
+    static void paint_beam(QPainter& painter,
+                           const std::vector<model::chord>& chords,
+                           const std::vector<chord_renderer::StemInfo>& stems,
+                           const beam_group& group);
+
+    // --- Beat-safe note splitting ---
+    //
+    // Standard notation rule: a note that doesn't start exactly on a beat
+    // may not be notated as a single symbol if doing so would extend to or
+    // across the next beat boundary — that would obscure where the next
+    // beat starts. Instead it has to be written as multiple tied notes,
+    // each confined to (or starting cleanly on) a beat. E.g. in 4/4, an
+    // eighth followed by what would naturally be a dotted quarter starting
+    // on the "and" of beat 1: the dotted quarter can't stand as one note
+    // (it would run from the and-of-1 through all of beat 2), so it's
+    // rendered as an eighth (finishing out beat 1) tied to a quarter
+    // (starting cleanly on beat 2) — the same total duration, correctly
+    // spelled. This applies per the person's direction to every beat
+    // boundary and every note value, not just the bar's mid-point.
+    //
+    // A rhythm_unit is one piece of that spelling — for a chord that
+    // doesn't need splitting (the overwhelmingly common case), a chord
+    // produces exactly one unit equal to itself.
+    struct rhythm_unit
+    {
+        std::size_t  chord_index = 0;   // which bar.chords() entry this came from
+        model::chord piece;             // synthetic chord carrying only this piece's
+                                         // duration and rest-ness — chord_renderer's
+                                         // rhythm-row painting only ever looks at
+                                         // is_rest()/duration(), so this is sufficient
+                                         // to paint it correctly standing alone
+        bool first_piece  = true;       // only the first piece of a chord is real
+                                         // enough to matter beyond the rhythm row —
+                                         // callers use this to avoid, say, re-painting
+                                         // articulations once per piece
+        bool tie_to_next  = false;      // true if a tie arc belongs between this
+                                         // unit's notehead and the next unit's
+    };
+
+    // Splits `chords` into rhythm_units, one-to-one where no splitting is
+    // needed. Rests are never split (a rest has no attack point to
+    // obscure, and this app's rests are already whole-bar-friendly via
+    // leger-line glyphs) — nor is a chord with no duration set. beat_16ths
+    // is the length of one beat, in sixteenth-note units (see
+    // compute_beam_groups for how that's derived from a time signature).
+    static std::vector<rhythm_unit> expand_rhythm_units(
+        const std::vector<model::chord>& chords,
+        unsigned beat_16ths);
+
+    // Length of one beat, in sixteenth-note units, implied by `ts` (and,
+    // for compound meters, whether count is a multiple of 3 — see
+    // compute_beam_groups's header comment). Shared by compute_beam_groups
+    // and expand_rhythm_units so the two can never disagree about where
+    // beat boundaries fall.
+    static unsigned compute_beat_16ths(const model::time_signature& ts);
+
+    // Draws a short tie arc in the rhythm row connecting two adjacent
+    // rhythm-unit noteheads that are pieces of the same original note —
+    // NOT the pre-existing chord-level is_tied() arc (that's a separate,
+    // unrelated indicator drawn in the number row for a tie between two
+    // different chords). from_x/to_x are the two noteheads' stem_x
+    // positions; row_bottom is the rhythm row's baseline.
+    static void paint_split_tie(QPainter& painter, qreal from_x, qreal to_x,
+                                qreal row_bottom);
 };
 
 } // namespace nashville::view

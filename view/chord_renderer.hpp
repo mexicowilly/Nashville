@@ -47,12 +47,33 @@ public:
                       bool is_duration_mode,
                       bool line_has_articulation);
 
+    // Geometry handed back from paint_rhythm so a caller doing beaming
+    // (bar_renderer) can connect stems across notes without recomputing
+    // this renderer's internal layout math. Only meaningful when has_stem
+    // is true (whole notes and rests have no stem).
+    struct StemInfo
+    {
+        bool  has_stem   = false;
+        qreal stem_x     = 0.0;  // x of the stem, in painter coordinates
+        qreal beam_y     = 0.0;  // y where a primary (level-1) beam sits —
+                                 // same value as the top of this note's own
+                                 // stem, i.e. where its flag would start
+        qreal notehead_h = 0.0;  // used to size beam thickness/spacing
+                                 // consistently with the notehead
+    };
+
     // Paints just the rhythmic symbol (note glyph + augmentation dot)
     // into the given rect. Called by BarRenderer for duration-mode bars.
-    static void paint_rhythm(QPainter& painter,
+    // suppress_flag: when true, skip drawing the individual eighth/sixteenth
+    // flag — the caller has decided this note is part of a beam group and
+    // will draw a shared beam across it and its neighbours instead. Has no
+    // effect on notes that wouldn't have a flag anyway (quarter and longer).
+    // Returns stem geometry so the caller can draw that beam.
+    static StemInfo paint_rhythm(QPainter& painter,
                              const QRectF& rect,
                              const model::chord& ch,
-                             const Fonts& fonts);
+                             const Fonts& fonts,
+                             bool suppress_flag = false);
 
     // Paints only the above-number articulations (staccato, push, tie) into
     // artRect, centred on number_center_x.  Called by bar_renderer for

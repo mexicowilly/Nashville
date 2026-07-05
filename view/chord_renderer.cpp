@@ -147,10 +147,11 @@ void chord_renderer::paint(QPainter& painter,
 // ---------------------------------------------------------------------------
 // Public: paintRhythm
 // ---------------------------------------------------------------------------
-void chord_renderer::paint_rhythm(QPainter& painter,
+chord_renderer::StemInfo chord_renderer::paint_rhythm(QPainter& painter,
                                   const QRectF& rect,
                                   const model::chord& ch,
-                                  const Fonts& fonts)
+                                  const Fonts& fonts,
+                                  bool suppress_flag)
 {
     // Rests render in the rhythm row regardless of whether a duration is set
     // (no duration -> whole rest), so they're handled before the duration
@@ -158,11 +159,11 @@ void chord_renderer::paint_rhythm(QPainter& painter,
     if (ch.is_rest())
     {
         paint_rest(painter, rect, ch, fonts);
-        return;
+        return StemInfo{};
     }
 
     if (!ch.duration())
-        return;
+        return StemInfo{};
 
     const bool dotted  = is_dotted(*ch.duration());
     const bool is_half = (*ch.duration() == model::chord::time::HALF ||
@@ -231,14 +232,19 @@ void chord_renderer::paint_rhythm(QPainter& painter,
     }
 
     // Flag glyph drawn at the top of the stem, scaled to fit within the stem length.
-    // flag8thUp = U+E240, flag16thUp = U+E242.
+    // flag8thUp = U+E240, flag16thUp = U+E242. Skipped when this note is part
+    // of a beam group — bar_renderer draws a shared beam across the group
+    // instead, in the same visual position a flag would otherwise occupy.
     QString flag_glyph;
-    switch (*ch.duration())
+    if (!suppress_flag)
     {
-        case model::chord::time::EIGHTH:
-        case model::chord::time::DOTTED_EIGHTH:  flag_glyph = "\uE240"; break;
-        case model::chord::time::SIXTEENTH:      flag_glyph = "\uE242"; break;
-        default: break;
+        switch (*ch.duration())
+        {
+            case model::chord::time::EIGHTH:
+            case model::chord::time::DOTTED_EIGHTH:  flag_glyph = "\uE240"; break;
+            case model::chord::time::SIXTEENTH:      flag_glyph = "\uE242"; break;
+            default: break;
+        }
     }
     if (!flag_glyph.isEmpty())
     {
@@ -272,6 +278,13 @@ void chord_renderer::paint_rhythm(QPainter& painter,
     }
 
     painter.restore();
+
+    StemInfo info;
+    info.has_stem   = !is_whole;
+    info.stem_x     = stem_x;
+    info.beam_y     = stem_y1;
+    info.notehead_h = notehead_h;
+    return info;
 }
 
 // ---------------------------------------------------------------------------

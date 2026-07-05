@@ -314,6 +314,14 @@ private:
     void paint_line(QPainter& painter, const line_layout& line,
                     std::size_t first_bar_index,
                     bool show_selection = true) const;
+    // Resolves the time signature actually in effect at song_.bars()[bar_index]:
+    // that bar's own override if it has one, else the nearest preceding
+    // bar's override, else the song's default. A bar-level time_sig()
+    // persists forward until the next bar that sets its own, the same way
+    // a time signature change on a printed staff holds until the next one —
+    // bar_renderer only ever sees one bar at a time, so this chain has to
+    // be resolved by whoever walks the bars in order.
+    model::time_signature effective_time_signature(std::size_t bar_index) const;
     void paint_section_label(QPainter& painter,
                            const QString& label,
                            const QRectF& col_rect) const;

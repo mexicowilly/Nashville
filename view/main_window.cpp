@@ -19,6 +19,8 @@
 #include <QPainterPath>
 #include <QEnterEvent>
 #include <QMouseEvent>
+#include <QResizeEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
@@ -194,17 +196,23 @@ protected:
         const qreal base = height() - 1.0;   // y of the foot separator
 
         // 1) Foot separator, broken under the current tab so that tab connects
-        //    to the pane and every other tab sits below an unbroken line.
-        p.setPen(QPen(k_outline, 1.0));
-        if (sel < 0)
+        //    to the pane and every other tab sits below an unbroken line. With
+        //    no songs open there's nothing for a divider to separate — the
+        //    empty tab-bar row (just the hamburger corner widget) should read
+        //    as blank, not as a stray horizontal rule.
+        if (count() > 0)
         {
-            p.drawLine(QPointF(0, base), QPointF(width(), base));
-        }
-        else
-        {
-            const QRect sr = tabRect(sel);
-            p.drawLine(QPointF(0, base),            QPointF(sr.left(), base));
-            p.drawLine(QPointF(sr.left() + sr.width(), base), QPointF(width(), base));
+            p.setPen(QPen(k_outline, 1.0));
+            if (sel < 0)
+            {
+                p.drawLine(QPointF(0, base), QPointF(width(), base));
+            }
+            else
+            {
+                const QRect sr = tabRect(sel);
+                p.drawLine(QPointF(0, base),            QPointF(sr.left(), base));
+                p.drawLine(QPointF(sr.left() + sr.width(), base), QPointF(width(), base));
+            }
         }
 
         // 2) Inactive tabs: optional hover fill, then the label. No borders.
@@ -271,9 +279,22 @@ private:
 
         // Fill the body white (close along the baseline), then stroke the open
         // outline so the bottom edge stays seamless with the pane.
+        //
+        // The fill is patched an extra 1px past B before painting: QPainter's
+        // rasterizer treats a shape edge sitting exactly on an integer
+        // coordinate as excluding that pixel row, so filling only out to B
+        // left row B itself (the widget's very last pixel row, shared with
+        // the foot-separator line drawn for the other tabs) uncovered —
+        // showing the raw widget background through as a 1px gray seam
+        // right under the active tab, contradicting the whole point of
+        // leaving this edge open (a seamless join with the pane below).
+        // The stroked outline still uses the un-patched `path`, so the
+        // visible flare shape/line work is completely unaffected — only
+        // the invisible interior fill is extended.
         QPainterPath fill = path;
         fill.closeSubpath();
         p.fillPath(fill, Qt::white);
+        p.fillRect(QRectF(L, B, R - L, 1.0), Qt::white);
         p.strokePath(path, QPen(k_outline, 1.0));
 
         paint_label(p, i, k_text_active);
@@ -292,8 +313,28 @@ private:
 };
 
 // QTabWidget::setTabBar is protected, so installing a custom bar has to happen
-// from inside a subclass.  This thin wrapper exists only to do that — every
-// other behaviour is plain QTabWidget.
+// from inside a subclass.  Beyond that, this class also papers over a Qt
+// layout quirk: QTabWidget sizes its tab bar to the bar's own sizeHint()
+// (i.e. just wide enough for the tabs, like North/South tab bars without
+// documentMode do) rather than stretching it to fill the row, even though
+// individual tabs are left-aligned (setExpanding(false)) and there's a
+// visible gap to their right above the pane. Because chrome_tab_bar's
+// paintEvent draws its foot separator out to its own width() (see above),
+// a too-narrow bar left that separator line stopping dead at the last tab
+// instead of continuing across the rest of the strip to match the pane
+// below it.
+//
+// An earlier version of this fix forced the tab bar itself wider by calling
+// setGeometry() from a resize handler / event filter whenever Qt shrank it
+// back. That fought Qt's own QTabBar layout code for control of the same
+// geometry and turned out to be racy: depending on timing, QTabBar would
+// sometimes respond by redistributing the extra width evenly across all
+// tabs — exactly the "expanding" look setExpanding(false) is meant to
+// prevent, and confirmed to reproduce inconsistently across runs with an
+// identical tab set. Never touching tabBar()'s geometry avoids that fight
+// entirely: we leave the bar at whatever (narrower) size Qt gives it, and
+// simply paint the missing stretch of separator line ourselves, directly
+// on the tab widget, in the untouched strip to the bar's right.
 class chrome_tab_widget : public QTabWidget
 {
 public:
@@ -302,6 +343,34 @@ public:
     {
         setTabBar(new chrome_tab_bar(this));
     }
+
+protected:
+    void paintEvent(QPaintEvent* e) override
+    {
+        QTabWidget::paintEvent(e);
+
+        // Continue the tab bar's own foot separator (see chrome_tab_bar::
+        // paintEvent) across whatever width Qt left unclaimed to the bar's
+        // right. k_outline here must stay in sync with chrome_tab_bar's
+        // private k_outline of the same name/value. Skip entirely with no
+        // songs open — chrome_tab_bar itself draws no separator in that
+        // case (nothing to divide), so extending one here would leave a
+        // stray line with no tab it's separating anything from.
+        QTabBar* bar = tabBar();
+        if (!bar || bar->count() == 0)
+            return;
+        const QRect br = bar->geometry();
+        const int   from_x = br.right() + 1;
+        if (from_x < width())
+        {
+            QPainter p(this);
+            p.setPen(QPen(k_outline, 1.0));
+            p.drawLine(QPointF(from_x, br.bottom()), QPointF(width(), br.bottom()));
+        }
+    }
+
+private:
+    inline static const QColor k_outline{208, 208, 208};
 };
 
 main_window::main_window(database& db, QWidget* parent)
