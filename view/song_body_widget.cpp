@@ -1884,6 +1884,15 @@ void song_body_widget::mouseMoveEvent(QMouseEvent* event)
                                k_max_margin_width);
         if (new_margin != margin_width_)
         {
+            // Push the pre-drag state exactly once per gesture, on the
+            // first move that actually changes anything — a press
+            // followed by a release with no net movement should not
+            // leave a no-op entry on the undo stack. margin_width_
+            // still equalling drag_start_margin_ is how we know no
+            // change has landed yet for this drag (nothing else
+            // mutates margin_width_ while dragging_divider_ is set).
+            if (margin_width_ == drag_start_margin_)
+                push_undo_snapshot();
             margin_width_ = new_margin;
             song_.margin_width(new_margin);
             rebuild();
@@ -2284,6 +2293,7 @@ void song_body_widget::delete_selection()
 {
     if (selected_bars_.empty())
         return;
+    push_undo_snapshot();
     std::vector<model::bar> bars_copy = song_.bars();
 
     // Erase from the highest index down so each erase doesn't shift
@@ -2341,6 +2351,8 @@ void song_body_widget::move_selected_bars(std::size_t insert_at, bool force_new_
     if (!extends_line && !force_new_line
         && insert_at < bars.size() && selected_bars_.count(insert_at))
         return;
+
+    push_undo_snapshot();
 
     const auto line_of = line_index_of_each_bar();
 
@@ -2508,6 +2520,8 @@ void song_body_widget::paste_clipboard()
     if (pasted.empty())
         return;
 
+    push_undo_snapshot();
+
     // Insertion point in the destination vector.
     std::size_t insert_at = (insert_after == static_cast<std::size_t>(-1))
                           ? 0
@@ -2581,6 +2595,76 @@ void song_body_widget::paste_clipboard()
 }
 
 // ---------------------------------------------------------------------------
+// Undo / redo
+// ---------------------------------------------------------------------------
+// See the member comments in the header for the overall design (value
+// snapshots of model::song rather than a command pattern, and why
+// restore goes through setters instead of whole-object assignment).
+void song_body_widget::push_undo_snapshot()
+{
+    undo_stack_.push_back(song_);
+    if (undo_stack_.size() > k_max_undo_depth)
+        undo_stack_.erase(undo_stack_.begin());
+    redo_stack_.clear();
+}
+
+void song_body_widget::restore_snapshot(const model::song& snap)
+{
+    song_.bars(snap.bars());
+    song_.annotes().load(snap.annotes().text_boxes(), snap.annotes().connectors());
+    song_.key(snap.key());
+    song_.tempo(snap.tempo());
+    song_.time_sig(snap.time_sig());
+    song_.bars_per_line(snap.bars_per_line());
+    song_.margin_width(snap.margin_width());
+    // song::name() throws on an empty string (a fresh, never-titled
+    // song legitimately has one — see song::song()'s default
+    // constructor, which clears name_ directly to bypass this same
+    // setter). Only a snapshot taken before the user ever entered a
+    // title can carry an empty name — and a title, once set, is never
+    // clearable back to empty in normal use (edit_title rejects empty
+    // commits) — so skipping the setter in that one case is a no-op
+    // for every reachable state except that pristine one, and it's
+    // what keeps undo from throwing out from under the caller there.
+    if (!snap.name().empty())
+        song_.name(snap.name());
+    song_.meta() = snap.meta();
+}
+
+// Undo/redo intentionally don't touch selected_bars_/selection_anchor_:
+// leaving whatever was selected in place (clamped by the usual
+// bounds-checks the selection-driven functions already do against
+// however many bars now exist) is simpler than trying to guess a
+// meaningful selection for an arbitrary past state, and a stale
+// out-of-range selection is harmless — every selection-consuming
+// function already tolerates indices past the current bar count.
+void song_body_widget::apply_undo()
+{
+    if (undo_stack_.empty())
+        return;
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/false);
+    redo_stack_.push_back(song_);
+    model::song snap = std::move(undo_stack_.back());
+    undo_stack_.pop_back();
+    restore_snapshot(snap);
+    rebuild();
+}
+
+void song_body_widget::apply_redo()
+{
+    if (redo_stack_.empty())
+        return;
+    if (active_editor_)
+        close_line_editor(/*commit_value=*/false);
+    undo_stack_.push_back(song_);
+    model::song snap = std::move(redo_stack_.back());
+    redo_stack_.pop_back();
+    restore_snapshot(snap);
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------
 // Edit handlers
 // ---------------------------------------------------------------------------
 
@@ -2609,6 +2693,8 @@ void song_body_widget::edit_title()
             if (trimmed.isEmpty())
                 return false;  // revert: leave the model name untouched
             const bool changed = (trimmed.toStdString() != song_.name());
+            if (changed)
+                push_undo_snapshot();
             song_.name(trimmed.toStdString());
             rebuild();
             if (changed)
@@ -2642,6 +2728,7 @@ void song_body_widget::edit_key()
             QChar first = trimmed.at(0).toUpper();
             if (first < QChar('A') || first > QChar('H'))
                 return false;  // revert
+            push_undo_snapshot();
             song_.key(trimmed.toStdString());
             rebuild();
             return true;
@@ -2676,6 +2763,7 @@ void song_body_widget::edit_time_signature()
                 // editor, leaving the previous time signature unchanged).
                 return false;
             }
+            push_undo_snapshot();
             song_.time_sig(new_ts);
             rebuild();
             return true;
@@ -2711,6 +2799,7 @@ void song_body_widget::edit_tempo_glyph()
         connect(a, &QAction::triggered, this, [this, v]() {
             auto [bpm2, prev_unit] = song_.tempo();
             (void)prev_unit;
+            push_undo_snapshot();
             song_.tempo({bpm2, v});
             rebuild();
         });
@@ -2743,6 +2832,7 @@ void song_body_widget::edit_tempo_bpm()
                 // Invalid input — silently revert.
                 return false;
             }
+            push_undo_snapshot();
             song_.tempo({static_cast<unsigned>(v), beat_unit});
             rebuild();
             return true;
@@ -2836,6 +2926,7 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
             {
                 return false;  // chart returns to exact pre-click state
             }
+            push_undo_snapshot();
 
             // Apply per-kind is_eol bookkeeping, then insert.  Clamp
             // insert_at defensively in case the model changed under us
@@ -2949,6 +3040,7 @@ void song_body_widget::edit_bar(std::size_t bar_index, const QRectF& bar_rect)
                 return false;  // chart returns to exact pre-click state
             }
 
+            push_undo_snapshot();
             std::vector<model::bar> bars_copy = song_.bars();
             bars_copy[bar_index] = std::move(staged);
             song_.bars(bars_copy);
@@ -3151,6 +3243,7 @@ void song_body_widget::edit_section(std::size_t line_index)
             // assignment can't throw, but staging keeps the code shape
             // consistent and leaves room for future validation without
             // restructuring.
+            push_undo_snapshot();
             std::vector<model::bar> bars_copy = song_.bars();
             bars_copy[target_song_index].section(trimmed.toStdString());
             song_.bars(bars_copy);
@@ -3618,6 +3711,7 @@ void song_body_widget::apply_repeat_to_selection(model::bar::repeat_status st)
     }
     if (!any_changed)
         return;
+    push_undo_snapshot();
     song_.bars(bars_copy);
     rebuild();
 }
@@ -3642,6 +3736,7 @@ void song_body_widget::apply_voltas_to_selection(const std::set<unsigned>& volta
     }
     if (!any_changed)
         return;
+    push_undo_snapshot();
     song_.bars(bars_copy);
     rebuild();
 }
@@ -3672,6 +3767,7 @@ void song_body_widget::apply_modulation_to_selection(const std::string& mod)
     }
     if (!any_changed)
         return;
+    push_undo_snapshot();
     song_.bars(bars_copy);
     rebuild();
 }
@@ -3727,6 +3823,7 @@ void song_body_widget::apply_end_line_to_selection()
     }
     if (!any_changed)
         return;
+    push_undo_snapshot();
     song_.bars(bars_copy);
     rebuild();
 }
@@ -3829,9 +3926,15 @@ void song_body_widget::insert_bar_relative_to_selection(bool after)
 
     // If an inline editor happens to be open (defensive — menu actions
     // typically take focus away from any editor first), commit before
-    // we mutate the model out from under it.
+    // we mutate the model out from under it. This must happen BEFORE
+    // push_undo_snapshot() below: closing the editor may itself commit
+    // an edit (and push its own snapshot), and snapshotting first here
+    // would capture a stale pre-that-edit state, letting a later undo
+    // skip over it.
     if (active_editor_)
         close_line_editor(/*commit_value=*/true);
+
+    push_undo_snapshot();
 
     std::vector<model::bar> bars = song_.bars();
     const std::size_t pos = std::min(insert_at, bars.size());
@@ -3940,6 +4043,7 @@ void song_body_widget::apply_beats_to_selection(std::optional<unsigned> beats)
 {
     if (selected_bars_.empty())
         return;
+    push_undo_snapshot();
     for (std::size_t i : selected_bars_)
         const_cast<model::bar&>(song_.bars()[i]).number_of_beats(beats);
     rebuild();
@@ -4124,6 +4228,7 @@ void song_body_widget::apply_bars_per_line(unsigned n)
     if (n == 0)
         return;  // 0 bars per line is meaningless; ignore defensively
 
+    push_undo_snapshot();
     song_.bars_per_line(n);
 
     std::vector<model::bar> bars = song_.bars();

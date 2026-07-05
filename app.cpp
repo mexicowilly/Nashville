@@ -107,6 +107,14 @@ app::app(int argc, char* argv[])
     main_window_ = new view::main_window(*db_);
     vl->addWidget(main_window_);
 
+    // Let main_window intercept the top-level window's close event so
+    // it can guard against quitting with unsaved in-memory content —
+    // see main_window::eventFilter for the full rationale. This covers
+    // File > Exit, the window's own close button, and OS-level quit
+    // (e.g. Cmd+Q) uniformly, since all of them arrive here as the
+    // same QEvent::Close on main_win_.
+    main_win_.installEventFilter(main_window_);
+
     wire_bar_menu();
     wire_file_menu();
     wire_song_menu();
@@ -240,6 +248,26 @@ void app::wire_bar_menu()
     nashville_win_.actionPaste->setShortcut(QKeySequence::Paste);
     QObject::connect(nashville_win_.actionPaste, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->apply_paste_after_selection(); });
+
+    // Undo/Redo use the platform-standard sequences too (Ctrl+Z, and
+    // Ctrl+Shift+Z or Ctrl+Y depending on platform for redo). Same
+    // WindowShortcut/ShortcutOverride reasoning as Cut/Copy/Paste above:
+    // an open QLineEdit gets first claim on Ctrl+Z for its own text-undo
+    // before this ever sees it, so undoing a bar-content edit and
+    // undoing a few characters just typed into an open editor don't
+    // fight over the same keystroke.
+    nashville_win_.actionUndo->setShortcut(QKeySequence::Undo);
+    QObject::connect(nashville_win_.actionUndo, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->apply_undo(); });
+    nashville_win_.actionRedo->setShortcut(QKeySequence::Redo);
+    QObject::connect(nashville_win_.actionRedo, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->apply_redo(); });
+    QObject::connect(nashville_win_.menuEdit, &QMenu::aboutToShow,
+        [this]() {
+            auto* b = current_body();
+            nashville_win_.actionUndo->setEnabled(b && b->can_undo());
+            nashville_win_.actionRedo->setEnabled(b && b->can_redo());
+        });
 
     // Sync the Bar menu's enabled state and the Repeat submenu's
     // checkmarks lazily on aboutToShow.  Most Bar-menu items require a

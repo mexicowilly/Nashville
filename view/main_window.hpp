@@ -140,6 +140,24 @@ signals:
     // actions to the new visible song's widgets.
     void current_tab_changed(song_tab* tab);
 
+protected:
+    // Installed by app as an event filter on the top-level QMainWindow
+    // (main_window doesn't own that window — app does — so this is the
+    // one place main_window reaches outside its own widget tree).
+    // Intercepts QEvent::Close to guard against the same data-loss gap
+    // save_as()/prompt_open() already guard against: a fresh session's
+    // database lives entirely in memory (see database::database()'s
+    // default ":memory:" backing) until the user explicitly saves, so
+    // quitting without ever doing that silently discards everything
+    // with no warning. Mirrors prompt_open()'s existing Save/Discard
+    // framing rather than introducing a new three-way Save/Discard/
+    // Cancel pattern modal_overlay doesn't support: ignore the close,
+    // ask, and either re-issue a close that goes through once resolved
+    // (Save or Discard) or do nothing (Esc / click outside — same
+    // "changed my mind" semantics modal_overlay::confirm already gives
+    // every other Yes/No prompt in this app).
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     // Tab close handler.  Flushes the closing tab, drops it from
     // the QTabWidget, refreshes the side panel (since save may
@@ -156,6 +174,15 @@ private:
     // Linear scan — number of open tabs is small (a handful at
     // most), so hashing is overkill.
     int find_tab_by_name(const std::string& name) const;
+
+    // True iff the live database is still the default in-memory
+    // session (see database::database()'s ":memory:" default) AND it
+    // has something in it worth not silently discarding. An empty
+    // in-memory session has nothing at risk; a file-backed one is
+    // already durable. Shared by prompt_open() (before replacing the
+    // workspace) and eventFilter() (before quitting) so both apply the
+    // exact same rule for "is there unsaved scratch work right now."
+    bool has_unsaved_scratch() const;
 
     // Reflect the current database file (or "Untitled" when in memory) in
     // the top-level window title.  Called after a successful save.
@@ -176,6 +203,13 @@ private:
     // placement) renders QDialog positioning unreliable.  See
     // modal_overlay.hpp for the full rationale.
     modal_overlay* overlay_   = nullptr;
+
+    // Set once the user has resolved the quit-confirmation prompt
+    // (Saved, or explicitly chose Discard). eventFilter re-issues a
+    // close() on the watched window to let it actually go through;
+    // this flag is what stops that second close from re-triggering
+    // the same prompt.
+    bool quit_confirmed_ = false;
 };
 
 } // namespace nashville::view

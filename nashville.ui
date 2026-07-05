@@ -34,6 +34,13 @@
     <addaction name="separator"/>
     <addaction name="actionExit"/>
    </widget>
+   <widget class="QMenu" name="menuEdit">
+    <property name="title">
+     <string>Edit</string>
+    </property>
+    <addaction name="actionUndo"/>
+    <addaction name="actionRedo"/>
+   </widget>
    <widget class="QMenu" name="menuPlaylist">
     <property name="title">
      <string>Playlist</string>
@@ -97,6 +104,7 @@
     <addaction name="menuTextSize"/>
    </widget>
    <addaction name="menuFile"/>
+   <addaction name="menuEdit"/>
    <addaction name="menuPlaylist"/>
    <addaction name="menuSong"/>
    <addaction name="menuBar"/>
@@ -129,6 +137,16 @@
   <action name="actionExit">
    <property name="text">
     <string>Exit</string>
+   </property>
+  </action>
+  <action name="actionUndo">
+   <property name="text">
+    <string>Undo</string>
+   </property>
+  </action>
+  <action name="actionRedo">
+   <property name="text">
+    <string>Redo</string>
    </property>
   </action>
   <action name="actionRepeat">

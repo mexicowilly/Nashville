@@ -849,15 +849,57 @@ bool main_window::save_as()
     return true;
 }
 
+bool main_window::has_unsaved_scratch() const
+{
+    return db_.in_memory() &&
+           !(db_.select_song_names().empty() && db_.select_playlist_names().empty());
+}
+
+// ---------------------------------------------------------------------------
+// eventFilter — quit-confirmation guard
+// ---------------------------------------------------------------------------
+// See the header comment for why this lives here (main_window owns the
+// save/discard business logic) despite watching an object (the
+// top-level QMainWindow) it doesn't itself own.
+bool main_window::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::Close && !quit_confirmed_)
+    {
+        // Flush first so a song created (or edited) in the last second
+        // — before its debounced autosave has fired, and so possibly
+        // not in the database yet at all — is accounted for below.
+        // Without this, a brand-new song could read as "nothing to
+        // lose" simply because it hasn't been inserted yet.
+        flush_all_tabs();
+
+        if (has_unsaved_scratch())
+        {
+            event->ignore();
+            overlay_->confirm(
+                tr("Quit Nashville"),
+                tr("Your work isn't saved to a file yet. "
+                   "Save it before quitting?"),
+                [this, watched](bool save_first) {
+                    if (save_first && !save_as())
+                        return;  // cancelled the save dialog, or it
+                                 // failed — stay open either way
+                    quit_confirmed_ = true;
+                    if (auto* w = qobject_cast<QWidget*>(watched))
+                        w->close();
+                });
+            return true;  // consumed: don't let the close proceed yet
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void main_window::prompt_open()
 {
     // Decide whether the current workspace needs saving before we replace it.
     // Only an *in-memory* session with content is at risk: a file-backed
     // database is already durable (we flush it below), and an empty scratch
     // session has nothing to lose.
-    const bool unsaved_scratch =
-        db_.in_memory() &&
-        !(db_.select_song_names().empty() && db_.select_playlist_names().empty());
+    const bool unsaved_scratch = has_unsaved_scratch();
 
     if (unsaved_scratch)
     {

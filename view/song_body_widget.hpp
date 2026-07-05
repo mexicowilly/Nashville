@@ -260,6 +260,20 @@ public:
     // paste_clipboard() for the full rule.
     void apply_paste_after_selection() { paste_clipboard(); }
 
+    // --- Undo / redo ---
+    // Covers bar content and structure (chords, insert/delete, cut/
+    // paste, drag-reorder, repeat/voltas/custom-beats/modulation/
+    // end-line, section labels) and the song header fields edited in
+    // this widget (title, key, tempo, time signature, bars-per-line,
+    // margin width). Annotation edits (text boxes/connectors) are a
+    // separate, not-yet-covered history — see push_undo_snapshot()'s
+    // comment for why. Public so the menubar's "Edit > Undo/Redo"
+    // actions (and their Ctrl+Z/Shift+Ctrl+Z shortcuts) can drive it.
+    void apply_undo();
+    void apply_redo();
+    bool can_undo() const { return !undo_stack_.empty(); }
+    bool can_redo() const { return !redo_stack_.empty(); }
+
     // Whether the clipboard has anything to paste. Used to gate the
     // enabled state of the Paste menu/context-menu items.
     bool has_clipboard() const { return !clipboard_.empty(); }
@@ -754,6 +768,51 @@ private:
     void delete_selection();    // remove selected bars from the song
     void paste_clipboard();     // insert clipboard after last selected bar
                                 // (or at song end if no selection)
+
+    // --- Undo / redo ---
+    // Value-snapshot history rather than a command pattern: songs are
+    // small (a handful of bars/attributes), so copying the whole
+    // model::song on every edit is cheap, and it means every mutation
+    // site needs one line (push_undo_snapshot()) instead of a
+    // hand-written inverse. Snapshots are plain data copies, never
+    // installed as anyone's live song — same idea as song_tab's
+    // last_saved_ baseline.
+    //
+    // Deliberately NOT covered yet: annotation edits (text boxes /
+    // connectors). Those mutate model::annotations directly through
+    // annotation_layer's live reference rather than through a
+    // song_-level setter, so they need their own hook points; folding
+    // them in is a follow-up, not part of this pass.
+    //
+    // Capped so a very long editing session can't grow this
+    // unboundedly; dropping the oldest entry when full just narrows
+    // how far back undo can reach, which is an acceptable trade for
+    // bounded memory.
+    static constexpr std::size_t k_max_undo_depth = 200;
+    std::vector<model::song> undo_stack_;
+    std::vector<model::song> redo_stack_;
+
+    // Snapshots the current song_ onto undo_stack_ and clears
+    // redo_stack_ (a fresh edit invalidates whatever redo history
+    // existed). Called at the start of every mutating operation in
+    // scope for undo — right after that operation's own "would this
+    // be a no-op" guards, so cancelled edits (empty input, parse
+    // failure, no actual change) never push a dead snapshot.
+    void push_undo_snapshot();
+
+    // Applies every content field a snapshot carries onto the live
+    // song_ via its normal setters (bars(), annotes().load(), key(),
+    // tempo(), time_sig(), bars_per_line(), margin_width(), name(),
+    // meta()) — never by assigning *song_ wholesale. A whole-object
+    // assignment would also overwrite annotations_'s view-installed
+    // anchor_resolver (a std::function captured against `this`), and
+    // while that's usually harmless (later snapshots carry a copy of
+    // the same live resolver), an early snapshot taken before the
+    // resolver was installed would silently null it out. Routing
+    // through the setters — same as annotations::load() already does
+    // for the database's load path — sidesteps that regardless of
+    // which snapshot gets restored. Does not touch selection.
+    void restore_snapshot(const model::song& snap);
 
     void init_fonts();
     // Resolve and cache the Bravura music-font family (member music_family_).
