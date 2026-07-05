@@ -243,6 +243,27 @@ public:
         delete_selection();
     }
 
+    // --- Cut / copy / paste ---
+    // Public so the menubar's "Bar > Cut/Copy/Paste" actions (bound to
+    // the standard Ctrl+X/C/V shortcuts in app.cpp) and the right-click
+    // context menu can both drive the same clipboard_ — one
+    // implementation, multiple entry points, matching the
+    // apply_delete_to_selection pattern above. No-op when there's no
+    // selection (cut/copy) or an empty clipboard (paste).
+    void apply_copy_to_selection()  { copy_selection(); }
+    void apply_cut_to_selection()   { cut_selection(); }
+    // Inserts the clipboard's bars immediately after the
+    // highest-indexed selected bar (or at the song's end if nothing
+    // is selected). Doesn't extend that line past the song's
+    // preferred bars_per_line — overflow flows onto the following
+    // line(s) instead, same as "Insert 1 after" — see
+    // paste_clipboard() for the full rule.
+    void apply_paste_after_selection() { paste_clipboard(); }
+
+    // Whether the clipboard has anything to paste. Used to gate the
+    // enabled state of the Paste menu/context-menu items.
+    bool has_clipboard() const { return !clipboard_.empty(); }
+
     // --- Annotation tool mode ---
     // Switches the widget between bar-editing mode (the default) and one
     // of the annotation tools.  When an annotation tool is active, clicks

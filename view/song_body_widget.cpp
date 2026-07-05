@@ -2086,13 +2086,18 @@ void song_body_widget::leaveEvent(QEvent*)
 }
 
 // ---------------------------------------------------------------------------
-// keyPressEvent — Esc clears selection, Ctrl+C/X/V drive the clipboard
+// keyPressEvent — Esc clears selection
 // ---------------------------------------------------------------------------
 // Key events only arrive here when the widget has keyboard focus, which
 // we acquire on every mouse press.  When an inline editor is open the
 // editor is a child QLineEdit and consumes its own key events (including
 // Esc, via the event filter installed in open_line_editor), so the
 // shortcuts here can't fire mid-edit — exactly the right behavior.
+// Del/Backspace and Ctrl+C/X/V are handled as menubar QActions (see
+// app.cpp) rather than here — the QLineEdit's own ShortcutOverride
+// handling and the annotation layer's precedence both need to run
+// before those keys are claimed for bar-clipboard purposes, and
+// funneling everything through the QActions keeps that one path.
 void song_body_widget::keyPressEvent(QKeyEvent* event)
 {
     // Cancel an in-progress bar drag on Esc without moving anything.
@@ -2132,9 +2137,6 @@ void song_body_widget::keyPressEvent(QKeyEvent* event)
         return;
     }
 
-    const auto mods = event->modifiers();
-    const bool ctrl_only = (mods & ~Qt::KeypadModifier) == Qt::ControlModifier;
-
     if (event->key() == Qt::Key_Escape)
     {
         if (clear_selection())
@@ -2145,22 +2147,15 @@ void song_body_widget::keyPressEvent(QKeyEvent* event)
         return;
     }
 
-    if (ctrl_only && event->key() == Qt::Key_C)
-    {
-        copy_selection();
-        return;
-    }
-    if (ctrl_only && event->key() == Qt::Key_X)
-    {
-        cut_selection();
-        return;
-    }
-    if (ctrl_only && event->key() == Qt::Key_V)
-    {
-        paste_clipboard();
-        return;
-    }
-
+    // Ctrl+C/X/V are no longer handled here: they're bound as
+    // standard-shortcut QActions on the menubar (actionCopy/actionCut/
+    // actionPaste in app.cpp), same as Del/Backspace route through
+    // actionDelete instead of a case here. That keeps clipboard
+    // dispatch on one path shared by the keyboard, the Bar menu, and
+    // the right-click context menu, and it lets Qt's normal
+    // ShortcutOverride handling give an open QLineEdit (e.g. the
+    // inline bar editor) first claim on Ctrl+C/X/V for ordinary text
+    // editing.
     QWidget::keyPressEvent(event);
 }
 
@@ -2468,7 +2463,10 @@ void song_body_widget::move_selected_bars(std::size_t insert_at, bool force_new_
 // nothing is selected, append at the end of the song.  After the paste
 // the selection is set to the newly inserted bars, so the user can
 // immediately cut/copy/delete the pasted run — and Shift+click can
-// extend from it.
+// extend from it.  The pasted run respects the song's preferred
+// bars_per_line the same way "Insert 1 after" does: it doesn't extend
+// the receiving line past that cap, instead flowing the overflow onto
+// the following line(s) (see the bpl fixup below).
 void song_body_widget::paste_clipboard()
 {
     if (clipboard_.empty())
@@ -2517,6 +2515,52 @@ void song_body_widget::paste_clipboard()
     bars_copy.insert(bars_copy.begin() + static_cast<std::ptrdiff_t>(insert_at),
                      std::make_move_iterator(pasted.begin()),
                      std::make_move_iterator(pasted.end()));
+
+    // Enforce the bars_per_line cap on the line that received the
+    // pasted run, the same way insert_bar_relative_to_selection does
+    // for a single inserted bar (see its comment for the full
+    // rationale), generalized to a run of N bars instead of one.
+    // Without this, pasting a clipboard onto a line that isn't full
+    // yet would silently grow that one line past the preferred
+    // width; instead the overflow should flow onto the following
+    // line(s) — same as it would if the bars had been typed in one
+    // at a time via "Insert 1 after". A line already extended past
+    // bars_per_line before the paste (authored deliberately) is left
+    // to keep extending, matching the single-insert behavior. Pasted
+    // bars always carry is_eol == false (parse_user_input never sets
+    // it), so the forward scan below can't mistake a pasted bar for
+    // the line's real terminal.
+    const unsigned bpl = song_.bars_per_line();
+    if (bpl > 0 && insert_at < bars_copy.size())
+    {
+        std::size_t first = 0;
+        for (std::size_t i = 0; i < insert_at; ++i)
+        {
+            if (bars_copy[i].is_eol())
+                first = i + 1;
+        }
+        std::size_t last = bars_copy.size() - 1;
+        for (std::size_t i = insert_at + pasted.size(); i < bars_copy.size(); ++i)
+        {
+            if (bars_copy[i].is_eol())
+            {
+                last = i;
+                break;
+            }
+        }
+        const std::size_t line_count = last - first + 1;
+        const std::size_t orig_count = line_count - pasted.size();
+        if (orig_count <= bpl && line_count > bpl)
+        {
+            // Break the run into bpl-sized lines, like a text reflow:
+            // every bpl'th bar from `first` becomes a new line-tail,
+            // up to (but not including) `last`, which already
+            // terminates correctly on its own (existing is_eol, or
+            // it's the song's last bar).
+            for (std::size_t boundary = first + bpl - 1; boundary < last; boundary += bpl)
+                bars_copy[boundary].is_eol(true);
+        }
+    }
 
     song_.bars(bars_copy);
 
@@ -4197,6 +4241,33 @@ void song_body_widget::show_bar_context_menu(const QPoint& global_pos)
     delete_act->setShortcut(QKeySequence(Qt::Key_Delete));
     connect(delete_act, &QAction::triggered, this, [this]() {
         apply_delete_to_selection();
+    });
+    menu.addSeparator();
+
+    // Cut/Copy/Paste mirror the menubar's Bar > Cut/Copy/Paste actions
+    // (and their Ctrl+X/C/V shortcuts) so right-clicking a selection
+    // offers the same clipboard operations as the keyboard and the
+    // menubar. contextMenuEvent has already made sure the right-clicked
+    // bar is part of the selection by the time we get here, so Cut/Copy
+    // always have something to act on. Paste is gated on the clipboard
+    // actually holding something, and — matching the keyboard/menubar
+    // behavior — inserts after the highest-indexed selected bar, i.e.
+    // right after the bar that was right-clicked.
+    QAction* cut_act = menu.addAction(tr("Cut"));
+    cut_act->setShortcut(QKeySequence::Cut);
+    connect(cut_act, &QAction::triggered, this, [this]() {
+        apply_cut_to_selection();
+    });
+    QAction* copy_act = menu.addAction(tr("Copy"));
+    copy_act->setShortcut(QKeySequence::Copy);
+    connect(copy_act, &QAction::triggered, this, [this]() {
+        apply_copy_to_selection();
+    });
+    QAction* paste_act = menu.addAction(tr("Paste"));
+    paste_act->setShortcut(QKeySequence::Paste);
+    paste_act->setEnabled(has_clipboard());
+    connect(paste_act, &QAction::triggered, this, [this]() {
+        apply_paste_after_selection();
     });
     menu.addSeparator();
 

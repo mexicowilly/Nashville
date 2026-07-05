@@ -224,9 +224,28 @@ void app::wire_bar_menu()
     QObject::connect(nashville_win_.actionDelete, &QAction::triggered,
         [this]() { if (auto* b = current_body()) b->apply_delete_to_selection(); });
 
+    // Cut/Copy/Paste use the platform-standard sequences (Ctrl+X/C/V,
+    // or their platform equivalents) via QKeySequence's standard-key
+    // overloads, same idea as actionPrint's QKeySequence::Print below.
+    // WindowShortcut context (the QAction default) means these fire no
+    // matter which tab is focused, and Qt's ShortcutOverride mechanism
+    // lets an open QLineEdit (e.g. the inline bar editor) claim
+    // Ctrl+C/X/V for ordinary text editing before these ever see it.
+    nashville_win_.actionCut->setShortcut(QKeySequence::Cut);
+    QObject::connect(nashville_win_.actionCut, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->apply_cut_to_selection(); });
+    nashville_win_.actionCopy->setShortcut(QKeySequence::Copy);
+    QObject::connect(nashville_win_.actionCopy, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->apply_copy_to_selection(); });
+    nashville_win_.actionPaste->setShortcut(QKeySequence::Paste);
+    QObject::connect(nashville_win_.actionPaste, &QAction::triggered,
+        [this]() { if (auto* b = current_body()) b->apply_paste_after_selection(); });
+
     // Sync the Bar menu's enabled state and the Repeat submenu's
-    // checkmarks lazily on aboutToShow.  All Bar-menu items require a
-    // selection AND an open tab; we gate on both.
+    // checkmarks lazily on aboutToShow.  Most Bar-menu items require a
+    // selection AND an open tab; we gate on both. Paste is the
+    // exception — it only needs a non-empty clipboard, since pasting
+    // with nothing selected appends at the end of the song.
     QObject::connect(nashville_win_.menuBar, &QMenu::aboutToShow,
         [this]() {
             auto* b = current_body();
@@ -239,6 +258,9 @@ void app::wire_bar_menu()
             nashville_win_.actionCustomBeats->setEnabled(sel);
             nashville_win_.actionModulation->setEnabled(sel);
             nashville_win_.actionDelete->setEnabled(sel);
+            nashville_win_.actionCut->setEnabled(sel);
+            nashville_win_.actionCopy->setEnabled(sel);
+            nashville_win_.actionPaste->setEnabled(b && b->has_clipboard());
         });
 
     QObject::connect(nashville_win_.menuRepeat, &QMenu::aboutToShow,

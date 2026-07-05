@@ -69,6 +69,11 @@
     <addaction name="actionInsertBefore"/>
     <addaction name="actionInsertAfter"/>
     <addaction name="actionEndLine"/>
+    <addaction name="separator"/>
+    <addaction name="actionCut"/>
+    <addaction name="actionCopy"/>
+    <addaction name="actionPaste"/>
+    <addaction name="separator"/>
     <addaction name="actionDelete"/>
     <addaction name="separator"/>
     <addaction name="menuRepeat"/>
@@ -180,6 +185,21 @@
   <action name="actionDelete">
    <property name="text">
     <string>Delete</string>
+   </property>
+  </action>
+  <action name="actionCut">
+   <property name="text">
+    <string>Cut</string>
+   </property>
+  </action>
+  <action name="actionCopy">
+   <property name="text">
+    <string>Copy</string>
+   </property>
+  </action>
+  <action name="actionPaste">
+   <property name="text">
+    <string>Paste</string>
    </property>
   </action>
   <action name="actionInsertTextBox">
