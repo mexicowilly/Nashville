@@ -25,6 +25,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QStandardPaths>
+#include <QDateTime>
+#include <QDate>
 #include <algorithm>
 #include <utility>
 
@@ -545,56 +547,122 @@ main_window::main_window(database& db, QWidget* parent)
 
 namespace
 {
-// Case-insensitive compare of two stored text values.  Reused for every sort
-// field: plain text sorts naturally, and the date columns are ISO 8601, which
-// sorts chronologically as text — so one comparator covers them all.
+// Case-insensitive compare of two text values.  Used for every field that's
+// naturally a string: name, performer, album, notes, and the authors list
+// once joined into one line.
 int ci_compare(const std::string& a, const std::string& b)
 {
     return QString::fromStdString(a)
         .compare(QString::fromStdString(b), Qt::CaseInsensitive);
 }
 
-// Map a sort token (from side_panel's dropdown) to the song_summary field it
-// orders by.  Keep these tokens in step with k_sort_options in side_panel.cpp.
-const std::string& sort_field(const song_summary& s, const std::string& token)
+// metadata::authors is a vector<string>, one entry per author.  Both the
+// list column and the sort want it as a single line, joined with the same
+// separator the database's CSV column uses, so this reads the same way a
+// user who typed "Lennon, McCartney" into the authors field would expect.
+std::string join_authors(const std::vector<std::string>& authors)
 {
-    if (token == "authors")      return s.authors;
-    if (token == "performer")    return s.performer;
-    if (token == "album")        return s.album;
-    if (token == "release_date") return s.release_date;
-    if (token == "notes")        return s.notes;
-    if (token == "created")      return s.created;
-    if (token == "modified")     return s.modified;
-    return s.name;   // "name" and any unrecognised token
+    std::string joined;
+    for (std::size_t i = 0; i < authors.size(); ++i)
+    {
+        joined += authors[i];
+        if (i + 1 < authors.size())
+            joined += ", ";
+    }
+    return joined;
+}
+
+// Local-time formatting for the two chrono timestamps, matching
+// song_info_panel's fmt_timestamp so the Info pane and the song list agree
+// on what "Created"/"Modified" show for the same song.  Timestamps are
+// stored (and compared, below) as UTC, but must always be *displayed* in
+// local time — QDateTime::fromMSecsSinceEpoch does that conversion.
+QString fmt_local(std::chrono::sys_time<std::chrono::milliseconds> t)
+{
+    const qint64 ms = static_cast<qint64>(t.time_since_epoch().count());
+    return QDateTime::fromMSecsSinceEpoch(ms).toString("yyyy-MM-dd HH:mm");
+}
+
+// release_date is a calendar date (std::chrono::sys_days) with no time of
+// day or zone, so — unlike created/modified — it needs no UTC-to-local
+// conversion; the same date displays everywhere.
+QString fmt_date(std::chrono::sys_days d)
+{
+    const std::chrono::year_month_day ymd{d};
+    return QDate(static_cast<int>(ymd.year()),
+                 static_cast<int>(static_cast<unsigned>(ymd.month())),
+                 static_cast<int>(static_cast<unsigned>(ymd.day())))
+        .toString("yyyy-MM-dd");
 }
 
 // Three-way compare on the chosen field, breaking ties by name so equal keys
 // group predictably.  Returns <0, 0, >0; the caller applies direction.
+// Now that song_summary carries typed metadata (see database.hpp) rather
+// than pre-stringified columns, each field gets its natural comparison:
+// timestamps and dates compare numerically/chronologically instead of as
+// text, and only the genuinely textual fields go through ci_compare.  Keep
+// these tokens in step with k_sort_options in side_panel.cpp.
 int compare_summaries(const song_summary& a, const song_summary& b,
                       const std::string& token)
 {
-    const int primary = ci_compare(sort_field(a, token), sort_field(b, token));
+    int primary = 0;
+    if (token == "authors")
+        primary = ci_compare(join_authors(a.meta.authors), join_authors(b.meta.authors));
+    else if (token == "performer")
+        primary = ci_compare(a.meta.original_performer, b.meta.original_performer);
+    else if (token == "album")
+        primary = ci_compare(a.meta.original_album, b.meta.original_album);
+    else if (token == "notes")
+        primary = ci_compare(a.meta.notes, b.meta.notes);
+    else if (token == "release_date")
+    {
+        const auto& ra = a.meta.original_album_release_date;
+        const auto& rb = b.meta.original_album_release_date;
+        // Songs with no release date sort before any dated song — a
+        // consistent, predictable spot rather than wherever an empty
+        // string happened to fall under text comparison.
+        if (ra == rb)
+            primary = 0;
+        else if (!ra)
+            primary = -1;
+        else if (!rb)
+            primary = 1;
+        else
+            primary = (*ra < *rb) ? -1 : 1;
+    }
+    else if (token == "created")
+    {
+        primary = (a.meta.creation_time == b.meta.creation_time) ? 0
+                : (a.meta.creation_time < b.meta.creation_time ? -1 : 1);
+    }
+    else if (token == "modified")
+    {
+        primary = (a.meta.modification_time == b.meta.modification_time) ? 0
+                : (a.meta.modification_time < b.meta.modification_time ? -1 : 1);
+    }
+    // else: "name" and any unrecognised token fall through with primary==0,
+    // so the name tie-break below ends up being the actual sort key.
+
     if (primary != 0)
         return primary;
     return ci_compare(a.name, b.name);
 }
 
 // The value shown to the right of the name for the current sort key.  Empty
-// for "name" (it would just repeat the name).  Timestamps are trimmed to
-// "YYYY-MM-DD HH:MM" for the narrow column; the raw ISO is still what's sorted.
+// for "name" (it would just repeat the name) and for an unset release_date.
 std::string display_value(const song_summary& s, const std::string& token)
 {
-    if (token == "name")
-        return {};
-    std::string v = sort_field(s, token);
-    if (token == "created" || token == "modified")
-    {
-        if (v.size() > 16)
-            v.resize(16);              // drop seconds / fractional / zone
-        for (char& c : v)
-            if (c == 'T') c = ' ';     // "...T..." -> "... ..."
-    }
-    return v;
+    if (token == "authors")      return join_authors(s.meta.authors);
+    if (token == "performer")    return s.meta.original_performer;
+    if (token == "album")        return s.meta.original_album;
+    if (token == "notes")        return s.meta.notes;
+    if (token == "release_date")
+        return s.meta.original_album_release_date
+             ? fmt_date(*s.meta.original_album_release_date).toStdString()
+             : std::string{};
+    if (token == "created")      return fmt_local(s.meta.creation_time).toStdString();
+    if (token == "modified")     return fmt_local(s.meta.modification_time).toStdString();
+    return {};   // "name" and any unrecognised token
 }
 
 // Sort summaries by key and direction, and pair each name with its display

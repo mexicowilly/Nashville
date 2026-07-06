@@ -18,19 +18,18 @@ using stored_song = stored<song_id, model::song>;
 
 // A song's name plus its descriptive metadata, with no chart data.  Returned
 // by song_summaries() so the UI can sort the song list by any field without
-// loading every song in full.  All fields are stored as text in the database
-// (dates as ISO 8601, which sorts chronologically as a string); NULLs come
-// back as empty strings.
+// loading every song in full (which would mean a select_bars() per row).
+// model::song::metadata already excludes bars/annotations for exactly this
+// reason, and already carries every field song_summaries() needs in its
+// proper type (chrono timestamps, vector<string> authors, etc.) — so the
+// summary just pairs a name with that same struct rather than restating
+// each field as a string. song_summaries() parses the stored TEXT columns
+// (ISO 8601 dates, CSV authors) through the same helpers select_song() uses,
+// so callers get real types instead of re-parsing strings themselves.
 struct song_summary
 {
     std::string name;
-    std::string authors;       // CSV
-    std::string performer;
-    std::string album;
-    std::string release_date;  // ISO 8601
-    std::string notes;
-    std::string created;       // ISO 8601
-    std::string modified;      // ISO 8601
+    model::song::metadata meta;
 };
 
 class database : loggable

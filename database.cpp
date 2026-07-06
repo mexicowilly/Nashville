@@ -1540,6 +1540,66 @@ std::vector<std::string> database::select_song_names()
     return names;
 }
 
+namespace
+{
+// Split a comma-separated TEXT column into the vector<string> form
+// model::song::metadata::authors expects.  A NULL column (no authors set)
+// yields an empty vector.  Shared by select_song() and song_summaries() so
+// there's exactly one place that knows how the "authors" column is encoded.
+std::vector<std::string> split_authors_column(sqlite3_stmt* raw, int col)
+{
+    std::vector<std::string> authors;
+    if (sqlite3_column_type(raw, col) == SQLITE_TEXT)
+    {
+        std::string cur;
+        std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(raw, col)));
+        while (std::getline(in, cur, ','))
+            authors.push_back(cur);
+    }
+    else
+    {
+        assert(sqlite3_column_type(raw, col) == SQLITE_NULL);
+    }
+    return authors;
+}
+
+// Parse a NOT-NULL ISO 8601 TEXT column (creation_time / modification_time,
+// which the metadata comment notes are "always set") into a millisecond
+// time_point.
+std::chrono::sys_time<std::chrono::milliseconds>
+parse_timestamp_column(sqlite3_stmt* raw, int col)
+{
+    return std::chrono::time_point_cast<std::chrono::milliseconds>(
+        parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, col))));
+}
+
+// Parse a possibly-NULL ISO 8601 date column (original_album_release_date)
+// into an optional day, mirroring the NULL handling select_song() already
+// does inline.
+std::optional<std::chrono::sys_days>
+parse_optional_date_column(sqlite3_stmt* raw, int col)
+{
+    if (sqlite3_column_type(raw, col) == SQLITE_TEXT)
+    {
+        return std::chrono::time_point_cast<std::chrono::days>(
+            parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, col))));
+    }
+    assert(sqlite3_column_type(raw, col) == SQLITE_NULL);
+    return std::nullopt;
+}
+// A NULL-safe TEXT column read, used for the plain string metadata fields
+// (performer, album, notes) as well as song_summaries()'s own columns.
+// NULL comes back as an empty string rather than asserting, since an absent
+// performer/album/notes is an ordinary, expected state, not a data-integrity
+// concern the way a NULL creation_time would be.
+std::string text_at(sqlite3_stmt* raw, int col)
+{
+    if (const unsigned char* t = sqlite3_column_text(raw, col))
+        return reinterpret_cast<const char*>(t);
+    return {};
+}
+} // namespace
+
 stored_song database::select_song(const std::string& name)
 {
     model::song found(name);
@@ -1563,42 +1623,13 @@ stored_song database::select_song(const std::string& name)
           .count(sqlite3_column_int(raw, 6));
         found.time_sig(ts);
         auto& meta = found.meta();
-        meta.creation_time = std::chrono::time_point_cast<std::chrono::milliseconds>
-            (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 7))));
-        meta.modification_time = std::chrono::time_point_cast<std::chrono::milliseconds>
-            (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 8))));
-        if (sqlite3_column_type(raw, 9) == SQLITE_TEXT)
-        {
-            std::string cur;
-            std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(raw, 9)));
-            while (std::getline(in, cur, ','))
-                meta.authors.push_back(cur);
-        }
-        else
-        {
-            assert(sqlite3_column_type(raw, 9) == SQLITE_NULL);
-        }
-        if (sqlite3_column_type(raw, 10) == SQLITE_TEXT)
-            meta.original_performer = reinterpret_cast<const char*>(sqlite3_column_text(raw, 10));
-        else
-            assert(sqlite3_column_type(raw, 10) == SQLITE_NULL);
-        if (sqlite3_column_type(raw, 11) == SQLITE_TEXT)
-            meta.original_album = reinterpret_cast<const char*>(sqlite3_column_text(raw, 11));
-        else
-            assert(sqlite3_column_type(raw, 11) == SQLITE_NULL);
-        if (sqlite3_column_type(raw, 12) == SQLITE_TEXT)
-            meta.notes = reinterpret_cast<const char*>(sqlite3_column_text(raw, 12));
-        else
-            assert(sqlite3_column_type(raw, 12) == SQLITE_NULL);
-        if (sqlite3_column_type(raw, 13) == SQLITE_TEXT)
-        {
-            meta.original_album_release_date = std::chrono::time_point_cast<std::chrono::days>
-                (parse_iso8601(reinterpret_cast<const char*>(sqlite3_column_text(raw, 13))));
-        }
-        else
-        {
-            assert(sqlite3_column_type(raw, 13) == SQLITE_NULL);
-        }
+        meta.creation_time     = parse_timestamp_column(raw, 7);
+        meta.modification_time = parse_timestamp_column(raw, 8);
+        meta.authors = split_authors_column(raw, 9);
+        meta.original_performer = text_at(raw, 10);
+        meta.original_album     = text_at(raw, 11);
+        meta.notes              = text_at(raw, 12);
+        meta.original_album_release_date = parse_optional_date_column(raw, 13);
         if (sqlite3_column_type(raw, 14) == SQLITE_INTEGER)
             found.margin_width(sqlite3_column_int(raw, 14));
         else
@@ -1807,32 +1838,30 @@ void database::song_list_sort_descending(bool descending)
 std::vector<song_summary> database::song_summaries()
 {
     // The metadata columns only — no chart data, and deliberately no ORDER BY:
-    // the UI performs the sort, this just hands it the rows.  Missing values
-    // come back as NULL, which we normalise to empty strings.
+    // the UI performs the sort, this just hands it the rows.  Uses the same
+    // column-parsing helpers select_song() uses (split_authors_column,
+    // parse_timestamp_column, parse_optional_date_column, text_at), so a
+    // summary row and a fully-loaded song agree on what every field means —
+    // there's one parser per column type, not one per caller.
     std::vector<song_summary> result;
     prepared sel(db_,
         "SELECT name, authors, original_performer, original_album, "
         "original_album_release_date, notes, creation_time, modification_time "
         "FROM song;");
 
-    auto text_at = [](sqlite3_stmt* s, int col) -> std::string {
-        if (const unsigned char* t = sqlite3_column_text(s, col))
-            return reinterpret_cast<const char*>(t);
-        return {};
-    };
-
     int rc;
     while ((rc = sqlite3_step(sel.ptr())) == SQLITE_ROW)
     {
+        auto* raw = sel.ptr();
         song_summary s;
-        s.name         = text_at(sel.ptr(), 0);
-        s.authors      = text_at(sel.ptr(), 1);
-        s.performer    = text_at(sel.ptr(), 2);
-        s.album        = text_at(sel.ptr(), 3);
-        s.release_date = text_at(sel.ptr(), 4);
-        s.notes        = text_at(sel.ptr(), 5);
-        s.created      = text_at(sel.ptr(), 6);
-        s.modified     = text_at(sel.ptr(), 7);
+        s.name                            = text_at(raw, 0);
+        s.meta.authors                    = split_authors_column(raw, 1);
+        s.meta.original_performer         = text_at(raw, 2);
+        s.meta.original_album             = text_at(raw, 3);
+        s.meta.original_album_release_date = parse_optional_date_column(raw, 4);
+        s.meta.notes                      = text_at(raw, 5);
+        s.meta.creation_time              = parse_timestamp_column(raw, 6);
+        s.meta.modification_time          = parse_timestamp_column(raw, 7);
         result.push_back(std::move(s));
     }
     if (rc != SQLITE_DONE)

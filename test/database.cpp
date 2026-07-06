@@ -199,15 +199,36 @@ protected:
         EXPECT_EQ(lhs.time_sig(), rhs.time_sig());
         EXPECT_EQ(lhs.tempo(), rhs.tempo());
         EXPECT_EQ(lhs.bars_per_line(), rhs.bars_per_line());
-        EXPECT_EQ(lhs.meta().creation_time, rhs.meta().creation_time);
-        EXPECT_EQ(lhs.meta().modification_time, rhs.meta().modification_time);
-        EXPECT_EQ(lhs.meta().authors, rhs.meta().authors);
-        EXPECT_EQ(lhs.meta().original_performer, rhs.meta().original_performer);
-        EXPECT_EQ(lhs.meta().original_album, rhs.meta().original_album);
-        EXPECT_EQ(lhs.meta().notes, rhs.meta().notes);
-        EXPECT_EQ(lhs.meta().original_album_release_date, rhs.meta().original_album_release_date);
+        expect_metadata(lhs.meta(), rhs.meta());
         EXPECT_EQ(lhs.margin_width(), rhs.margin_width());
         expect_annotations(lhs.annotes(), rhs.annotes());
+    }
+
+    // Field-by-field metadata compare, shared by expect_song (full model::song
+    // round-trips) and the song_summaries() tests below — a summary's meta and
+    // a fully-loaded song's meta are both model::song::metadata and should be
+    // held to the same equality check.
+    void expect_metadata(const model::song::metadata& lhs, const model::song::metadata& rhs)
+    {
+        EXPECT_EQ(lhs.creation_time, rhs.creation_time);
+        EXPECT_EQ(lhs.modification_time, rhs.modification_time);
+        EXPECT_EQ(lhs.authors, rhs.authors);
+        EXPECT_EQ(lhs.original_performer, rhs.original_performer);
+        EXPECT_EQ(lhs.original_album, rhs.original_album);
+        EXPECT_EQ(lhs.notes, rhs.notes);
+        EXPECT_EQ(lhs.original_album_release_date, rhs.original_album_release_date);
+    }
+
+    // Find a row in a song_summaries() result by name, or nullptr if absent.
+    // song_summaries() deliberately has no ORDER BY (the UI sorts), so tests
+    // that care about a particular song look it up by name rather than by
+    // position.
+    const song_summary* find_summary(const std::vector<song_summary>& summaries,
+                                      const std::string& name)
+    {
+        auto it = std::find_if(summaries.begin(), summaries.end(),
+            [&](const song_summary& s) { return s.name == name; });
+        return it == summaries.end() ? nullptr : &*it;
     }
 
     virtual void SetUp() override
@@ -982,4 +1003,147 @@ TEST_F(db_test, update_song_all_columns_with_annotations)
     model::song found;
     EXPECT_NO_THROW(found = db_->select_song("full update").value);
     expect_song(s2, found);
+}
+
+TEST_F(db_test, song_summaries_empty_db)
+{
+    // No songs inserted — summaries should come back empty, not throw.
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    EXPECT_TRUE(summaries.empty());
+}
+
+TEST_F(db_test, song_summaries_full_metadata)
+{
+    // Every descriptive field set; verify song_summaries() reports the name
+    // and reproduces model::song::metadata exactly, in its proper types
+    // (vector<string> authors, chrono timestamps, optional release date) —
+    // not pre-stringified/truncated copies of them.
+    model::song s("summary full");
+    s.add_bar().add_chord().number(1);
+    s.meta().authors             = { "Alpha", "Beta", "Gamma" };
+    s.meta().original_performer  = "The Performer";
+    s.meta().original_album      = "The Album";
+    s.meta().notes               = "Some notes";
+    s.meta().original_album_release_date =
+        std::chrono::time_point_cast<std::chrono::days>(std::chrono::system_clock::now());
+    EXPECT_NO_THROW(db_->insert_song(s));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    const auto* found = find_summary(summaries, "summary full");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->name, "summary full");
+    expect_metadata(s.meta(), found->meta);
+}
+
+TEST_F(db_test, song_summaries_null_metadata_defaults)
+{
+    // A song with no authors, performer, album, notes, or release date —
+    // every NULLable column at once.  Authors should come back as an empty
+    // vector (not a vector containing one empty string from splitting ""),
+    // the plain-text fields as empty strings, and release_date as nullopt.
+    // creation_time/modification_time are never NULL, so those should still
+    // come through untouched.
+    model::song s("summary bare");
+    s.add_bar().add_chord().number(1);
+    EXPECT_NO_THROW(db_->insert_song(s));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    const auto* found = find_summary(summaries, "summary bare");
+    ASSERT_NE(found, nullptr);
+    EXPECT_TRUE(found->meta.authors.empty());
+    EXPECT_TRUE(found->meta.original_performer.empty());
+    EXPECT_TRUE(found->meta.original_album.empty());
+    EXPECT_TRUE(found->meta.notes.empty());
+    EXPECT_FALSE(found->meta.original_album_release_date.has_value());
+    EXPECT_EQ(found->meta.creation_time, s.meta().creation_time);
+    EXPECT_EQ(found->meta.modification_time, s.meta().modification_time);
+}
+
+TEST_F(db_test, song_summaries_authors_order_preserved)
+{
+    // Authors is stored as a CSV column under the hood; verify the summary
+    // hands back the list in its original order rather than, say, sorted or
+    // joined-and-truncated.
+    model::song s("author order");
+    s.add_bar().add_chord().number(1);
+    s.meta().authors = { "Zed", "Amy", "Middle" };
+    EXPECT_NO_THROW(db_->insert_song(s));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    const auto* found = find_summary(summaries, "author order");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->meta.authors, (std::vector<std::string>{ "Zed", "Amy", "Middle" }));
+}
+
+TEST_F(db_test, song_summaries_omits_removed_songs)
+{
+    model::song keep("summary keep");
+    keep.add_bar().add_chord().number(1);
+    model::song gone("summary remove");
+    gone.add_bar().add_chord().number(1);
+    EXPECT_NO_THROW(db_->insert_song(keep));
+    EXPECT_NO_THROW(db_->insert_song(gone));
+    EXPECT_NO_THROW(db_->remove_song("summary remove"));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    EXPECT_NE(find_summary(summaries, "summary keep"), nullptr);
+    EXPECT_EQ(find_summary(summaries, "summary remove"), nullptr);
+}
+
+TEST_F(db_test, song_summaries_reflects_update)
+{
+    // Rename + change metadata via update_song(); the summary for the new
+    // name should show the new values, and the old name should be gone.
+    model::song s("summary mutable");
+    s.meta().original_performer = "Old Performer";
+    s.add_bar().add_chord().number(1);
+    song_id id{};
+    EXPECT_NO_THROW(id = db_->insert_song(s));
+
+    s.name("summary mutable renamed");
+    s.meta().original_performer = "New Performer";
+    s.meta().authors = { "New Author" };
+    EXPECT_NO_THROW(db_->update_song(id, s));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    EXPECT_EQ(find_summary(summaries, "summary mutable"), nullptr);
+    const auto* found = find_summary(summaries, "summary mutable renamed");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->meta.original_performer, "New Performer");
+    EXPECT_EQ(found->meta.authors, (std::vector<std::string>{ "New Author" }));
+}
+
+TEST_F(db_test, song_summaries_matches_select_song)
+{
+    // The consistency check that matters most: song_summaries() and
+    // select_song() read the same columns through the same parsing helpers
+    // (split_authors_column, parse_timestamp_column, parse_optional_date_column,
+    // text_at — see database.cpp), so for every song the lightweight summary
+    // and the fully-loaded song must report byte-for-byte identical metadata.
+    // create_songs() gives a mix of author-list lengths (including none),
+    // odd/even release dates (including unset), and varying notes/performer/
+    // album text, so this exercises every NULL/non-NULL combination at once.
+    auto songs = create_songs(200);
+    for (const auto& s : songs)
+        EXPECT_NO_THROW(db_->insert_song(s));
+
+    std::vector<song_summary> summaries;
+    EXPECT_NO_THROW(summaries = db_->song_summaries());
+    ASSERT_EQ(summaries.size(), songs.size());
+
+    for (const auto& s : songs)
+    {
+        const auto* found = find_summary(summaries, s.name());
+        ASSERT_NE(found, nullptr) << "missing summary for " << s.name();
+
+        model::song full;
+        EXPECT_NO_THROW(full = db_->select_song(s.name()).value);
+        expect_metadata(full.meta(), found->meta);
+    }
 }
