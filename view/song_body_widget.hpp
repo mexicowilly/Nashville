@@ -6,6 +6,7 @@
 #include "margin_renderer.hpp"
 #include "layout_structs.hpp"
 #include "annotation_layer.hpp"
+#include "../page_geometry.hpp"
 #include <QWidget>
 #include <vector>
 #include <functional>
@@ -101,8 +102,29 @@ public:
     // touch already-open charts.
     void apply_font_scale(qreal scale);
 
-    // For printing: same layout/paint logic targeting an arbitrary rect.
-    void paint_to_rect(QPainter& painter, const QRectF& page_rect) const;
+    // Apply a new page size/margins (from ui_settings — page size and
+    // margins are app-wide, not per-song) and relayout.  Called by
+    // main_window when the user changes the Page Setup dialog; newly
+    // opened tabs pick up the persisted geometry on construction instead,
+    // so this only needs to touch already-open charts.  No-op if the
+    // geometry is unchanged.
+    void apply_page_geometry(const page_geometry& geo);
+
+    // The page geometry currently in effect (content width/height, margins,
+    // paper size) and how many pages the current chart spans.  Read by the
+    // print path to size/emit each physical page.
+    const page_geometry& current_page_geometry() const { return page_geo_; }
+    int page_count() const { return page_count_; }
+
+    // For printing: paint the given 0-based page at (approximately) 1:1
+    // scale into target_rect (a page rect in the destination painter's own
+    // coordinate space — e.g. a QPrinter's pageRect).  Only that page's
+    // title (page 0 only) / margin gutter (page 0 only) / lines are
+    // painted, so callers loop pages and call printer->newPage() between
+    // calls.  Scale is target_rect.width() / page_geo_.size.width(), which
+    // is 1.0 when the destination page size matches page_geo_ exactly.
+    void paint_page_to_rect(QPainter& painter, int page_index,
+                            const QRectF& target_rect) const;
 
     int margin_width() const { return margin_width_; }
 
@@ -333,19 +355,44 @@ protected:
 private:
     // --- Layout ---
     void compute_layout(const QRectF& content_rect);
+    // Second phase of compute_layout: breaks the contiguously-laid-out
+    // lines_ across pages (page_geometry.hpp), assigning each line a
+    // page_index and translating its geometry into whole-canvas
+    // coordinates.  Sets page_count_.
+    void paginate_lines(const QRectF& content_rect);
+    // Vertically translate every geometry field a line owns (its rect,
+    // section column, and bar rects) by dy — used by paginate_lines to
+    // move a whole line onto its assigned page.
+    static void translate_line(line_layout& line, qreal dy);
     qreal plain_bar_height(bool has_articulation = false) const;
     qreal duration_bar_height(bool has_articulation = false) const;
     qreal title_height() const;
+
+    // The x of the left edge of the section-label gutter: the page's left
+    // margin.  The gutter runs from here for margin_width_ points, then the
+    // bars begin.  The draggable divider sits at page_left() + margin_width_.
+    // Centralising this keeps rebuild(), paint_margin, paint_divider, and
+    // the divider hit-test/drag math agreeing on where the gutter lives
+    // once a nonzero page margin insets it from x=0.
+    qreal page_left() const { return page_geo_.margins.left; }
+    // The x of the draggable margin divider (gutter's right edge).
+    qreal divider_x() const { return page_left() + margin_width_; }
 
     // --- Painting ---
     // stash_hit_rects controls whether to update the hit-test rects
     // (title_rect_ and margin_layout_) for click handling.  Must be false
     // when painting to a transformed coordinate space (printing).
+    // top_offset shifts the title's baseline/hit-rect down by the page's
+    // top margin so the title sits inside the printable area.
     void paint_title(QPainter& painter, qreal widget_width,
-                     bool stash_hit_rect = true) const;
+                     bool stash_hit_rect = true, qreal top_offset = 0.0) const;
     void paint_margin(QPainter& painter, const QRectF& margin_rect,
                       bool stash_hit_rects = true) const;
     void paint_divider(QPainter& painter) const;
+    // Draws the "desk" behind the sheets, each page as a white sheet with a
+    // soft drop shadow and border, and the dashed margin guides on every
+    // page.  Called first in paintEvent so all chart content paints on top.
+    void paint_pages_backdrop(QPainter& painter) const;
     void paint_line(QPainter& painter, const line_layout& line,
                     std::size_t first_bar_index,
                     bool show_selection = true) const;
@@ -657,8 +704,8 @@ private:
     // right/bottom content insets): the title already carries its own bottom
     // padding, so reusing the full content padding here double-padded the gap.
     static constexpr qreal k_title_content_gap   = 4.0;
-    static constexpr qreal k_line_spacing        = 16.0;  // spacing after a section-end rule
-    static constexpr qreal k_line_spacing_normal = 10.0;  // uniform spacing between all other lines
+    static constexpr qreal k_line_spacing        = 11.0;  // spacing after a section-end rule
+    static constexpr qreal k_line_spacing_normal = 6.0;   // uniform spacing between all other lines
     static constexpr qreal k_inter_bar_spacing   = 6.0;
     // Horizontal padding baked into every bar's own reserved column width,
     // beyond what its content (chords, time sig, parens, etc.) strictly
@@ -702,6 +749,11 @@ private:
     // init_fonts() on a scale change doesn't repeatedly addApplicationFont.
     QString                  music_family_;
     int                      margin_width_ = k_default_margin_width;
+    // App-wide page size/margins (from ui_settings), seeded on construction
+    // and refreshed via apply_page_geometry.  Drives both where page breaks
+    // fall (compute_layout) and how many pages the widget currently spans.
+    page_geometry            page_geo_;
+    int                      page_count_   = 1;
     modal_overlay*           overlay_      = nullptr;  // non-owning; set by main_window
 
     // The annotation overlay.  Order matters: constructed in the

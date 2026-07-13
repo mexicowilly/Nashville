@@ -22,10 +22,10 @@ void margin_renderer::paint(QPainter& painter,
     painter.save();
 
     QFont base_font("Georgia");
-    base_font.setPointSizeF(13.0 * font_scale);
+    base_font.setPointSizeF(11.0 * font_scale);
     QFont key_font("Georgia");
     key_font.setBold(true);
-    key_font.setPointSizeF(16.0 * font_scale);
+    key_font.setPointSizeF(13.5 * font_scale);
     QFontMetricsF base_fm(base_font);
 
     // Load Bravura for the tempo note glyph so it matches the rhythm row.
@@ -34,7 +34,7 @@ void margin_renderer::paint(QPainter& painter,
                            ? QFontDatabase::applicationFontFamilies(bravura_id).first()
                            : base_font.family();
     QFont music_font(music_family);
-    music_font.setPointSizeF(13.0 * font_scale);
+    music_font.setPointSizeF(11.0 * font_scale);
 
     qreal cx = margin_rect.center().x();
     qreal y  = margin_rect.top() + k_top_padding;

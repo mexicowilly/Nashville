@@ -44,6 +44,7 @@ qt_add_executable(nashville
     main.cpp
     nashville.qrc
     nashville.ui
+    page_geometry.hpp
     sqlite3.c
     sqlite3.h
     ui_settings.cpp
@@ -61,6 +62,8 @@ qt_add_executable(nashville
     view/margin_renderer.hpp
     view/modal_overlay.cpp
     view/modal_overlay.hpp
+    view/page_setup_dialog.cpp
+    view/page_setup_dialog.hpp
     view/side_panel.cpp
     view/side_panel.hpp
     view/song_body_widget.cpp

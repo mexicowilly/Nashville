@@ -65,6 +65,9 @@ struct line_layout
 {
     std::vector<bar_layout> bars;
     QRectF rect;                            // full line rect including all bars
+                                             // (y is in whole-canvas coordinates,
+                                             // spanning every page — see
+                                             // song_body_widget::compute_layout)
     QRectF section_col_rect;                // column to the left of bars for section label
     std::optional<QString> section_label;   // from first bar that has section_
     bool is_duration_mode      = false;     // true if ANY bar on this line is duration-mode
@@ -73,6 +76,10 @@ struct line_layout
     bool has_voltas            = false;     // true if any bar on this line carries a volta number
     bool has_beat_dots         = false;     // true if any bar on this line has a custom beat count
     std::vector<volta_span> volta_spans;    // grouped runs of bars sharing a volta set
+    // Which printed/on-screen page (0-based) this line falls on, per the
+    // pagination engine in page_geometry.hpp.  Used by the print path to
+    // paint one physical page at a time.
+    int page_index = 0;
 };
 
 // Where a new bar may be inserted by clicking an empty "ghost" rectangle.

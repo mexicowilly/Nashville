@@ -18,6 +18,7 @@ add_executable(unit-test
     chord.cpp
     database.cpp
     main.cpp
+    page_geometry.cpp
     time_signature.cpp
 )
 

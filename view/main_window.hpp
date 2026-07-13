@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../db_ids.hpp"
+#include "../page_geometry.hpp"
 #include <QWidget>
 #include <memory>
 #include <optional>
@@ -89,6 +90,12 @@ public:
     // View > Text size menu.  Tabs opened afterwards read the persisted
     // scale themselves on construction, so only open charts need this.
     void apply_font_scale_to_all_tabs(qreal scale);
+
+    // Apply new page size/margins (from ui_settings) to every open tab and
+    // relayout each.  Called by app when the user changes Page Setup.  Tabs
+    // opened afterwards read the persisted geometry themselves on
+    // construction, so only open charts need this.
+    void apply_page_geometry_to_all_tabs(const page_geometry& geo);
 
     // Currently focused tab's song_tab, or nullptr if no tabs are
     // open.  Used by app::wire_*_menu so menu actions target the

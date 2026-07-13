@@ -42,11 +42,12 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
           song.annotes(),
           lines_,
           [this]() {
-              const qreal th = title_height();
+              const qreal th = page_geo_.margins.top + title_height();
+              const qreal left = page_geo_.margins.left + margin_width_ + k_content_padding;
               return QRectF(
-                  margin_width_ + k_content_padding,
+                  left,
                   th + k_title_content_gap,
-                  std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
+                  std::max(0.0, page_geo_.content_width() - margin_width_ - k_content_padding * 2),
                   std::max(0.0, height() - th - k_title_content_gap - k_content_padding));
           })
 {
@@ -88,6 +89,12 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     else
         margin_width_ = scaled_margin_default(font_scale_);
     init_fonts();
+
+    // Seed the page size/margins from the persisted (app-wide) UI settings,
+    // same idea as font_scale_ above — every newly opened tab starts out
+    // matching whatever the user last configured in Page Setup.
+    page_geo_.size    = page_size_points(ui_settings::page_size());
+    page_geo_.margins = ui_settings::margins();
 
     // Wire the annotation layer's text-editing requests through to our
     // existing inline-editor plumbing.  We don't give the layer its own
@@ -158,20 +165,29 @@ void song_body_widget::init_fonts()
     // dominant chord-number size.  Scaling all of them by one factor
     // preserves those relationships, so a single knob makes the whole
     // chart bigger without disturbing its balance.
+    // Base sizes below are for scale 1.0 (the default).  They're tuned for
+    // vertical density: in a Nashville chart, page count is a primary
+    // concern — musicians strongly prefer a chart that doesn't spill onto a
+    // second page — so the number is sized to be clearly legible but no
+    // larger, and the satellites (modifier / articulation / music) keep
+    // their proportions to it so the whole chart still scales as a unit via
+    // font_scale_.  Ratios to the number (15pt): modifier ~0.6,
+    // articulation ~0.67, music ~0.78 — the same balance as before, just
+    // scaled down from the original 18pt number.
     const qreal s = font_scale_;
 
     fonts_.number = QFont("Georgia");
     fonts_.number.setWeight(QFont::Normal);
-    fonts_.number.setPointSizeF(18.0 * s);
+    fonts_.number.setPointSizeF(15.0 * s);
 
     fonts_.modifier = QFont("Georgia");
-    fonts_.modifier.setPointSizeF(11.0 * s);
+    fonts_.modifier.setPointSizeF(9.0 * s);
 
     fonts_.articulation = QFont("Georgia");
-    fonts_.articulation.setPointSizeF(12.0 * s);
+    fonts_.articulation.setPointSizeF(10.0 * s);
 
     fonts_.music = QFont(music_family_);
-    fonts_.music.setPointSizeF(14.0 * s);
+    fonts_.music.setPointSizeF(11.5 * s);
 }
 
 QFont song_body_widget::text_box_font() const
@@ -214,16 +230,48 @@ void song_body_widget::apply_font_scale(qreal scale)
     rebuild();   // recompute layout with the new metrics, then repaint
 }
 
+void song_body_widget::apply_page_geometry(const page_geometry& geo)
+{
+    if (geo.size == page_geo_.size
+        && geo.margins.top    == page_geo_.margins.top
+        && geo.margins.bottom == page_geo_.margins.bottom
+        && geo.margins.left   == page_geo_.margins.left
+        && geo.margins.right  == page_geo_.margins.right)
+        return;
+
+    page_geo_ = geo;
+    rebuild();   // re-paginate and re-fix the widget's size to the new page
+}
+
 // ---------------------------------------------------------------------------
 // rebuild
 // ---------------------------------------------------------------------------
 void song_body_widget::rebuild()
 {
+    // The widget is a fixed-width "page": its width is the paper width, not
+    // the scroll viewport's width (song_widget centres it in a wider,
+    // non-resizing scroll area).  Fixing the width here — rather than
+    // tracking the viewport — is what makes the on-screen chart a faithful
+    // preview of the printed page: a line wraps to the same place on screen
+    // as it will on paper, because both use the same content column width.
+    const int page_w = static_cast<int>(std::lround(page_geo_.size.width()));
+    if (width() != page_w)
+        setFixedWidth(page_w);
+
+    // Content column: the page's printable area, minus the left-margin
+    // gutter (key/time/tempo column) and the symmetric content padding.
+    // The x origin is the page's left margin plus the gutter; the y origin
+    // is the page's top margin plus the title band (title only appears on
+    // page 0, so this is page 0's content top — later pages start their
+    // content right at the top margin, handled in paginate_lines).
     qreal title_h = title_height();
-    QRectF content_rect(margin_width_ + k_content_padding,
-                       title_h + k_title_content_gap,
-                       std::max(0.0, width()  - margin_width_ - k_content_padding * 2),
-                       std::max(0.0, height() - title_h - k_title_content_gap - k_content_padding));
+    qreal content_left = page_geo_.margins.left + margin_width_ + k_content_padding;
+    qreal content_top  = page_geo_.margins.top + title_h + k_title_content_gap;
+    qreal content_w    = std::max(0.0,
+        page_geo_.content_width() - margin_width_ - k_content_padding * 2);
+    QRectF content_rect(content_left, content_top, content_w,
+                        std::max(0.0, page_geo_.content_height() - title_h
+                                      - k_title_content_gap));
     compute_layout(content_rect);
     update();
 }
@@ -416,11 +464,18 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     {
         // Empty song: the only insertion slot is the would-be first bar at
         // the start of the first line.  No section column is reserved
-        // because there are no labels yet.
+        // because there are no labels yet.  A brand-new song is always a
+        // single page; fix the canvas to one page so the empty sheet still
+        // renders at full page height.
+        page_count_ = 1;
         compute_insertion_slots(content_rect,
                                 /*bars_left=*/content_rect.left(),
                                 /*last_line_bottom=*/content_rect.top(),
                                 /*last_line_bar_h=*/plain_bar_height(false));
+        const int canvas_h =
+            static_cast<int>(std::lround(total_canvas_height(page_geo_, page_count_)));
+        setMinimumHeight(canvas_h);
+        setFixedHeight(canvas_h);
         return;
     }
 
@@ -798,15 +853,18 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         y += volta_zone_h + actual_bar_h + spacing;
     }
 
+    // --- Pagination pass ---
+    // Break the contiguously-laid-out lines across pages, never splitting a
+    // line.  The engine (page_geometry.hpp) tells us which page each line
+    // lands on; paginate_lines translates each line — and every bar rect
+    // and the section-column rect it owns — into whole-canvas coordinates.
+    paginate_lines(content_rect);
+
     // Insertion slots: a same_line slot per line (computed inside
     // compute_insertion_slots from each line's own geometry), plus a
-    // single next_line slot below the song's last line.  We pass in
-    // the next_line slot's parameters here — its top y (one
-    // k_line_spacing_normal below the last line's bottom, matching
-    // what a freshly laid-out next line would use) and its bar height
-    // (the last line's bar-row height, ie. excluding any volta zone
-    // above the bars so the ghost reads as "an empty bar like the
-    // others" rather than "an empty bar plus a phantom volta gap").
+    // single next_line slot below the song's last line.  Computed AFTER
+    // pagination so the slots anchor to the lines' final (paginated)
+    // positions rather than their pre-pagination contiguous ones.
     const auto& last_line = lines_.back();
     qreal last_bar_h = last_line.rect.height()
                        - (last_line.has_voltas ? k_volta_zone_height : 0.0);
@@ -816,13 +874,105 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
                                                   + k_line_spacing_normal,
                             /*last_line_bar_h=*/last_bar_h);
 
-    // The next-line slot extends below `y`; grow the minimum height so it
-    // stays visible without manual scrolling.
-    qreal slots_bottom = y;
+    // The widget's height is the whole multi-page canvas: page_count pages
+    // back-to-back with the inter-page gap between them, so every page's
+    // sheet is scrollable into view.  Also make sure any insertion slot
+    // that landed below the last page's content (the next_line ghost)
+    // stays visible.
+    qreal canvas_h = total_canvas_height(page_geo_, page_count_);
+    qreal slots_bottom = canvas_h;
     for (const auto& s : insertion_slots_)
-        slots_bottom = std::max(slots_bottom, s.rect.bottom());
+        slots_bottom = std::max(slots_bottom, s.rect.bottom() + k_content_padding);
 
-    setMinimumHeight(static_cast<int>(slots_bottom + k_content_padding));
+    const int h = static_cast<int>(std::lround(std::max(canvas_h, slots_bottom)));
+    setMinimumHeight(h);
+    setFixedHeight(h);
+}
+
+// ---------------------------------------------------------------------------
+// paginate_lines
+// ---------------------------------------------------------------------------
+// Second half of compute_layout: takes lines_ as laid out in a single
+// contiguous column (each line.rect.y is a flat offset from
+// content_rect.top()) and re-maps every line onto pages, translating each
+// line's bars and section column by the same per-line delta so all of a
+// line's geometry stays internally consistent.  Sets each line's
+// page_index and updates page_count_.
+void song_body_widget::paginate_lines(const QRectF& content_rect)
+{
+    if (lines_.empty())
+    {
+        page_count_ = 1;
+        return;
+    }
+
+    // Flow heights: each line's full height plus the trailing spacing that
+    // separated it from the next line in the contiguous layout.  We recover
+    // that spacing from the gap between consecutive line rects; for the last
+    // line there's no following line, so it contributes only its own height.
+    std::vector<qreal> flow_heights;
+    flow_heights.reserve(lines_.size());
+    for (std::size_t i = 0; i < lines_.size(); ++i)
+    {
+        qreal fh = lines_[i].rect.height();
+        if (i + 1 < lines_.size())
+            fh = lines_[i + 1].rect.top() - lines_[i].rect.top();
+        flow_heights.push_back(fh);
+    }
+
+    // Page 0's content is shorter than later pages' by the height of the
+    // title band (the title only appears on page 0).  We model this by
+    // prepending a synthetic leading flow item equal to the title-band
+    // height: the pagination engine then reserves that space at the top of
+    // page 0, so the first real line only fits on page 0 if there's room
+    // after the title — exactly the physical constraint.  Every page
+    // (including page 0) uses the same full content_height; the title item
+    // is what makes page 0 effectively shorter for real content.
+    //
+    // absolute_y() maps each page's per-page content offset back onto the
+    // whole canvas.  We pass margins.top as page0_content_top so page 0's
+    // content band begins at the top margin; the title item's height then
+    // pushes the first real line down to (margins.top + title_band), which
+    // is where the title band ends — matching content_rect.top().  Lines on
+    // later pages have no title item ahead of them, so they sit at
+    // margins.top + their own in-page offset, with no title gap.
+    const qreal title_band = content_rect.top() - page_geo_.margins.top;
+
+    std::vector<qreal> heights_with_title;
+    heights_with_title.reserve(flow_heights.size() + 1);
+    heights_with_title.push_back(title_band);
+    for (qreal fh : flow_heights)
+        heights_with_title.push_back(fh);
+
+    auto pg = paginate(page_geo_.content_height(), heights_with_title);
+    page_count_ = pg.page_count;
+
+    // pg.positions[0] is the synthetic title item; real line i is at
+    // pg.positions[i + 1].
+    for (std::size_t i = 0; i < lines_.size(); ++i)
+    {
+        const auto& pos = pg.positions[i + 1];
+        qreal new_top = absolute_y(page_geo_, page_geo_.margins.top, pos);
+        qreal delta   = new_top - lines_[i].rect.top();
+
+        lines_[i].page_index = pos.page_index;
+        translate_line(lines_[i], delta);
+    }
+}
+
+// Shift every geometry field of a line by dy (whole-canvas vertical
+// translation): the line rect, the section-column rect, and each bar's
+// rect.  Keeps a line's parts aligned after pagination moves the line to
+// a new page.
+void song_body_widget::translate_line(line_layout& line, qreal dy)
+{
+    line.rect.translate(0.0, dy);
+    line.section_col_rect.translate(0.0, dy);
+    for (auto& bl : line.bars)
+    {
+        bl.rect.translate(0.0, dy);
+        bl.num_center_y += dy;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,7 +1222,7 @@ qreal song_body_widget::title_height() const
 // paint_title
 // ---------------------------------------------------------------------------
 void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
-                                   bool stash_hit_rect) const
+                                   bool stash_hit_rect, qreal top_offset) const
 {
     painter.save();
 
@@ -1093,7 +1243,7 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
 
     qreal text_w  = fm.horizontalAdvance(display_title);
     qreal x       = (widget_width - text_w) / 2.0;
-    qreal baseline = k_title_padding + fm.ascent();
+    qreal baseline = top_offset + k_title_padding + fm.ascent();
 
     painter.setPen(QPen(is_placeholder ? k_placeholder_color : Qt::black, 1.0));
     painter.drawText(QPointF(x, baseline), display_title);
@@ -1107,7 +1257,7 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
     {
         // Slightly padded vertically for easier clicking.  Minimum width
         // ensures the placeholder is clickable even with short text.
-        title_rect_ = QRectF(x, k_title_padding - 2.0,
+        title_rect_ = QRectF(x, top_offset + k_title_padding - 2.0,
                              std::max(text_w, 40.0),
                              fm.height() + 4.0);
     }
@@ -1122,10 +1272,18 @@ void song_body_widget::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.fillRect(rect(), Qt::white);
 
-    paint_title(painter, width());
-    paint_margin(painter, QRectF(0, title_height(), margin_width_, height() - title_height()));
+    // Page furniture first: the gray desk, each white page sheet, and the
+    // dashed margin guides.  Chart content then paints on top, positioned
+    // by the paginator so it lands within each sheet's printable area.
+    paint_pages_backdrop(painter);
+
+    // Title + left-margin gutter live on page 0 only (paginate_lines: later
+    // pages start their content at the top margin with no title).
+    paint_title(painter, width(), /*stash_hit_rect=*/true, page_geo_.margins.top);
+    paint_margin(painter, QRectF(page_left(), page_geo_.margins.top + title_height(),
+                                margin_width_,
+                                std::max(0.0, page_geo_.content_height() - title_height())));
     paint_divider(painter);
 
     painter.setPen(QPen(Qt::black, 1.0));
@@ -1194,6 +1352,65 @@ void song_body_widget::paintEvent(QPaintEvent*)
 }
 
 // ---------------------------------------------------------------------------
+// paint_pages_backdrop
+// ---------------------------------------------------------------------------
+void song_body_widget::paint_pages_backdrop(QPainter& painter) const
+{
+    // The "desk" behind the sheets — a light neutral gray so the white
+    // pages read as physical sheets sitting on a surface (the Word/Pages/
+    // Docs convention).  Fills the whole widget, including the inter-page
+    // gaps.
+    static const QColor k_desk_color(0xE4, 0xE4, 0xE7);
+    static const QColor k_sheet_border(0xC8, 0xC8, 0xCC);
+    static const QColor k_shadow_color(0, 0, 0, 40);
+    static const QColor k_margin_guide(0xB4, 0xB4, 0xBC);
+
+    painter.save();
+    painter.fillRect(rect(), k_desk_color);
+
+    const qreal pw = page_geo_.size.width();
+    const qreal ph = page_geo_.size.height();
+
+    for (int p = 0; p < page_count_; ++p)
+    {
+        const qreal top = p * (ph + k_inter_page_gap);
+        const QRectF sheet(0.0, top, pw, ph);
+
+        // Soft drop shadow: a slightly offset, slightly larger fill under
+        // the sheet.  Cheap stand-in for a blurred shadow that still gives
+        // the page a sense of lift off the desk.
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(k_shadow_color);
+        painter.drawRoundedRect(sheet.translated(0.0, 2.0).adjusted(-0.5, 0.5, 1.5, 2.5),
+                                2.0, 2.0);
+
+        // The sheet itself.
+        painter.setBrush(Qt::white);
+        painter.setPen(QPen(k_sheet_border, 1.0));
+        painter.drawRect(sheet);
+
+        // Margin guides: a dashed rectangle marking the printable area
+        // (the page inset by its margins).  This is the always-visible
+        // representation of the page margins — the content sits inside it,
+        // and changing the margins in Page Setup moves these lines.  Drawn
+        // on every page so each sheet shows its own printable box.
+        const QRectF printable(page_geo_.margins.left,
+                               top + page_geo_.margins.top,
+                               page_geo_.content_width(),
+                               page_geo_.content_height());
+        if (printable.width() > 0.0 && printable.height() > 0.0)
+        {
+            QPen guide(k_margin_guide, 1.0, Qt::DashLine);
+            painter.setPen(guide);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(printable);
+        }
+    }
+
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
 // paint_margin
 // ---------------------------------------------------------------------------
 void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect,
@@ -1212,7 +1429,7 @@ void song_body_widget::paint_divider(QPainter& painter) const
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const qreal x      = margin_width_;
+    const qreal x      = divider_x();
     const bool  active = hovered_divider_ || dragging_divider_;
 
     // Faint full-height guide ONLY while the user is interacting with the
@@ -1228,10 +1445,13 @@ void song_body_widget::paint_divider(QPainter& painter) const
 
     // Always-visible grabber: a small rounded handle centred on the
     // boundary x, sitting in the title band at the top of the column.  It
-    // darkens while active so hovering/dragging gives feedback.
+    // darkens while active so hovering/dragging gives feedback.  The band
+    // is offset by the page's top margin so the handle sits in the title
+    // row the user sees, not above the page's top edge.
+    const qreal band_top = page_geo_.margins.top;
     const qreal gh  = std::min(k_divider_grabber_h, std::max(8.0, title_height() - 4.0));
     const qreal gw  = k_divider_grabber_w;
-    const qreal top = std::max(2.0, (title_height() - gh) / 2.0);
+    const qreal top = band_top + std::max(2.0, (title_height() - gh) / 2.0);
     const QRectF handle(x - gw / 2.0, top, gw, gh);
 
     painter.setPen(Qt::NoPen);
@@ -1632,7 +1852,12 @@ void song_body_widget::paint_volta_brackets(QPainter& painter,
 // ---------------------------------------------------------------------------
 void song_body_widget::resizeEvent(QResizeEvent*)
 {
-    rebuild();
+    // The widget is fixed to the page size by compute_layout (setFixedWidth
+    // / setFixedHeight), so a resize here comes only from the scroll area
+    // arranging us, not from a content change that needs re-layout.  Calling
+    // rebuild() would both be wasteful and risk re-entering the size-setting
+    // code.  A repaint is all that's needed.
+    update();
 }
 
 // ---------------------------------------------------------------------------
@@ -1640,7 +1865,7 @@ void song_body_widget::resizeEvent(QResizeEvent*)
 // ---------------------------------------------------------------------------
 bool song_body_widget::near_divider(int x) const
 {
-    return std::abs(x - margin_width_) <= k_divider_hit_width;
+    return std::abs(x - divider_x()) <= k_divider_hit_width;
 }
 
 void song_body_widget::mousePressEvent(QMouseEvent* event)
@@ -2711,7 +2936,7 @@ void song_body_widget::edit_key()
     // but stretch across the margin so there's room to type.
     QRectF r = margin_layout_.key_rect;
     qreal full_w = std::max<qreal>(margin_width_ - 8.0, r.width());
-    r.setLeft(4.0);
+    r.setLeft(page_left() + 4.0);
     r.setWidth(full_w);
 
     QString current = QString::fromStdString(song_.key());
@@ -2746,7 +2971,7 @@ void song_body_widget::edit_time_signature()
     // Anchor it vertically to the painted time-signature rect.
     QRectF r = margin_layout_.time_sig_rect;
     qreal full_w = std::max<qreal>(margin_width_ - 8.0, r.width());
-    r.setLeft(4.0);
+    r.setLeft(page_left() + 4.0);
     r.setWidth(full_w);
 
     open_line_editor(r, current,
@@ -3628,40 +3853,65 @@ bool song_body_widget::eventFilter(QObject* watched, QEvent* event)
 }
 
 // ---------------------------------------------------------------------------
-// paint_to_rect — for printing
+// paint_page_to_rect — for printing one physical page
 // ---------------------------------------------------------------------------
-void song_body_widget::paint_to_rect(QPainter& painter, const QRectF& page_rect) const
+void song_body_widget::paint_page_to_rect(QPainter& painter, int page_index,
+                                          const QRectF& target_rect) const
 {
     painter.save();
 
-    qreal scale_x = page_rect.width()  / static_cast<qreal>(width());
-    qreal scale_y = page_rect.height() / static_cast<qreal>(height());
-    qreal scale   = std::min(scale_x, scale_y);
+    // Scale so our page width maps onto target_rect's width.  When the
+    // destination page size equals page_geo_.size (the normal case — the
+    // print path sets the printer's paper size from the same ui_settings
+    // this widget was seeded from), this is 1.0 and content prints at true
+    // size.  If they differ, we scale uniformly to fit width.
+    const qreal scale = (page_geo_.size.width() > 0.0)
+        ? target_rect.width() / page_geo_.size.width()
+        : 1.0;
 
-    painter.translate(page_rect.left(), page_rect.top());
+    painter.translate(target_rect.left(), target_rect.top());
     painter.scale(scale, scale);
 
-    QRectF my_rect(0, 0, width(), height());
-    painter.fillRect(my_rect, Qt::white);
-    paint_title(painter, width(), /*stash_hit_rect=*/false);
-    paint_margin(painter,
-                 QRectF(0, title_height(), margin_width_, height() - title_height()),
-                 /*stash_hit_rects=*/false);
-    // No divider on paper: the full-height rule reads as a table border on
-    // a printed chart.  The margin contents (key / time / tempo) and the
-    // chart body provide enough separation.  The on-screen grabber is an
-    // interaction affordance only and is intentionally omitted here.
-    painter.setPen(QPen(Qt::black, 1.0));
+    // Canvas-space y of this page's top edge.  Translate the painter up by
+    // that amount so a line whose canvas y is on this page lands correctly
+    // on the physical sheet; lines on other pages fall outside the clip.
+    const qreal page_canvas_top =
+        page_index * (page_geo_.size.height() + k_inter_page_gap);
+    painter.translate(0.0, -page_canvas_top);
+
+    // Clip to this page's sheet rect in canvas space so a line straddling a
+    // page boundary — which pagination shouldn't produce, but defensively —
+    // can't bleed onto the wrong sheet.
+    const QRectF sheet(0.0, page_canvas_top,
+                       page_geo_.size.width(), page_geo_.size.height());
+    painter.setClipRect(sheet);
+    painter.fillRect(sheet, Qt::white);
+
+    // Title and left-margin gutter appear on page 0 only (charts don't
+    // repeat a running header on later pages).
+    if (page_index == 0)
     {
-        // Printouts: never include the selection background, even if the
-        // user had bars selected when triggering print.
-        std::size_t first_bar_index = 0;
-        for (const auto& line : lines_)
+        paint_title(painter, width(), /*stash_hit_rect=*/false, page_geo_.margins.top);
+        paint_margin(painter,
+                     QRectF(page_left(), page_geo_.margins.top + title_height(),
+                            margin_width_,
+                            std::max(0.0, page_geo_.content_height() - title_height())),
+                     /*stash_hit_rects=*/false);
+    }
+    // No divider on paper: the on-screen grabber is an interaction
+    // affordance only and is intentionally omitted here.
+
+    painter.setPen(QPen(Qt::black, 1.0));
+    std::size_t first_bar_index = 0;
+    for (const auto& line : lines_)
+    {
+        if (line.page_index == page_index)
         {
-            paint_line(painter, line, first_bar_index,
-                       /*show_selection=*/false);
-            first_bar_index += line.bars.size();
+            // Printouts never include the selection background even if the
+            // user had bars selected when they triggered print.
+            paint_line(painter, line, first_bar_index, /*show_selection=*/false);
         }
+        first_bar_index += line.bars.size();
     }
 
     painter.restore();

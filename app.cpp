@@ -5,6 +5,7 @@
 #include "view/song_tab.hpp"
 #include "view/song_widget.hpp"
 #include "view/song_body_widget.hpp"
+#include "view/page_setup_dialog.hpp"
 #include <QVBoxLayout>
 #include <QActionGroup>
 #include <QAction>
@@ -507,6 +508,18 @@ void app::wire_view_menu()
             const double current = ui_settings::font_scale();
             for (const auto& p : presets)
                 p.action->setChecked(std::abs(p.scale - current) < 1e-6);
+        });
+
+    // Page Setup: opens a modal dialog that edits the app-wide page size /
+    // margins / display unit (all persisted via ui_settings).  On accept,
+    // the chosen geometry is pushed to every open tab so their previews
+    // re-paginate immediately; tabs opened later read the persisted values
+    // themselves on construction.
+    QObject::connect(nashville_win_.actionPageSetup, &QAction::triggered,
+        [this]() {
+            view::page_setup_dialog dlg(&main_win_);
+            if (dlg.exec() == QDialog::Accepted)
+                main_window_->apply_page_geometry_to_all_tabs(dlg.geometry());
         });
 }
 
