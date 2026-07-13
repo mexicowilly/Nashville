@@ -64,7 +64,7 @@ inline constexpr const char* LENGTH_UNIT_KEY   = "page/length_unit";  // "auto" 
 
 // Sensible defaults: US Letter, 1 inch on every side.
 inline constexpr nashville::page_size PAGE_SIZE_DEFAULT = nashville::page_size::letter;
-inline constexpr double MARGIN_DEFAULT_PT = k_points_per_inch;  // 1in
+inline constexpr double MARGIN_DEFAULT_PT = 0.5 * k_points_per_inch;  // 1in
 
 // Margins are clamped to a sane range: never negative, and never so large
 // that a page could end up with no printable area at all (which would
