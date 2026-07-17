@@ -39,6 +39,40 @@ void set_font_scale(double scale)
     s.sync();
 }
 
+double title_scale()
+{
+    QSettings s(settings_file(), QSettings::IniFormat);
+    bool ok = false;
+    const double v = s.value(TITLE_SCALE_KEY, TITLE_SCALE_DEFAULT).toDouble(&ok);
+    if (!ok)
+        return TITLE_SCALE_DEFAULT;
+    return std::clamp(v, HEADER_SCALE_MIN, HEADER_SCALE_MAX);
+}
+
+void set_title_scale(double scale)
+{
+    QSettings s(settings_file(), QSettings::IniFormat);
+    s.setValue(TITLE_SCALE_KEY, std::clamp(scale, HEADER_SCALE_MIN, HEADER_SCALE_MAX));
+    s.sync();
+}
+
+double margin_scale()
+{
+    QSettings s(settings_file(), QSettings::IniFormat);
+    bool ok = false;
+    const double v = s.value(MARGIN_SCALE_KEY, MARGIN_SCALE_DEFAULT).toDouble(&ok);
+    if (!ok)
+        return MARGIN_SCALE_DEFAULT;
+    return std::clamp(v, HEADER_SCALE_MIN, HEADER_SCALE_MAX);
+}
+
+void set_margin_scale(double scale)
+{
+    QSettings s(settings_file(), QSettings::IniFormat);
+    s.setValue(MARGIN_SCALE_KEY, std::clamp(scale, HEADER_SCALE_MIN, HEADER_SCALE_MAX));
+    s.sync();
+}
+
 nashville::page_size page_size()
 {
     QSettings s(settings_file(), QSettings::IniFormat);

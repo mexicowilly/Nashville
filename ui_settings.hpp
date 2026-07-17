@@ -10,13 +10,16 @@
 // of the platform-specific path conventions QSettings would otherwise use.
 //
 // Settings stored today:
-//   * The chart font scale is a single multiplier applied to every font on
-//     the chart: the chord numbers and their satellites (mode / extensions
-//     / bass / accidental), the rhythm-row glyphs, the title, the section
-//     labels, text boxes, and the left-margin key / time-signature / tempo.
-//     One knob keeps the UX simple — the user picks an overall size and
-//     the whole chart grows as a unit, rather than tuning a dozen
-//     interacting sizes by hand.
+//   * The chart font scale is a single multiplier applied to the chart
+//     body: the chord numbers and their satellites (mode / extensions /
+//     bass / accidental), the rhythm-row glyphs, the section labels, and
+//     text boxes.  One knob keeps the UX simple — the user picks an overall
+//     size and the chart body grows as a unit — while the bar grid also
+//     shrinks itself per-line as needed to fit the page width.
+//   * The song title and the left-margin gutter (key / time signature /
+//     tempo) have their own independent scales, since they sit outside the
+//     bar grid's automatic fit and a user may want them a different size
+//     from the chart body.  See title_scale / margin_scale below.
 //   * The page size and margins are app-wide (not per-song) settings that
 //     drive the print-preview chart view: what paper size charts are laid
 //     out for, and how much blank border surrounds the content on every
@@ -50,6 +53,32 @@ double font_scale();
 
 // Persist a new font scale (clamped to range) and flush it to disk.
 void set_font_scale(double scale);
+
+// --- Title / margin font scales ---------------------------------------
+//
+// Independent multipliers for the two chart elements that don't take part
+// in the bar grid's dynamic auto-fit: the song title and the left-margin
+// gutter (key / time signature / tempo).  The chart body has its own
+// font_scale above (plus the automatic per-line fit); these let the user
+// size the title and margin separately from it.  Both default to 1.0 (the
+// shipped sizes) and, unlike the chart scale, may go below 1.0 — a smaller
+// title or a more compact key/time/tempo column is a reasonable choice.
+inline constexpr const char* TITLE_SCALE_KEY  = "ui/title_scale";
+inline constexpr const char* MARGIN_SCALE_KEY = "ui/margin_scale";
+
+inline constexpr double TITLE_SCALE_DEFAULT  = 1.0;
+inline constexpr double MARGIN_SCALE_DEFAULT = 1.0;
+
+// Shared clamp range for both.  0.5x–2.5x spans "noticeably smaller" to
+// "large" without reaching sizes that would fight the page geometry.
+inline constexpr double HEADER_SCALE_MIN = 0.5;
+inline constexpr double HEADER_SCALE_MAX = 2.5;
+
+double title_scale();
+void   set_title_scale(double scale);
+
+double margin_scale();
+void   set_margin_scale(double scale);
 
 // --- Page size / margins / units --------------------------------------
 

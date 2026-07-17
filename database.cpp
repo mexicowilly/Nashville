@@ -859,8 +859,31 @@ void database::bind_song_columns(sqlite3_stmt* raw, const model::song& s)
 // song_id).  Clears the prior set first so the persisted state matches the
 // in-memory state exactly with no stale rows.  Runs inside the caller's
 // transaction; the caller owns commit.
-void database::write_song_body(std::int64_t song_id, const model::song& s)
+void database::write_song_body(std::int64_t song_id, const model::song& s,
+                               bool allow_empty_bars)
 {
+    // ---- Data-loss backstop ------------------------------------------------
+    // The rewrite below deletes every existing bar row and re-inserts
+    // s.bars().  If s.bars() is empty, that DELETES the chart's bars and
+    // writes nothing back — which is exactly how a saved song reopens with
+    // only its title and margin.  A song legitimately has zero bars only when
+    // brand-new (nothing to protect) or when the user has explicitly cleared
+    // it (allow_empty_bars).  In every other case an empty in-memory bar
+    // vector reaching this far is an upstream bug; rather than trust it, we
+    // check the *actual* persisted state and refuse to overwrite a real chart
+    // with nothing — leaving the stored bars (and annotations) untouched so a
+    // reload restores them.  The song-row columns (name, margin, key, …) were
+    // already updated by the caller and are harmless to keep.
+    if (s.bars().empty() && !allow_empty_bars && song_has_bars(song_id))
+    {
+        lgr()->error(
+            "Refusing to overwrite the stored bars of song '{}' (id {}) with an "
+            "empty set: the in-memory song had no bars when a save reached the "
+            "database. Keeping the existing bars to prevent data loss.",
+            s.name(), song_id);
+        return;
+    }
+
     // Clear any bars from a previous save before writing the current set.
     // For a brand-new song this is a no-op.
     remove_song_bars(song_id);
@@ -1058,7 +1081,7 @@ song_id database::insert_song(const model::song& s)
 // Overwrite an existing song row, located by id.  Because the row is found by
 // id, the name is just another column in the write — a rename is an ordinary
 // update, with no old-name lookup and no chance of orphaning the prior row.
-void database::update_song(song_id id, const model::song& s)
+void database::update_song(song_id id, const model::song& s, bool allow_empty_bars)
 {
     assert(prepared_statements_.count(statement::UPDATE_SONG) == 1);
     auto& upd_s = prepared_statements_[statement::UPDATE_SONG];
@@ -1074,9 +1097,23 @@ void database::update_song(song_id id, const model::song& s)
     if (sqlite3_changes(db_) == 0)
         throw std::runtime_error("Cannot update song '"s + s.name()
             + "': no song with id " + std::to_string(rid));
-    write_song_body(rid, s);
+    write_song_body(rid, s, allow_empty_bars);
     tx.commit();
     lgr()->debug("Updated song '{}' (id {})", s.name(), rid);
+}
+
+// True iff this song currently has at least one bar row persisted.  Reuses
+// SELECT_SONG_BARS and stops at the first row, so it's a cheap existence
+// check rather than a full load.
+bool database::song_has_bars(std::int64_t song_id)
+{
+    assert(prepared_statements_.count(statement::SELECT_SONG_BARS) == 1);
+    auto& sel = prepared_statements_[statement::SELECT_SONG_BARS];
+    sel->reset();
+    sqlite3_bind_int64(sel->ptr(), 1, song_id);
+    const bool has_row = (sqlite3_step(sel->ptr()) == SQLITE_ROW);
+    sel->reset();   // don't leave the statement mid-iteration
+    return has_row;
 }
 
 std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar_id, unsigned index)

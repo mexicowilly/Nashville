@@ -57,6 +57,8 @@ qt_add_executable(nashville
     view/bar_renderer.hpp
     view/chord_renderer.cpp
     view/chord_renderer.hpp
+    view/font_size_dialog.cpp
+    view/font_size_dialog.hpp
     view/layout_structs.hpp
     view/main_window.cpp
     view/main_window.hpp

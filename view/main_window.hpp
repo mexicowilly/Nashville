@@ -91,6 +91,12 @@ public:
     // scale themselves on construction, so only open charts need this.
     void apply_font_scale_to_all_tabs(qreal scale);
 
+    // Apply a new title or margin font scale to every open tab.  Called by
+    // app when the user changes the Title & Margin Size dialog; later tabs
+    // read the persisted values on construction.
+    void apply_title_scale_to_all_tabs(qreal scale);
+    void apply_margin_scale_to_all_tabs(qreal scale);
+
     // Apply new page size/margins (from ui_settings) to every open tab and
     // relayout each.  Called by app when the user changes Page Setup.  Tabs
     // opened afterwards read the persisted geometry themselves on

@@ -27,10 +27,44 @@ public:
     static constexpr qreal k_number_zone_ratio           = 0.65;
     static constexpr qreal k_articulation_zone_ratio     = 0.35;
 
-    // Diamond padding around the tight number glyph rect.
+    // Diamond padding around the tight number glyph rect, at k_number_ref_pt.
     // Public so bar_renderer can account for vertical clearance in slot sizing.
+    // These are the *reference* values; the drawn diamond and every clearance
+    // computed from it scale with the live number font (see diamond_padding_*
+    // below), so use those helpers rather than these raw constants.
     static constexpr qreal k_diamond_padding_h = 10.0;  // left/right
     static constexpr qreal k_diamond_padding_v =  6.0;  // top/bottom
+
+    // Reference number point size the absolute paddings above are tuned
+    // against (matches song_body_widget::k_number_base_pt).  The diamond
+    // padding is scaled by the live number font relative to this so the
+    // diamond stays proportional to the number at any font scale.  Without
+    // it, the fixed 6px overhang collides with the chord/diamond on the line
+    // above or below at the small scales the horizontal auto-fit produces
+    // (and looks undersized at large Text sizes).
+    static constexpr qreal k_number_ref_pt = 15.0;
+
+    // Diamond padding scaled to the live number font.  Use these — not the
+    // raw k_diamond_padding_* constants — everywhere the drawn diamond's size
+    // or its reserved vertical clearance is computed, so drawing and
+    // reservation always agree.
+    //
+    // The scale is clamped to 1.0: the padding only ever *shrinks* below the
+    // reference size, never grows.  Shrinking at small scales is what fixes
+    // the collision (a fixed 6px overhang is too large once the auto-fit
+    // shrinks the fonts).  Growing at large Text sizes would instead let the
+    // diamond outgrow the fixed inter-line spacing, so we hold it at the
+    // reference there — identical to the original fixed-padding behaviour.
+    static qreal diamond_padding_h(const Fonts& fonts)
+    {
+        const qreal s = fonts.number.pointSizeF() / k_number_ref_pt;
+        return k_diamond_padding_h * (s < 1.0 ? s : 1.0);
+    }
+    static qreal diamond_padding_v(const Fonts& fonts)
+    {
+        const qreal s = fonts.number.pointSizeF() / k_number_ref_pt;
+        return k_diamond_padding_v * (s < 1.0 ? s : 1.0);
+    }
 
     // Returns the minimum bounding size needed to render this chord,
     // given the supplied fonts. Used by the layout pass.
@@ -94,7 +128,7 @@ private:
                              qreal number_top_y);
     static void paint_tied_arc(QPainter& painter, const QRectF& artRect,
                                qreal diamond_left = -1.0, qreal diamond_right = -1.0);
-    static void paint_diamond(QPainter& painter, const QRectF& numberRect, qreal art_bottom, qreal max_bottom);
+    static void paint_diamond(QPainter& painter, const QRectF& numberRect, qreal art_bottom, qreal max_bottom, const Fonts& fonts);
 
     // --- Number row helpers ---
 

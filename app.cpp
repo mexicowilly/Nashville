@@ -6,6 +6,7 @@
 #include "view/song_widget.hpp"
 #include "view/song_body_widget.hpp"
 #include "view/page_setup_dialog.hpp"
+#include "view/font_size_dialog.hpp"
 #include <QVBoxLayout>
 #include <QActionGroup>
 #include <QAction>
@@ -520,6 +521,23 @@ void app::wire_view_menu()
             view::page_setup_dialog dlg(&main_win_);
             if (dlg.exec() == QDialog::Accepted)
                 main_window_->apply_page_geometry_to_all_tabs(dlg.geometry());
+        });
+
+    // Title & Margin Size: a small modal that sets the two font scales
+    // sitting outside the chart body's automatic sizing — the song title
+    // and the left-margin key / time / tempo.  On accept, persist both and
+    // push them to every open tab so previews update immediately; tabs
+    // opened later read the persisted values on construction.
+    QObject::connect(nashville_win_.actionTitleMarginSize, &QAction::triggered,
+        [this]() {
+            view::font_size_dialog dlg(&main_win_);
+            if (dlg.exec() == QDialog::Accepted)
+            {
+                ui_settings::set_title_scale(dlg.title_scale());
+                ui_settings::set_margin_scale(dlg.margin_scale());
+                main_window_->apply_title_scale_to_all_tabs(dlg.title_scale());
+                main_window_->apply_margin_scale_to_all_tabs(dlg.margin_scale());
+            }
         });
 }
 

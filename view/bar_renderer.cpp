@@ -265,7 +265,7 @@ qreal bar_renderer::number_row_center_y(const QRectF& rect,
                            : rect.top() + top_pad;
     qreal chord_slot_h   = line_duration_mode
                            ? num_h + art_h + (bar_has_diamond
-                                 ? chord_renderer::k_diamond_padding_v + 1.0 : 0.0)
+                                 ? chord_renderer::diamond_padding_v(fonts) + 1.0 : 0.0)
                            : rect.height() - top_pad;
 
     qreal top_offset = line_has_articulation ? art_h : k_plain_top_pad;
@@ -335,7 +335,7 @@ void bar_renderer::paint(QPainter& painter,
     qreal art_h = line_has_articulation ? artFm_slot.ascent() + artFm_slot.descent() : 0.0;
 
     // Does any chord on this line have a diamond? If so the diamond's bottom
-    // point extends k_diamond_padding_v below the tight glyph rect.  Add that
+    // point extends diamond_padding_v below the tight glyph rect.  Add that
     // plus 1px clearance to the chord slot so the rule always clears the diamond.
     bool line_has_diamond = false;
     for (const auto& ch : bar.chords())
@@ -343,7 +343,7 @@ void bar_renderer::paint(QPainter& painter,
 
     qreal chord_slot_h  = line_duration_mode
                          ? num_h + art_h + (line_has_diamond
-                               ? chord_renderer::k_diamond_padding_v + 1.0 : 0.0)
+                               ? chord_renderer::diamond_padding_v(fonts) + 1.0 : 0.0)
                          : rect.height() - top_pad;
     constexpr qreal k_rhythm_row_px = 16.0;  // must match duration_bar_height
     qreal rhythm_row_h = line_duration_mode ? k_rhythm_row_px : rect.height() * k_rhythm_row_ratio;

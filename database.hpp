@@ -65,7 +65,11 @@ public:
     // Every song's name and descriptive metadata, unsorted.  Lets the UI sort
     // the song list by any field without loading songs in full.
     std::vector<song_summary> song_summaries();
-    void update_song(song_id id, const model::song& s);
+    // allow_empty_bars must be set true only for a deliberate, user-confirmed
+    // "delete all bars".  Left false (the default), the write refuses to
+    // replace an existing non-empty bar set with an empty one — a last-line
+    // data-loss guard (see write_song_body).
+    void update_song(song_id id, const model::song& s, bool allow_empty_bars = false);
     void move_to_file(const std::filesystem::path& file_name);
     void open_file(const std::filesystem::path& file_name);
     void remove_playlist(const std::string& pl);
@@ -149,7 +153,13 @@ private:
     void check_version();
     std::string error_msg(int rc) const;
     void bind_song_columns(sqlite3_stmt* raw, const model::song& s);
-    void write_song_body(std::int64_t song_id, const model::song& s);
+    void write_song_body(std::int64_t song_id, const model::song& s,
+                         bool allow_empty_bars = false);
+    // True iff the given song currently has at least one persisted bar row.
+    // Used by write_song_body's data-loss guard to decide, from the actual
+    // database state (not any in-memory snapshot), whether an incoming empty
+    // bar set would wipe a real chart.
+    bool song_has_bars(std::int64_t song_id);
     std::uint64_t insert_bar(const model::bar& b);
     std::uint64_t insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index);
     std::uint64_t insert_chord(const model::chord& c);

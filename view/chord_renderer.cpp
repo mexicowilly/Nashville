@@ -139,7 +139,7 @@ void chord_renderer::paint(QPainter& painter,
                             numberGlyphRect.center().x(), row_right);
 
     if (ch.is_diamond())
-        paint_diamond(painter, numberGlyphRect, artRect.bottom(), numRect.bottom() - 1.0);
+        paint_diamond(painter, numberGlyphRect, artRect.bottom(), numRect.bottom() - 1.0, fonts);
 
     painter.restore();
 }
@@ -654,11 +654,17 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 // Private: paint_diamond — drawn around the number glyph rect
 // ---------------------------------------------------------------------------
 void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect,
-                                   qreal /*art_bottom*/, qreal /*max_bottom*/)
+                                   qreal /*art_bottom*/, qreal /*max_bottom*/,
+                                   const Fonts& fonts)
 {
     painter.save();
-    QRectF r = numberRect.adjusted(-k_diamond_padding_h, -k_diamond_padding_v,
-                                    k_diamond_padding_h,  k_diamond_padding_v);
+    // Scale the padding with the live number font so the diamond stays
+    // proportional to the number it surrounds; at the small scales the
+    // horizontal auto-fit produces, a fixed overhang would reach into the
+    // line above/below and the diamonds would collide.
+    const qreal pad_h = diamond_padding_h(fonts);
+    const qreal pad_v = diamond_padding_v(fonts);
+    QRectF r = numberRect.adjusted(-pad_h, -pad_v, pad_h, pad_v);
     QPointF center = r.center();
     QPolygonF diamond;
     diamond << QPointF(center.x(), r.top())

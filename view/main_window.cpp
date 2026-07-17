@@ -1059,6 +1059,24 @@ void main_window::apply_font_scale_to_all_tabs(qreal scale)
     }
 }
 
+void main_window::apply_title_scale_to_all_tabs(qreal scale)
+{
+    for (int i = 0; i < tabs_->count(); ++i)
+    {
+        if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
+            tab->widget()->body()->apply_title_scale(scale);
+    }
+}
+
+void main_window::apply_margin_scale_to_all_tabs(qreal scale)
+{
+    for (int i = 0; i < tabs_->count(); ++i)
+    {
+        if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
+            tab->widget()->body()->apply_margin_scale(scale);
+    }
+}
+
 void main_window::apply_page_geometry_to_all_tabs(const page_geometry& geo)
 {
     for (int i = 0; i < tabs_->count(); ++i)

@@ -156,6 +156,13 @@ private:
     // for the use case.
     bool                         save_suppressed_ = false;
 
+    // One-shot authorisation for the autosave's empty-bars clobber guard.
+    // Set when song_body_widget::song_emptied fires (the user confirmed a
+    // "delete all bars"), letting exactly the next save persist an empty bar
+    // set over a previously non-empty one.  Consumed by that save, so any
+    // later stray/ill-timed empty save is still refused.
+    bool                         allow_empty_persist_once_ = false;
+
     // Save debounce: how long after the last edit we wait before
     // writing.  1 second is the standard auto-save cadence; short
     // enough that a crash loses at most a second of work, long

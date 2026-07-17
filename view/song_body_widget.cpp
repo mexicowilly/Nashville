@@ -84,10 +84,16 @@ song_body_widget::song_body_widget(model::song& song, QWidget* parent)
     // is sized proportionally up front (the key / time / tempo need room
     // to grow with the rest of the chart); the user can still drag it.
     font_scale_   = ui_settings::font_scale();
+    title_scale_  = ui_settings::title_scale();
+    margin_scale_ = ui_settings::margin_scale();
     if (auto stored = song_.margin_width())
         margin_width_ = std::clamp(int(*stored), k_min_margin_width, k_max_margin_width);
     else
-        margin_width_ = scaled_margin_default(font_scale_);
+        // The gutter holds the key / time / tempo, which are sized by
+        // margin_scale_ (not the chart's font_scale_), so its default width
+        // tracks margin_scale_.  This keeps the chart's Text size from
+        // inflating an otherwise-empty gutter and stealing bar width.
+        margin_width_ = scaled_margin_default(margin_scale_);
     init_fonts();
 
     // Seed the page size/margins from the persisted (app-wide) UI settings,
@@ -157,6 +163,14 @@ void song_body_widget::resolve_music_family()
 
 void song_body_widget::init_fonts()
 {
+    // Seed fonts_ at the authored size.  compute_layout may later rebuild
+    // them smaller (via build_fonts) to fit a wide line, but seeding here
+    // keeps fonts_ sane for any paint that happens before the first layout.
+    build_fonts(font_scale_);
+}
+
+void song_body_widget::build_fonts(qreal effective_scale)
+{
     if (music_family_.isEmpty())
         resolve_music_family();
 
@@ -165,35 +179,42 @@ void song_body_widget::init_fonts()
     // dominant chord-number size.  Scaling all of them by one factor
     // preserves those relationships, so a single knob makes the whole
     // chart bigger without disturbing its balance.
-    // Base sizes below are for scale 1.0 (the default).  They're tuned for
-    // vertical density: in a Nashville chart, page count is a primary
-    // concern — musicians strongly prefer a chart that doesn't spill onto a
-    // second page — so the number is sized to be clearly legible but no
-    // larger, and the satellites (modifier / articulation / music) keep
-    // their proportions to it so the whole chart still scales as a unit via
-    // font_scale_.  Ratios to the number (15pt): modifier ~0.6,
-    // articulation ~0.67, music ~0.78 — the same balance as before, just
-    // scaled down from the original 18pt number.
-    const qreal s = font_scale_;
+    // Base sizes are tuned for vertical density: in a Nashville chart, page
+    // count is a primary concern — musicians strongly prefer a chart that
+    // doesn't spill onto a second page — so the number is sized to be
+    // clearly legible but no larger, and the satellites (modifier /
+    // articulation / music) keep their proportions to it so the whole chart
+    // still scales as a unit.  Ratios to the number (15pt): modifier ~0.6,
+    // articulation ~0.67, music ~0.78.
+    //
+    // effective_scale folds together the user's authored size (font_scale_)
+    // and any automatic horizontal-fit shrink (grid_fit_scale_); the caller
+    // supplies the product so this stays a pure "build fonts at size s".
+    const qreal s = effective_scale;
 
     fonts_.number = QFont("Georgia");
     fonts_.number.setWeight(QFont::Normal);
-    fonts_.number.setPointSizeF(15.0 * s);
+    fonts_.number.setPointSizeF(k_number_base_pt * s);
 
     fonts_.modifier = QFont("Georgia");
-    fonts_.modifier.setPointSizeF(9.0 * s);
+    fonts_.modifier.setPointSizeF(k_modifier_base_pt * s);
 
     fonts_.articulation = QFont("Georgia");
-    fonts_.articulation.setPointSizeF(10.0 * s);
+    fonts_.articulation.setPointSizeF(k_articulation_base_pt * s);
 
     fonts_.music = QFont(music_family_);
-    fonts_.music.setPointSizeF(11.5 * s);
+    fonts_.music.setPointSizeF(k_music_base_pt * s);
 }
 
 QFont song_body_widget::text_box_font() const
 {
-    QFont f = fonts_.number;
-    f.setPointSizeF(std::max(8.0, f.pointSizeF() * 0.75));
+    // Derive from the AUTHORED chord-number size (font_scale_ only), not the
+    // live fonts_ — the latter may have been shrunk by the auto-fit pass to
+    // squeeze a wide bar line onto the page.  Free-text annotations float
+    // independently of the bar grid, so they keep their authored size and
+    // don't shrink just because some line elsewhere is wide.
+    QFont f("Georgia");
+    f.setPointSizeF(std::max(8.0, k_number_base_pt * font_scale_ * 0.75));
     return f;
 }
 
@@ -213,12 +234,12 @@ void song_body_widget::apply_font_scale(qreal scale)
 
     font_scale_ = scale;
 
-    // Resize the margin column with the text.  Changing the global text
-    // size is a deliberate "resize the whole chart" action, so we reset
-    // the (otherwise user-draggable) margin to the proportionate default
-    // rather than trying to preserve a prior drag — keeping the layout
-    // coherent and the key / time / tempo from clipping at large sizes.
-    margin_width_ = scaled_margin_default(scale);
+    // Note: the margin gutter is deliberately NOT resized here.  It holds the
+    // key / time / tempo, which are sized by margin_scale_, not the chart's
+    // font_scale_ — so growing the gutter with the chart's Text size would
+    // only steal width from the bars (and, via the auto-fit, could make a
+    // width-constrained chart come out *smaller* at a larger Text size).  The
+    // gutter follows margin_scale_ and the user's drag instead.
 
     init_fonts();
 
@@ -228,6 +249,35 @@ void song_body_widget::apply_font_scale(qreal scale)
     annotation_layer_.set_text_font(text_box_font());
 
     rebuild();   // recompute layout with the new metrics, then repaint
+}
+
+void song_body_widget::apply_title_scale(qreal scale)
+{
+    scale = std::clamp<qreal>(scale,
+                              ui_settings::HEADER_SCALE_MIN,
+                              ui_settings::HEADER_SCALE_MAX);
+    if (scale == title_scale_)
+        return;
+    title_scale_ = scale;
+    // The title band height changes with the title font, and that height
+    // feeds both the content-top offset and the page-break math, so a full
+    // rebuild (not just a repaint) is required.
+    rebuild();
+}
+
+void song_body_widget::apply_margin_scale(qreal scale)
+{
+    scale = std::clamp<qreal>(scale,
+                              ui_settings::HEADER_SCALE_MIN,
+                              ui_settings::HEADER_SCALE_MAX);
+    if (scale == margin_scale_)
+        return;
+    margin_scale_ = scale;
+    // The margin gutter's width is fixed (draggable / scaled off the chart
+    // font, not the margin font) and the margin renderer shrinks its text to
+    // fit that width, so this only changes what's painted — but rebuild()
+    // keeps the single "settings changed → relayout+repaint" path uniform.
+    rebuild();
 }
 
 void song_body_widget::apply_page_geometry(const page_geometry& geo)
@@ -467,6 +517,16 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         // because there are no labels yet.  A brand-new song is always a
         // single page; fix the canvas to one page so the empty sheet still
         // renders at full page height.
+        //
+        // Nothing can overflow with no bars, so drop any auto-fit shrink
+        // carried over from a prior (non-empty) layout and restore the
+        // authored grid-font size — otherwise the "click to add" ghost bar
+        // would keep a stale, shrunk height.
+        if (grid_fit_scale_ != 1.0)
+        {
+            grid_fit_scale_ = 1.0;
+            build_fonts(font_scale_);
+        }
         page_count_ = 1;
         compute_insertion_slots(content_rect,
                                 /*bars_left=*/content_rect.left(),
@@ -511,50 +571,13 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
     if (!current.bars.empty())
         raw_lines.push_back(std::move(current));
 
-    qreal plain_h_bare   = plain_bar_height(false);
-    qreal plain_h_art    = plain_bar_height(true);
-    qreal duration_h_bare = duration_bar_height(false);
-    qreal duration_h_art  = duration_bar_height(true);
+    // --- Line predicates (font-independent) ---
+    // These inspect the model only, so they're stable across the auto-fit
+    // search below and are defined once, up front.
 
-    // --- Pass 2: measure section column width ---
-    // All lines share the same section column width = widest label + padding.
-    // Lines without a label still reserve the column so bars stay aligned.
-    // We always reserve a minimum gutter even when no section labels exist
-    // anywhere, so the user can click into the empty space to bootstrap
-    // the very first section.  When labels exist, the gutter widens to fit
-    // the widest one.
-    constexpr qreal k_label_pad_h = 6.0;   // horizontal padding inside box
-    constexpr qreal k_label_pad_v = 3.0;   // vertical padding inside box
-    constexpr qreal k_section_gap = 8.0;   // gap between section col and first bar
-    constexpr qreal k_min_section_col_w = 24.0;  // bootstrap gutter for label-less songs
-
-    QFont label_font = fonts_.modifier;
-    label_font.setBold(true);
-    QFontMetricsF label_fm(label_font);
-
-    // The UI invariant is "sections live on the first bar of a line."
-    // Measure label widths from first-of-line bars only — any stray
-    // section on a non-first bar (e.g. from a malformed loaded file) is
-    // silently ignored everywhere in the layout, including here.
-    qreal max_label_w = 0.0;
-    for (const auto& raw : raw_lines)
-    {
-        if (raw.bars.empty()) continue;
-        const auto* first = raw.bars.front().bar;
-        if (first->section())
-            max_label_w = std::max(max_label_w,
-                label_fm.horizontalAdvance(QString::fromStdString(*first->section())));
-    }
-
-    qreal labelled_col_w = (max_label_w > 0.0)
-                            ? max_label_w + k_label_pad_h * 2.0 + k_section_gap
-                            : 0.0;
-    qreal section_col_w = std::max(labelled_col_w,
-                                   k_min_section_col_w + k_section_gap);
-
-    // Helper: does any chord on this line have an above-number articulation?
-    // Ties also live in the articulation zone, so a tied chord forces the
-    // zone to be reserved even if nothing on the line is staccato or pushed.
+    // Does any chord on this line have an above-number articulation?  Ties
+    // also live in the articulation zone, so a tied chord forces the zone to
+    // be reserved even if nothing on the line is staccato or pushed.
     auto line_has_articulation = [](const std::vector<raw_bar>& bars) {
         for (const auto& rb : bars)
             for (const auto& ch : rb.bar->chords())
@@ -563,10 +586,9 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         return false;
     };
 
-    // Helper: does any bar on this line carry a volta number?  When true,
+    // Does any bar on this line carry a volta number?  When true,
     // compute_layout reserves k_volta_zone_height above the chord row so
-    // the volta bracket has somewhere to sit without overlapping the
-    // chords.
+    // the volta bracket has somewhere to sit without overlapping the chords.
     auto line_has_voltas = [](const std::vector<raw_bar>& bars) {
         for (const auto& rb : bars)
             if (!rb.bar->voltas().empty())
@@ -574,9 +596,9 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         return false;
     };
 
-    // Helper: does any bar on this line carry a custom beat count that
-    // differs from the song's time signature?  When true, compute_layout
-    // reserves k_beat_dot_zone_height above the chord row for the dot row.
+    // Does any bar on this line carry a custom beat count that differs from
+    // the song's time signature?  When true, compute_layout reserves
+    // k_beat_dot_zone_height above the chord row for the dot row.
     auto line_has_beat_dots = [&](const std::vector<raw_bar>& bars) {
         const unsigned sig_beats = song_.time_sig().count();
         for (const auto& rb : bars)
@@ -586,6 +608,23 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         return false;
     };
 
+    // --- Measurement state (filled by measure() at the chosen font scale) ---
+    // The bar heights and per-column widths all depend on the grid font
+    // size, so they're recomputed each time the auto-fit search tries a new
+    // scale.  section_col_w / col_widths / col_mod_w are the shared column
+    // metrics that Pass 4 lays every line out against.
+    qreal plain_h_bare = 0.0, plain_h_art = 0.0;
+    qreal duration_h_bare = 0.0, duration_h_art = 0.0;
+    qreal section_col_w = 0.0;
+    std::vector<qreal> col_widths;
+    std::vector<qreal> col_mod_w;
+
+    constexpr qreal k_label_pad_h = 6.0;   // horizontal padding inside box
+    constexpr qreal k_section_gap = 8.0;   // gap between section col and first bar
+    constexpr qreal k_min_section_col_w = 24.0;  // bootstrap gutter for label-less songs
+
+    // Bar height for a line, from the current (possibly auto-fit-shrunk)
+    // grid fonts.  Reads the plain_/duration_ height vars measure() sets.
     auto line_bar_height = [&](const std::vector<raw_bar>& bars) -> qreal {
         bool has_art  = line_has_articulation(bars);
         bool has_dots = line_has_beat_dots(bars);
@@ -596,74 +635,182 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         return beat_dot_h + (has_art ? plain_h_art : plain_h_bare);
     };
 
-    // --- Pass 3: compute per-column bar widths ---
-    // k_bar_padding is a class-level constant (see header) — shared with
-    // continuation-dot placement, which needs the same margin value to
-    // reproduce natural spacing when anchoring to a bar's content edge
-    // instead of its rect.
+    // measure(): rebuild the grid fonts at font_scale_ * effective, then
+    // recompute every scale-dependent layout metric (bar heights, the shared
+    // section column width, and the per-column modulation-slot and bar
+    // widths).  Returns the widest line's natural width — the exact extent
+    // Pass 4 will lay that line out to — so the caller can compare it against
+    // the content column and decide whether the grid must shrink further.
+    // Leaves fonts_ holding the fonts it measured at, so once the search
+    // settles the paint pass draws with the same sizes it measured.
+    //
+    // Passes 2 and 3 of the original single-shot layout live here now: the
+    // section-column measurement (all lines share one width = widest label +
+    // padding, with a bootstrap gutter so a label-less song can still be
+    // clicked into) and the per-column width budgeting (which must include
+    // repeat-mark slots, the column-wide modulation slot, and beat-count
+    // parens, since each consumes real horizontal space paint() will draw).
+    auto measure = [&](qreal effective) -> qreal {
+        build_fonts(font_scale_ * effective);
+
+        plain_h_bare    = plain_bar_height(false);
+        plain_h_art     = plain_bar_height(true);
+        duration_h_bare = duration_bar_height(false);
+        duration_h_art  = duration_bar_height(true);
+
+        // Section column width.  The UI invariant is "sections live on the
+        // first bar of a line", so labels are measured from first-of-line
+        // bars only; a stray section on a non-first bar is ignored here as
+        // everywhere else.
+        QFont label_font = fonts_.modifier;
+        label_font.setBold(true);
+        QFontMetricsF label_fm(label_font);
+        qreal max_label_w = 0.0;
+        for (const auto& raw : raw_lines)
+        {
+            if (raw.bars.empty()) continue;
+            const auto* first = raw.bars.front().bar;
+            if (first->section())
+                max_label_w = std::max(max_label_w,
+                    label_fm.horizontalAdvance(QString::fromStdString(*first->section())));
+        }
+        qreal labelled_col_w = (max_label_w > 0.0)
+                                ? max_label_w + k_label_pad_h * 2.0 + k_section_gap
+                                : 0.0;
+        section_col_w = std::max(labelled_col_w,
+                                 k_min_section_col_w + k_section_gap);
+
+        // Per-column modulation slot width.  A modulation circle on any line
+        // reserves space in its column for EVERY line, so the chords in that
+        // column stay aligned across lines instead of only the modulating
+        // bar shifting right.  Take the max slot over all bars in the column.
+        col_mod_w.clear();
+        for (const auto& raw : raw_lines)
+        {
+            qreal bar_h = line_bar_height(raw.bars);
+            for (std::size_t j = 0; j < raw.bars.size(); ++j)
+            {
+                qreal mw = bar_renderer::modulation_slot_width(*raw.bars[j].bar,
+                                                               bar_h, fonts_);
+                if (j >= col_mod_w.size())
+                    col_mod_w.push_back(mw);
+                else
+                    col_mod_w[j] = std::max(col_mod_w[j], mw);
+            }
+        }
+
+        // Per-column bar width.  k_bar_padding is a class-level constant
+        // (see header) — shared with continuation-dot placement, which needs
+        // the same margin value to reproduce natural spacing when anchoring
+        // to a bar's content edge instead of its rect.
+        col_widths.clear();
+        const unsigned sig_beats = song_.time_sig().count();
+        for (const auto& raw : raw_lines)
+        {
+            qreal bar_h = line_bar_height(raw.bars);
+            for (std::size_t j = 0; j < raw.bars.size(); ++j)
+            {
+                const auto& rb = raw.bars[j];
+                bool begin_r = repeat_flags[rb.song_index].first;
+                bool end_r   = repeat_flags[rb.song_index].second;
+                // Mirrors the draw_beat_parens determination in Pass 4: a bar
+                // whose custom beat count differs from the time signature has
+                // its chord numbers parenthesised, and the closing paren
+                // needs reserved width or it bleeds into whatever sits to the
+                // right (most visibly an extended line's continuation dot).
+                bool beat_parens = rb.bar->number_of_beats().has_value()
+                                 && *rb.bar->number_of_beats() != sig_beats;
+
+                qreal w = bar_renderer::width_hint(*rb.bar, bar_h, fonts_,
+                                                  begin_r, end_r, col_mod_w[j],
+                                                  beat_parens)
+                          + k_bar_padding;
+                if (j >= col_widths.size())
+                    col_widths.push_back(w);
+                else
+                    col_widths[j] = std::max(col_widths[j], w);
+            }
+        }
+
+        // Widest line's natural width: the shared section column, every bar
+        // column that line spans, and the inter-bar gaps between them.  This
+        // matches exactly what Pass 4 lays the line out to, so keeping it
+        // within the content column is what prevents horizontal spill.
+        qreal widest = 0.0;
+        for (const auto& raw : raw_lines)
+        {
+            if (raw.bars.empty()) continue;
+            qreal w = section_col_w;
+            for (std::size_t j = 0; j < raw.bars.size(); ++j)
+                w += col_widths[j];
+            if (raw.bars.size() > 1)
+                w += (raw.bars.size() - 1) * k_inter_bar_spacing;
+            widest = std::max(widest, w);
+        }
+        return widest;
+    };
+
+    // --- Auto-fit search ---
+    // If the widest line overruns the content column it would spill off the
+    // page, so shrink the grid fonts until it fits.  The obvious approach —
+    // step the scale by content_w/widest and repeat — converges only slowly
+    // when the fixed per-bar padding and inter-bar gaps (which don't shrink
+    // with the fonts) are a large share of the line width, so a capped step
+    // count left a few pixels of overflow on tightly packed lines.
+    //
+    // Binary-search the scale instead: rendered line width is monotonic in
+    // the font scale, so we can bracket the largest scale whose widest line
+    // fits and reach sub-pixel precision in a fixed number of steps.  We aim
+    // a hair inside content_w (k_fit_safety_margin) so rounding can't tip the
+    // rendered line back over the edge.  Only the bar grid is touched: the
+    // title, margin gutter, and annotations keep their authored size (see
+    // build_fonts / text_box_font).
+    const qreal content_w  = content_rect.width();
+    const qreal fit_target = content_w - k_fit_safety_margin;
+    grid_fit_scale_ = 1.0;
+    qreal widest = measure(grid_fit_scale_);
+    if (content_w > 0.0 && widest > fit_target)
+    {
+        // Lower bound on the fit multiplier.  k_min_fit_scale is the absolute
+        // readability floor on the *effective* grid scale (font_scale_ *
+        // grid_fit_scale_).  Because grid_fit_scale_ multiplies the user's
+        // Text size, flooring it directly would make the floor scale with
+        // Text size — at Huge (font_scale_ 2) the grid couldn't shrink below
+        // effective 0.8, so a width-constrained chart would overflow instead
+        // of fitting.  Divide the floor by font_scale_ so the effective scale
+        // is what's actually bounded; cap at 1.0 since the grid never grows
+        // past the authored size.
+        qreal lo = std::min<qreal>(1.0, k_min_fit_scale / font_scale_);
+        qreal hi = 1.0;               // known not to fit (widest > fit_target here)
+        if (measure(lo) > fit_target)
+        {
+            // Even the floor can't fit this line (more bars than the fixed
+            // spacing alone leaves room for).  Use the floor and accept the
+            // residual overflow — going smaller would be illegible.
+            grid_fit_scale_ = lo;
+        }
+        else
+        {
+            // Invariant: measure(lo) fits, measure(hi) does not.  Narrow the
+            // bracket toward the boundary, keeping lo on a fitting scale.
+            for (int i = 0; i < k_fit_search_iterations; ++i)
+            {
+                const qreal mid = 0.5 * (lo + hi);
+                if (measure(mid) <= fit_target)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            grid_fit_scale_ = lo;   // largest scale confirmed to fit
+        }
+        // Re-establish the shared column metrics (and fonts_) at the chosen
+        // scale: the last measure() above may have been at a rejected scale.
+        measure(grid_fit_scale_);
+    }
+
+    // fonts_, the height vars, section_col_w, col_widths and col_mod_w now
+    // all reflect the settled fit scale; the geometry pass consumes them.
     qreal bars_left = content_rect.left() + section_col_w;
-    std::vector<qreal> col_widths;
-
-    // Per-column modulation slot width.  A modulation circle on any line
-    // reserves space in its column for EVERY line, so the chords in that
-    // column stay aligned across lines instead of only the modulating bar
-    // shifting right.  We take the max modulation slot over all bars in the
-    // column (usually just one bar carries a modulation, but taking the max
-    // is correct and cheap when several do, possibly at differing heights).
-    std::vector<qreal> col_mod_w;
-    for (const auto& raw : raw_lines)
-    {
-        qreal bar_h = line_bar_height(raw.bars);
-        for (std::size_t j = 0; j < raw.bars.size(); ++j)
-        {
-            qreal mw = bar_renderer::modulation_slot_width(*raw.bars[j].bar,
-                                                           bar_h, fonts_);
-            if (j >= col_mod_w.size())
-                col_mod_w.push_back(mw);
-            else
-                col_mod_w[j] = std::max(col_mod_w[j], mw);
-        }
-    }
-
-    for (const auto& raw : raw_lines)
-    {
-        qreal bar_h = line_bar_height(raw.bars);
-
-        for (std::size_t j = 0; j < raw.bars.size(); ++j)
-        {
-            // Width must include the repeat-mark slots when present:
-            // they sit outside the chord row and consume real horizontal
-            // space.  Looking up the flags by song_index keeps this in
-            // sync with what paint() will eventually draw.  The modulation
-            // slot is the column-wide reservation so every bar in the
-            // column budgets the same width.
-            const auto& rb = raw.bars[j];
-            bool begin_r = repeat_flags[rb.song_index].first;
-            bool end_r   = repeat_flags[rb.song_index].second;
-
-            // Mirrors the draw_beat_parens determination in Pass 4 below —
-            // a bar whose custom beat count differs from the song's time
-            // signature gets its chord numbers wrapped in parentheses.
-            // Computing it here too (rather than deferring to Pass 4) is
-            // required: this is the pass that sizes the shared column
-            // width, and the closing paren needs its own reserved space
-            // or it bleeds into whatever sits immediately to the right —
-            // most visibly the continuation dot after an extended line's
-            // last bar.
-            const unsigned sig_beats = song_.time_sig().count();
-            bool beat_parens = rb.bar->number_of_beats().has_value()
-                             && *rb.bar->number_of_beats() != sig_beats;
-
-            qreal w = bar_renderer::width_hint(*rb.bar, bar_h, fonts_,
-                                              begin_r, end_r, col_mod_w[j],
-                                              beat_parens)
-                      + k_bar_padding;
-            if (j >= col_widths.size())
-                col_widths.push_back(w);
-            else
-                col_widths[j] = std::max(col_widths[j], w);
-        }
-    }
 
     // --- Pass 3.5: determine which lines end a section ---
     // A line ends a section if the next line starts a new section and
@@ -944,7 +1091,12 @@ void song_body_widget::paginate_lines(const QRectF& content_rect)
     for (qreal fh : flow_heights)
         heights_with_title.push_back(fh);
 
-    auto pg = paginate(page_geo_.content_height(), heights_with_title);
+    // Reserve the same band at the top of every continuation page for the
+    // repeated "Title  pg. N" running header, so a page-2+ first line sits
+    // below its header rather than under it.  title_band == page_header_band()
+    // by construction (title_height() + k_title_content_gap).
+    auto pg = paginate(page_geo_.content_height(), heights_with_title,
+                       /*later_page_top=*/title_band);
     page_count_ = pg.page_count;
 
     // pg.positions[0] is the synthetic title item; real line i is at
@@ -1213,7 +1365,7 @@ qreal song_body_widget::title_height() const
 {
     QFont tf("Georgia");
     tf.setBold(true);
-    tf.setPointSizeF(k_title_base_pt * font_scale_);
+    tf.setPointSizeF(k_title_base_pt * title_scale_);
     QFontMetricsF fm(tf);
     return fm.height() + k_title_padding * 2.0;
 }
@@ -1228,7 +1380,7 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
 
     QFont title_font("Georgia");
     title_font.setBold(true);
-    title_font.setPointSizeF(k_title_base_pt * font_scale_);
+    title_font.setPointSizeF(k_title_base_pt * title_scale_);
     painter.setFont(title_font);
     QFontMetricsF fm(title_font);
 
@@ -1266,6 +1418,66 @@ void song_body_widget::paint_title(QPainter& painter, qreal widget_width,
 }
 
 // ---------------------------------------------------------------------------
+// page_header_band
+// ---------------------------------------------------------------------------
+qreal song_body_widget::page_header_band() const
+{
+    // The room a header occupies at the top of a page: the title text height
+    // and its padding (title_height()) plus the gap down to the first line.
+    // Matches how page 0's title band is derived in rebuild()
+    // (title_height() + k_title_content_gap) so continuation-page headers
+    // sit the same distance above their first line as the title does.
+    return title_height() + k_title_content_gap;
+}
+
+// ---------------------------------------------------------------------------
+// paint_running_header — the "Title  pg. N" line repeated on later pages
+// ---------------------------------------------------------------------------
+void song_body_widget::paint_running_header(QPainter& painter, int page_index) const
+{
+    if (page_index <= 0)
+        return;  // page 0 shows the full title via paint_title
+
+    painter.save();
+
+    QFont hdr_font("Georgia");
+    hdr_font.setBold(true);
+    hdr_font.setPointSizeF(k_title_base_pt * title_scale_);
+    painter.setFont(hdr_font);
+    QFontMetricsF fm(hdr_font);
+
+    QString title = QString::fromStdString(song_.name());
+    const QString placeholder = QString::fromUtf8(k_title_placeholder);
+    const bool is_placeholder = title.isEmpty() || title == placeholder;
+    QString base = title.isEmpty() ? placeholder : title;
+
+    // Human-facing page number: page_index is 0-based, so the second
+    // physical sheet (page_index 1) reads "pg. 2".
+    QString text = base + QStringLiteral("  pg. ")
+                 + QString::number(page_index + 1);
+
+    // Top of this page's sheet in whole-canvas coordinates — the same
+    // formula paint_pages_backdrop uses to place each sheet.  The on-screen
+    // painter works in canvas coordinates; the print path translates the
+    // painter into this same space before calling us, so one formula serves
+    // both.
+    const qreal page_top = page_index * (page_geo_.size.height() + k_inter_page_gap)
+                         + page_geo_.margins.top;
+
+    qreal text_w   = fm.horizontalAdvance(text);
+    qreal x        = (width() - text_w) / 2.0;
+    qreal baseline = page_top + k_title_padding + fm.ascent();
+
+    painter.setPen(QPen(is_placeholder ? k_placeholder_color : Qt::black, 1.0));
+    painter.drawText(QPointF(x, baseline), text);
+
+    qreal underline_y = std::round(baseline + fm.descent() + 1.0);
+    painter.drawLine(QPointF(x, underline_y), QPointF(x + text_w, underline_y));
+
+    painter.restore();
+}
+
+// ---------------------------------------------------------------------------
 // paintEvent
 // ---------------------------------------------------------------------------
 void song_body_widget::paintEvent(QPaintEvent*)
@@ -1279,11 +1491,14 @@ void song_body_widget::paintEvent(QPaintEvent*)
     paint_pages_backdrop(painter);
 
     // Title + left-margin gutter live on page 0 only (paginate_lines: later
-    // pages start their content at the top margin with no title).
+    // pages start their content below a repeated running header instead).
     paint_title(painter, width(), /*stash_hit_rect=*/true, page_geo_.margins.top);
     paint_margin(painter, QRectF(page_left(), page_geo_.margins.top + title_height(),
                                 margin_width_,
                                 std::max(0.0, page_geo_.content_height() - title_height())));
+    // Repeated "Title  pg. N" header at the top of every continuation page.
+    for (int p = 1; p < page_count_; ++p)
+        paint_running_header(painter, p);
     paint_divider(painter);
 
     painter.setPen(QPen(Qt::black, 1.0));
@@ -1418,7 +1633,7 @@ void song_body_widget::paint_margin(QPainter& painter, const QRectF& margin_rect
 {
     margin_renderer::paint(painter, margin_rect, song_,
                            stash_hit_rects ? &margin_layout_ : nullptr,
-                           font_scale_);
+                           margin_scale_);
 }
 
 // ---------------------------------------------------------------------------
@@ -2518,6 +2733,42 @@ void song_body_widget::delete_selection()
 {
     if (selected_bars_.empty())
         return;
+
+    // Would this delete remove every bar and leave the song empty?  If so it
+    // needs explicit confirmation.  Edits auto-save to a live database, so an
+    // empty song would be persisted the instant it happens — and to whoever's
+    // using the editor there's no visible "database" or Save button, so
+    // silently wiping (or silently refusing to wipe) is baffling.  The
+    // autosave's guard also refuses to write an empty bar set over a
+    // non-empty one, so a genuine clear-out must be made explicit here and
+    // then authorised to the tab via song_emptied().
+    std::size_t valid_selected = 0;
+    for (std::size_t idx : selected_bars_)
+        if (idx < song_.bars().size())
+            ++valid_selected;
+
+    if (valid_selected >= song_.bars().size())   // removes every bar
+    {
+        auto do_delete = [this]() {
+            perform_delete_selection();
+            emit song_emptied();
+        };
+        if (overlay_)
+            overlay_->confirm(
+                tr("Remove all bars?"),
+                tr("This deletes every bar and leaves the song empty. "
+                   "The change is saved automatically; press Ctrl+Z to undo."),
+                [do_delete](bool ok) { if (ok) do_delete(); });
+        else
+            do_delete();   // no overlay wired (e.g. tests): proceed directly
+        return;
+    }
+
+    perform_delete_selection();
+}
+
+void song_body_widget::perform_delete_selection()
+{
     push_undo_snapshot();
     std::vector<model::bar> bars_copy = song_.bars();
 
@@ -3122,6 +3373,9 @@ void song_body_widget::edit_new_bar(std::size_t slot_index)
     constexpr qreal k_min_new_bar_editor_w = 160.0;
     if (r.width() < k_min_new_bar_editor_w)
         r.setWidth(k_min_new_bar_editor_w);
+    // Same-line slots at the right end of a line, and the widening above,
+    // can push the editor past the page edge — pull it back on-page.
+    r = clamp_bar_editor_rect(r);
 
     // Clearing the hover state up front avoids a brief moment where the
     // ghost outline and the editor frame overlap during open.
@@ -3232,6 +3486,9 @@ void song_body_widget::edit_bar(std::size_t bar_index, const QRectF& bar_rect)
     constexpr qreal k_min_bar_editor_w = 160.0;
     if (r.width() < k_min_bar_editor_w)
         r.setWidth(k_min_bar_editor_w);
+    // Keep the widened editor on-page — a last-of-line bar sits at the right
+    // edge, where the extra typing width would otherwise spill past it.
+    r = clamp_bar_editor_rect(r);
 
     QString initial = QString::fromStdString(bars[bar_index].to_user_input());
 
@@ -3563,6 +3820,35 @@ static void apply_print_palette(QWidget* w)
     w->setPalette(pal);
 }
 
+QRectF song_body_widget::clamp_bar_editor_rect(QRectF r) const
+{
+    // The printable content band in widget x-coordinates — the same span the
+    // bar grid is laid out into (and, thanks to the auto-fit pass, never
+    // wider than).  x is page-independent (every page shares one column), so
+    // these bounds hold regardless of which page the edited bar sits on.
+    const qreal left_bound  = page_geo_.margins.left + margin_width_
+                            + k_content_padding;
+    const qreal right_bound = left_bound + std::max(0.0,
+        page_geo_.content_width() - margin_width_ - k_content_padding * 2.0);
+
+    // If the requested editor is wider than the whole band, no horizontal
+    // shift could bring it fully on-page — cap the width first so the shifts
+    // below can always succeed.
+    const qreal band_w = std::max(0.0, right_bound - left_bound);
+    if (r.width() > band_w)
+        r.setWidth(band_w);
+
+    // Pull the editor back in from whichever edge it overhangs.  Right-edge
+    // overhang (the reported case: last bar of a line) is corrected first;
+    // the left guard then keeps a bar near the gutter from being shoved off
+    // the other side.
+    if (r.right() > right_bound)
+        r.moveRight(right_bound);
+    if (r.left() < left_bound)
+        r.moveLeft(left_bound);
+    return r;
+}
+
 void song_body_widget::open_line_editor(const QRectF& rect,
                                         const QString& initial,
                                         std::function<bool(const QString&)> commit,
@@ -3887,8 +4173,8 @@ void song_body_widget::paint_page_to_rect(QPainter& painter, int page_index,
     painter.setClipRect(sheet);
     painter.fillRect(sheet, Qt::white);
 
-    // Title and left-margin gutter appear on page 0 only (charts don't
-    // repeat a running header on later pages).
+    // Title and left-margin gutter appear on page 0 only; continuation
+    // pages carry the repeated "Title  pg. N" running header instead.
     if (page_index == 0)
     {
         paint_title(painter, width(), /*stash_hit_rect=*/false, page_geo_.margins.top);
@@ -3897,6 +4183,10 @@ void song_body_widget::paint_page_to_rect(QPainter& painter, int page_index,
                             margin_width_,
                             std::max(0.0, page_geo_.content_height() - title_height())),
                      /*stash_hit_rects=*/false);
+    }
+    else
+    {
+        paint_running_header(painter, page_index);
     }
     // No divider on paper: the on-screen grabber is an interaction
     // affordance only and is intentionally omitted here.

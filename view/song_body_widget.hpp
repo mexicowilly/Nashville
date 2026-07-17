@@ -102,6 +102,18 @@ public:
     // touch already-open charts.
     void apply_font_scale(qreal scale);
 
+    // Apply a new title or margin font scale (clamped to the ui_settings
+    // header range) and relayout.  These size the song title and the left
+    // margin gutter (key / time / tempo) independently of the chart body's
+    // font_scale — the two elements that sit outside the bar grid's
+    // automatic per-line fit.  No-op if unchanged.  Newly opened tabs read
+    // the persisted values on construction, so these only touch open charts.
+    // A title-scale change re-paginates (the title band's height feeds the
+    // page break math); a margin-scale change only affects painting, but
+    // both route through rebuild() for simplicity.
+    void apply_title_scale(qreal scale);
+    void apply_margin_scale(qreal scale);
+
     // Apply a new page size/margins (from ui_settings — page size and
     // margins are app-wide, not per-song) and relayout.  Called by
     // main_window when the user changes the Page Setup dialog; newly
@@ -340,6 +352,14 @@ signals:
     // do on its own (it has no idea a name changed).
     void title_changed();
 
+    // Emitted after the user confirms a deletion that removes the last
+    // remaining bar(s), leaving the song empty.  The model is already empty
+    // by the time this fires.  song_tab listens for it to authorise the one
+    // autosave allowed to persist an empty bar set — the autosave otherwise
+    // refuses to overwrite a non-empty stored song with an empty one, as a
+    // guard against a stray save wiping the chart.
+    void song_emptied();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -386,6 +406,18 @@ private:
     // top margin so the title sits inside the printable area.
     void paint_title(QPainter& painter, qreal widget_width,
                      bool stash_hit_rect = true, qreal top_offset = 0.0) const;
+    // Draws the repeated running header — the song title plus " pg. N" — at
+    // the top of a continuation page (page_index >= 1).  Page 0 shows the
+    // full title via paint_title instead and never gets a page number.
+    // Uses the title font/scale so the running head reads as a smaller
+    // echo of the title.  Never stashes a hit rect: only the page-0 title
+    // is click-to-edit.
+    void paint_running_header(QPainter& painter, int page_index) const;
+    // Height reserved for a header band (title/running-head text plus its
+    // padding and the gap down to the first line).  Equals the page-0 title
+    // band, so continuation-page headers get the same breathing room.  This
+    // is what paginate_lines reserves at the top of pages >= 1.
+    qreal page_header_band() const;
     void paint_margin(QPainter& painter, const QRectF& margin_rect,
                       bool stash_hit_rects = true) const;
     void paint_divider(QPainter& painter) const;
@@ -507,6 +539,15 @@ private:
                           const QString& initial,
                           std::function<bool(const QString&)> commit,
                           const QString& placeholder = QString());
+
+    // Constrain an inline bar editor's rect to the content column so it
+    // stays fully visible.  Bar editors are widened past their bar for
+    // typing room (see edit_bar / edit_new_bar); for a bar near the right
+    // edge that widening would otherwise push the editor off the page,
+    // hiding the text as it's typed.  Shifts the rect left to sit within
+    // the printable content band (and clamps its width if the band is
+    // narrower than the requested editor), leaving y untouched.
+    QRectF clamp_bar_editor_rect(QRectF r) const;
 
     // Multi-line counterpart for annotation text boxes.  Differs from
     // open_line_editor in three ways:
@@ -734,6 +775,33 @@ private:
     static constexpr int   k_max_margin_width   = 200;
     static constexpr int   k_default_margin_width = 100;
 
+    // --- Bar-grid font base sizes ---
+    // Point sizes (at font_scale_ == 1.0) for the fonts that render the bar
+    // grid: the dominant chord number and its tuned satellites.  Named here
+    // so build_fonts() and text_box_font() share one source of truth instead
+    // of repeating the literals.
+    static constexpr qreal k_number_base_pt       = 15.0;
+    static constexpr qreal k_modifier_base_pt      =  9.0;
+    static constexpr qreal k_articulation_base_pt  = 10.0;
+    static constexpr qreal k_music_base_pt         = 11.5;
+
+    // Absolute readability floor on the *effective* grid scale
+    // (font_scale_ * grid_fit_scale_).  A chart wide enough that even
+    // shrinking to this won't fit the content column stops shrinking here —
+    // past this the font would be illegible, so we let the overflow stand
+    // rather than render a micro-font.  0.4 == "40% of the shipped base
+    // size", independent of the user's Text size (the fit search divides this
+    // by font_scale_ to bound the effective scale, not the multiplier).
+    static constexpr qreal k_min_fit_scale         = 0.4;
+
+    // Auto-fit binary search: how many halving steps to run when a line has
+    // to be shrunk to fit, and how far inside content_w to aim.  12 steps
+    // resolves the scale to well under a pixel of line width; the 1px safety
+    // margin keeps sub-pixel rounding from tipping the rendered line back
+    // over the content edge.
+    static constexpr int   k_fit_search_iterations = 12;
+    static constexpr qreal k_fit_safety_margin     = 1.0;
+
     // Placeholder text shown when title is empty (in both painted form
     // and the inline editor's QLineEdit).
     static constexpr const char* k_title_placeholder = "Title";
@@ -745,6 +813,23 @@ private:
     // Multiplier applied to every chart font.  Seeded from ui_settings on
     // construction and updated via apply_font_scale.  1.0 == shipped sizes.
     qreal                    font_scale_   = 1.0;
+    // Automatic horizontal-fit multiplier applied ON TOP OF font_scale_ to
+    // the bar-grid fonts only.  Recomputed from scratch on every layout so
+    // the widest line stays within the content column instead of spilling
+    // off the page: 1.0 when the chart already fits, smaller when a line has
+    // to be shrunk to fit.  Purely derived layout state, never persisted —
+    // font_scale_ is the authored size; this only ever shrinks the grid.
+    // The title, the left margin gutter, and free-text annotations are
+    // deliberately excluded so they keep their authored size regardless.
+    qreal                    grid_fit_scale_ = 1.0;
+    // Independent font multipliers for the two elements outside the bar
+    // grid: the song title and the left margin gutter (key / time / tempo).
+    // Seeded from ui_settings on construction, changed via apply_title_scale
+    // / apply_margin_scale.  1.0 == shipped sizes.  Kept separate from
+    // font_scale_ so the user can size these without disturbing the chart
+    // body (and vice-versa).
+    qreal                    title_scale_  = 1.0;
+    qreal                    margin_scale_ = 1.0;
     // Bravura (music) font family, resolved once and cached so re-running
     // init_fonts() on a scale change doesn't repeatedly addApplicationFont.
     QString                  music_family_;
@@ -818,6 +903,10 @@ private:
     void copy_selection();      // populates clipboard_ from selection
     void cut_selection();       // copy + delete selected bars
     void delete_selection();    // remove selected bars from the song
+    // The actual bar removal, factored out of delete_selection so the
+    // "this would empty the song" case can gate it behind a confirmation
+    // (see delete_selection) while the ordinary case calls it directly.
+    void perform_delete_selection();
     void paste_clipboard();     // insert clipboard after last selected bar
                                 // (or at song end if no selection)
 
@@ -867,6 +956,12 @@ private:
     void restore_snapshot(const model::song& snap);
 
     void init_fonts();
+    // Build the bar-grid fonts (fonts_) at the given effective point-size
+    // scale.  init_fonts() calls this with font_scale_ (the authored size);
+    // compute_layout drives it with font_scale_ * candidate while searching
+    // for a horizontal fit, so fonts_ ends a layout holding the shrunk grid
+    // fonts that the paint pass then draws with.
+    void build_fonts(qreal effective_scale);
     // Resolve and cache the Bravura music-font family (member music_family_).
     // Called once, lazily, from init_fonts.
     void resolve_music_family();

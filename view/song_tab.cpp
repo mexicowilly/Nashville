@@ -84,6 +84,15 @@ song_tab::song_tab(std::unique_ptr<model::song> song,
             flush_save();
             emit renamed();
         });
+
+        // A confirmed "delete all bars" is the one edit allowed to persist an
+        // empty song past the autosave's clobber guard.  Authorise exactly
+        // that next write, then flush it immediately so the intent isn't left
+        // hanging on the debounce.
+        connect(body, &song_body_widget::song_emptied, this, [this]() {
+            allow_empty_persist_once_ = true;
+            flush_save();
+        });
     }
 }
 
@@ -142,11 +151,11 @@ bool song_tab::eventFilter(QObject* /*watched*/, QEvent* event)
 void song_tab::flush_save()
 {
     // If a save is queued, kill the timer and write now.  If no save
-    // is queued, still write — flush_save is called on tab close,
-    // and the user expects "close this tab" to mean "persist".  Yes,
-    // this means an immediate close with no edits writes a redundant
-    // copy of the song; the alternative (track a dirty flag through
-    // every mutation) is more invasive than it's worth.
+    // is queued, still call save() — flush_save is called on tab close,
+    // and the user expects "close this tab" to mean "persist".  save()
+    // now no-ops when nothing has changed since the last write (see the
+    // #1 guard there), so an immediate close with no edits is cheap and
+    // won't rewrite an identical song.
     //
     // Suppression check: when the host is tearing down the app, the
     // database may be gone or about to go.  Don't try to write.
@@ -169,16 +178,47 @@ void song_tab::save()
     // change is written as an ordinary column update — there is no rename
     // path and no way to orphan the old row.
 
-    // Advance modification_time iff the song's content actually changed
-    // since the last persisted snapshot.  The autosave is content-blind —
-    // any repaint can trigger it, including selection and hover — so this
-    // guard is what keeps a mere click from bumping the timestamp.
-    // Comparing whole-song content (rather than instrumenting mutators)
-    // also captures edits that never pass through a song setter, such as
-    // the in-place custom-beats change and every annotation edit: if the
-    // diff can see it, it counts. creation_time is left untouched.
+    // Whole-song content diff against the last persisted snapshot.  The
+    // autosave is content-blind — any repaint can trigger it, including
+    // selection and hover — so this diff is what tells a real edit apart from
+    // a no-op repaint.  Comparing whole-song content (rather than
+    // instrumenting mutators) also captures edits that never pass through a
+    // song setter, such as the in-place custom-beats change and every
+    // annotation edit: if the diff can see it, it counts.  creation_time and
+    // modification_time are excluded from the comparison.
     const bool content_changed =
         !last_saved_ || !song_->same_content_as(*last_saved_);
+
+    // (#1) Skip writes that would change nothing.  Without this an identical
+    // song was rewritten every idle second (and, worse, that rewrite deletes
+    // and re-inserts every bar each time).  A never-persisted song (no id_
+    // yet) is the one exception: it must be inserted at least once so its row
+    // exists, even if it hasn't been edited since it was created.
+    if (id_ && !content_changed)
+        return;
+
+    // (#2) Clobber guard.  Never let an autosave replace an already-persisted,
+    // non-empty set of bars with an empty one.  The write path rebuilds the
+    // bar rows from song_->bars() (delete-all, then re-insert), so a stray or
+    // ill-timed save that ran while that vector was momentarily empty would
+    // wipe the chart down to just its title and margin.  last_saved_ mirrors
+    // what the row currently holds, so it is the right reference.
+    //
+    // The exception is a deliberate "delete all bars", which the user has
+    // explicitly confirmed (song_body_widget::song_emptied set the one-shot
+    // flag below): that empty write is allowed through exactly once.  Every
+    // other empty-over-non-empty write is refused.
+    const bool would_wipe_bars =
+        song_->bars().empty() && last_saved_ && !last_saved_->bars().empty();
+    if (would_wipe_bars)
+    {
+        if (!allow_empty_persist_once_)
+            return;
+        allow_empty_persist_once_ = false;   // one-shot: consume the OK
+    }
+
+    // Advance modification_time only when content actually changed, so a mere
+    // click never bumps the timestamp.
     if (content_changed)
     {
         using namespace std::chrono;
@@ -199,7 +239,11 @@ void song_tab::save()
     try
     {
         if (id_)
-            db_.update_song(*id_, *song_);
+            // would_wipe_bars is only true here when the user explicitly
+            // confirmed a "delete all bars" (the one-shot flag above let it
+            // past the guard).  Authorise the empty write in exactly that
+            // case; otherwise the database layer's own backstop refuses it.
+            db_.update_song(*id_, *song_, /*allow_empty_bars=*/would_wipe_bars);
         else
             id_ = db_.insert_song(*song_);
         // Refresh the baseline only after a successful write, so a failed

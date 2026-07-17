@@ -7,6 +7,10 @@
 
 int main(int argc, char* argv[])
 {
+#if defined(Q_OS_LINUX)
+    if (qgetenv("XDG_SESSION_TYPE") == "wayland" && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
     QCoreApplication::setOrganizationName("WillMason");
     QCoreApplication::setApplicationName("Nashville");
     std::filesystem::path cfg_dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString();

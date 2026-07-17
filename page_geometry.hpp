@@ -125,13 +125,21 @@ struct pagination_result
 // than a full page's content height is placed alone on its own page rather
 // than looping forever or being silently dropped.
 //
+// later_page_top reserves that much vertical space at the top of every page
+// *after* the first — the room a repeated running header (e.g. the song
+// title plus " pg. N") occupies on continuation pages.  Page 0's own header
+// is modelled by the caller as a leading flow item instead (see
+// song_body_widget::paginate_lines), so this only shifts pages >= 1.  Zero
+// (the default) restores the old single-header behaviour.
+//
 // content_height <= 0 degenerately places everything on one page (rather
 // than infinite-looping trying to start a "next" page that still has no
 // room) — callers should treat that as a configuration error to surface
 // elsewhere (e.g. margins that exceed the page size), not something this
 // function needs to reject.
 inline pagination_result paginate(qreal content_height,
-                                  const std::vector<qreal>& item_heights)
+                                  const std::vector<qreal>& item_heights,
+                                  qreal later_page_top = 0.0)
 {
     pagination_result result;
     result.positions.reserve(item_heights.size());
@@ -147,6 +155,11 @@ inline pagination_result paginate(qreal content_height,
         return result;
     }
 
+    // A header taller than the page would leave no room for content; ignore
+    // it in that degenerate case rather than pushing every line off-page.
+    if (later_page_top < 0.0 || later_page_top >= content_height)
+        later_page_top = 0.0;
+
     int page = 0;
     qreal y = 0.0;  // content consumed on the current page so far
     for (qreal h : item_heights)
@@ -155,11 +168,12 @@ inline pagination_result paginate(qreal content_height,
         // already has something on it.  The "already has something" guard
         // is what keeps an oversized single item from looping forever —
         // it still gets placed (alone, overflowing), and only the *next*
-        // item is pushed to a fresh page.
+        // item is pushed to a fresh page.  A fresh page (page >= 1) begins
+        // its content below the reserved running-header band.
         if (y > 0.0 && y + h > content_height)
         {
             ++page;
-            y = 0.0;
+            y = later_page_top;
         }
         result.positions.push_back({page, y});
         y += h;
