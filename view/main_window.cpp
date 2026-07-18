@@ -455,6 +455,14 @@ main_window::main_window(database& db, QWidget* parent)
         [this](int /*idx*/) {
             emit current_tab_changed(current_tab());
         });
+    // Tabs are movable (see setMovable above), and persist_open_tabs records
+    // tab ORDER, not just membership — so a drag-reorder with no open/close on
+    // either side of it needs its own hook, or the stored order silently goes
+    // stale until the next add/remove happens to rewrite it.
+    connect(tabs_->tabBar(), &QTabBar::tabMoved,
+        [this](int /*from*/, int /*to*/) {
+            persist_open_tabs();
+        });
 
     // Sidebar toggle: three thin lines, placed in the tab bar's top-left
     // corner so it sits level with the tab labels and reads like a leading
@@ -781,6 +789,20 @@ void main_window::add_tab(std::unique_ptr<model::song> song,
     });
 
     tabs_->setCurrentIndex(idx);
+
+    // Membership just changed; record it now rather than waiting for
+    // whatever the next unrelated event happens to be.  A never-saved song
+    // has no id yet (song_identity() is nullopt) and is simply omitted from
+    // this write, same as persist_open_tabs always does for it.
+    //
+    // Known gap: a brand-new song's tab has no id until its first successful
+    // save, which happens on song_tab's own debounced timer with nothing
+    // reported back here.  Such a tab is therefore still unremembered until
+    // some OTHER event re-triggers persist_open_tabs() (renaming it, opening
+    // or closing a different tab, reordering).  Closing that gap needs a
+    // signal from song_tab on first save, which touches song_tab.hpp/.cpp —
+    // out of scope here since I don't have the header in front of me.
+    persist_open_tabs();
 }
 
 void main_window::restore_open_tabs()
@@ -812,13 +834,37 @@ void main_window::restore_open_tabs()
 void main_window::persist_open_tabs()
 {
     // Record the row id of every open tab, in tab order.  Tabs for songs that
-    // have never been saved have no id yet and are simply omitted.
-    std::vector<song_id> ids;
-    for (int i = 0; i < tabs_->count(); ++i)
-        if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
-            if (auto id = tab->song_identity())
-                ids.push_back(*id);
-    db_.last_open_songs(ids);
+    // have never been saved have no id yet and are simply omitted; each such
+    // tab is picked up the moment it gets an id (see the song_tab::saved hook
+    // in add_tab), so it doesn't stay missing for long.
+    //
+    // Called incrementally now — on tab open, tab close, tab reorder, and a
+    // tab's first successful save — rather than once at a single "shutting
+    // down" moment.  There never was such a moment in practice: the only
+    // previous call site was mid-session, on File->Open, so on an ordinary
+    // clean quit the stored list was whatever a prior File->Open happened to
+    // leave behind, or nothing at all.  Writing on every change means the
+    // stored list is never more than one tab-action stale, so a crash loses
+    // at most the action in progress rather than the whole session.
+    //
+    // A DB failure here must not propagate: every call site is either a Qt
+    // signal handler or deep inside tab-management code, and an uncaught
+    // exception there is a crash, not a recoverable error.  Losing this
+    // write is also low-stakes on its own terms — worst case the next
+    // restore_open_tabs() starts from a slightly stale list, which is no
+    // worse than the previous exit-only behaviour was on every ordinary run.
+    try
+    {
+        std::vector<song_id> ids;
+        for (int i = 0; i < tabs_->count(); ++i)
+            if (auto* tab = qobject_cast<song_tab*>(tabs_->widget(i)))
+                if (auto id = tab->song_identity())
+                    ids.push_back(*id);
+        db_.last_open_songs(ids);
+    }
+    catch (const std::exception&)
+    {
+    }
 }
 
 void main_window::close_tab_at(int index)
@@ -836,6 +882,8 @@ void main_window::close_tab_at(int index)
         tab->deleteLater();
     refresh_lists();
     emit current_tab_changed(current_tab());
+    // Membership just changed; see the matching call in add_tab.
+    persist_open_tabs();
 }
 
 void main_window::flush_all_tabs()

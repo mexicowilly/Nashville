@@ -4,6 +4,8 @@
 #include <QVBoxLayout>
 #include <QStackedWidget>
 #include <QEvent>
+#include <QDebug>
+#include <cstdint>
 
 namespace nashville::view
 {
@@ -172,6 +174,23 @@ void song_tab::save()
     // the host has called suppress_destructor_save.
     if (save_suppressed_)
         return;
+
+    // Take the "an empty bar set is authorised" grant and clear it in the same
+    // breath, before any early return can skip past it.  The flag is set by
+    // the song_emptied handler immediately before it flushes, so the grant is
+    // only ever meant to cover the very next save; leaving it as live member
+    // state meant that any path which returned before the consumption site
+    // below (guard #1 finding no content change, flush_save short-circuiting
+    // on save_suppressed_, or a confirmed delete-all on a song whose stored
+    // bars were already empty) left it armed indefinitely.  An armed flag
+    // disarms BOTH the clobber guard here and write_song_body's backstop, so
+    // the next time the paint-driven autosave caught song_->bars() momentarily
+    // empty — which is exactly what happens mid-drag-reorder and mid-paste
+    // reflow — the chart was deleted and the deletion committed, leaving the
+    // song row with its title, key, tempo and time signature and no bars.
+    const bool empty_write_authorised = allow_empty_persist_once_;
+    allow_empty_persist_once_ = false;
+
     // Saves are keyed by row identity, not by name.  The first save for a
     // never-persisted song inserts and records the id; every save after
     // updates that row by id.  Because the row is located by id, a title
@@ -210,12 +229,8 @@ void song_tab::save()
     // other empty-over-non-empty write is refused.
     const bool would_wipe_bars =
         song_->bars().empty() && last_saved_ && !last_saved_->bars().empty();
-    if (would_wipe_bars)
-    {
-        if (!allow_empty_persist_once_)
-            return;
-        allow_empty_persist_once_ = false;   // one-shot: consume the OK
-    }
+    if (would_wipe_bars && !empty_write_authorised)
+        return;
 
     // Advance modification_time only when content actually changed, so a mere
     // click never bumps the timestamp.
@@ -239,11 +254,17 @@ void song_tab::save()
     try
     {
         if (id_)
-            // would_wipe_bars is only true here when the user explicitly
-            // confirmed a "delete all bars" (the one-shot flag above let it
-            // past the guard).  Authorise the empty write in exactly that
-            // case; otherwise the database layer's own backstop refuses it.
-            db_.update_song(*id_, *song_, /*allow_empty_bars=*/would_wipe_bars);
+            // Only a save that the user explicitly authorised by confirming
+            // "delete all bars" may write an empty bar set.  Derive this from
+            // the grant rather than from would_wipe_bars, which is computed
+            // against last_saved_: if that snapshot has drifted empty while
+            // the stored row still has bars, would_wipe_bars reads false and
+            // a legitimate clear would then be refused by the database
+            // backstop.  Anything not authorised here still meets that
+            // backstop, which checks the real persisted state.
+            db_.update_song(*id_, *song_,
+                            /*allow_empty_bars=*/song_->bars().empty()
+                                                 && empty_write_authorised);
         else
             id_ = db_.insert_song(*song_);
         // Refresh the baseline only after a successful write, so a failed
@@ -259,13 +280,19 @@ void song_tab::save()
     }
     catch (const std::exception& e)
     {
-        // Swallow but log: a save failure shouldn't crash the editor,
-        // and the user is mid-session — we can't pop a dialog every
-        // second.  The loggable base on database carries an spdlog
-        // logger but we don't have access to it from here; rely on
-        // the database layer's own logging.  If save failures become a
-        // real problem we can add a status-bar indicator.
-        (void)e;
+        // A save failure shouldn't crash the editor and can't raise a dialog
+        // every second, so it stays non-fatal — but it must not be silent.
+        // It was: a throw out of the database layer left no trace anywhere in
+        // this process, which is why a failing save path could run for a whole
+        // session unnoticed.  last_saved_ is deliberately not refreshed above,
+        // so the next attempt re-evaluates against what is really stored.
+        // Identify the song by row id, not by name(): name() throws on an
+        // empty title, and a never-titled song legitimately has one — raising
+        // from inside a catch handler is not a trade worth making for a nicer
+        // log line.
+        qWarning("song_tab::save failed (song id %lld): %s",
+                 id_ ? static_cast<long long>(static_cast<std::int64_t>(*id_)) : -1LL,
+                 e.what());
     }
 }
 

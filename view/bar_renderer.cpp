@@ -265,7 +265,7 @@ qreal bar_renderer::number_row_center_y(const QRectF& rect,
                            : rect.top() + top_pad;
     qreal chord_slot_h   = line_duration_mode
                            ? num_h + art_h + (bar_has_diamond
-                                 ? chord_renderer::diamond_padding_v(fonts) + 1.0 : 0.0)
+                                 ? chord_renderer::diamond_reserve_v(fonts, num_h) + 1.0 : 0.0)
                            : rect.height() - top_pad;
 
     qreal top_offset = line_has_articulation ? art_h : k_plain_top_pad;
@@ -334,16 +334,18 @@ void bar_renderer::paint(QPainter& painter,
     qreal num_h = nmFm_slot.ascent() + nmFm_slot.descent();
     qreal art_h = line_has_articulation ? artFm_slot.ascent() + artFm_slot.descent() : 0.0;
 
-    // Does any chord on this line have a diamond? If so the diamond's bottom
-    // point extends diamond_padding_v below the tight glyph rect.  Add that
-    // plus 1px clearance to the chord slot so the rule always clears the diamond.
+    // Does any chord on this line have a diamond? If so the diamond extends
+    // below the tight glyph rect by diamond_reserve_v — the scaled padding
+    // plus whatever half-height the containment growth adds.  Add that plus
+    // 1px clearance so the rule always clears the diamond, including on wide
+    // symbols where the diamond has grown to enclose the extensions.
     bool line_has_diamond = false;
     for (const auto& ch : bar.chords())
         if (ch.is_diamond()) { line_has_diamond = true; break; }
 
     qreal chord_slot_h  = line_duration_mode
                          ? num_h + art_h + (line_has_diamond
-                               ? chord_renderer::diamond_padding_v(fonts) + 1.0 : 0.0)
+                               ? chord_renderer::diamond_reserve_v(fonts, num_h) + 1.0 : 0.0)
                          : rect.height() - top_pad;
     constexpr qreal k_rhythm_row_px = 16.0;  // must match duration_bar_height
     qreal rhythm_row_h = line_duration_mode ? k_rhythm_row_px : rect.height() * k_rhythm_row_ratio;

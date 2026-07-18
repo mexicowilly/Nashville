@@ -66,6 +66,61 @@ public:
         return k_diamond_padding_v * (s < 1.0 ? s : 1.0);
     }
 
+    // How full of ink the diamond is allowed to be.  The diamond's edges are
+    // the four lines joining the midpoints of its bounding rect, so the rect's
+    // corners fall OUTSIDE the diamond: enclosing a content rect is not the
+    // same as padding it.  For a content rect w x h inside a diamond with
+    // half-axes a and b, the corner (w/2, h/2) is inside exactly when
+    // (w/2)/a + (h/2)/b <= 1.  This constant is the target for that sum, so
+    // there is a little clear space between the ink and the sloping edge.
+    // Raise it towards 1.0 for a tighter diamond, lower it for a roomier one.
+    static constexpr qreal k_diamond_corner_fill = 0.95;
+
+    // Ceiling on how far diamond_bounds may grow the padded rect to achieve
+    // containment.  Very wide symbols would otherwise demand an arbitrarily
+    // large diamond; past this the diamond stops growing and the widest
+    // extensions are allowed to graze the edge, which reads far better than a
+    // diamond that dwarfs its own line.  bar_renderer reserves vertical
+    // clearance for exactly this worst case (see diamond_reserve_v), so the
+    // cap is what keeps drawing and reservation in agreement.
+    static constexpr qreal k_diamond_max_growth = 1.6;
+
+    // The bounding rect of the diamond drawn around `content`.  The diamond
+    // itself is inscribed in the returned rect.  Use this anywhere the
+    // diamond's extent matters rather than padding `content` directly, which
+    // is what produced diamonds too short to contain wide symbols such as
+    // 1maj7 while looking correct on narrow ones such as 6-.
+    static QRectF diamond_bounds(const QRectF& content, const Fonts& fonts);
+
+    // Worst-case distance the diamond reaches above (and below) the ink of a
+    // chord whose ink is `ink_h` tall.  Growth is applied about the centre, so
+    // the overhang is the scaled padding plus the half-height the scaling adds
+    // — it is not simply diamond_padding_v.  Reserving the old value was why a
+    // grown diamond could reach into the line above.
+    static qreal diamond_reserve_v(const Fonts& fonts, qreal ink_h)
+    {
+        const qreal s = k_diamond_max_growth;
+        return diamond_padding_v(fonts) * s + (ink_h * 0.5) * (s - 1.0);
+    }
+
+    // Distance from the TOP of the articulation zone down to the topmost ink
+    // any articulation actually paints, for a zone art_h tall.  Articulations
+    // are anchored to the BOTTOM of that zone — the staccato diamond sits just
+    // above its floor, the push '>' uses the floor as its text baseline, and
+    // the tie arc peaks at k_tied_top_ratio — so the upper part of the zone is
+    // typically empty.  Anything placed above the articulations (the beat-dot
+    // row) should measure against this rather than assume the ink begins at
+    // the zone's top edge, which is what left a visible gap above the dots.
+    //
+    // has_both_on_one_chord reports whether any single chord is both staccato
+    // and pushed; paint_articulations splits the zone in half for that case,
+    // which lifts the staccato ink by half the zone and is the tightest
+    // arrangement there is.
+    static qreal articulation_headroom(const Fonts& fonts, qreal art_h,
+                                       bool has_staccato, bool has_pushed,
+                                       bool has_tied,
+                                       bool has_both_on_one_chord);
+
     // Returns the minimum bounding size needed to render this chord,
     // given the supplied fonts. Used by the layout pass.
     static QSizeF size_hint(const model::chord& ch, const Fonts& fonts);
@@ -134,17 +189,39 @@ private:
 
     // Returns the rect actually occupied by the number glyph (used for diamond).
     // Also sets row_right to the x coordinate just past the last rendered element.
+    // Renders the full chord symbol left-to-right.  Returns the tight ink
+    // rect of the *number* glyph (used to centre articulations); sets
+    // row_right to the right edge of the whole row, and chord_extent to the
+    // tight ink bounds of the *entire* symbol (number + step + mode +
+    // extensions + bass), which is what the diamond is drawn around so the
+    // extensions sit inside it.
     static QRectF paint_number_row(QPainter& painter,
                                  const QRectF& rowRect,
                                  const model::chord& ch,
                                  const Fonts& fonts,
-                                 qreal& row_right);
+                                 qreal& row_right,
+                                 QRectF& chord_extent);
 
     // Renders ♭ or ♯ as a Unicode glyph, returns width consumed.
     static qreal paint_step(QPainter& painter,
                            const model::chord& ch,
                            const Fonts& fonts,
                            qreal x, qreal baseline);
+
+    // Vertical position for a ♭/♯ glyph so its own ink is centred on the ink
+    // of the digit it sits beside, rather than sharing that digit's baseline.
+    // Common fonts draw accidentals with their ink centred near the
+    // x-height — well below a digit's cap-height centre — so a same-baseline
+    // draw reads as low, and because the accidental's ink is shorter than the
+    // digit's, undersized as well.  ref_fm/glyph_fm let this compare a large
+    // number-font digit against a small modifier-font accidental (the leading
+    // step) as readily as a same-font pair (extensions, bass note): centring
+    // is what matters, not any fixed ratio between the two sizes.  Used
+    // everywhere a step glyph is drawn, so all three read identically.
+    static qreal accidental_baseline(qreal digit_baseline,
+                                     const QFontMetricsF& ref_fm,
+                                     const QFontMetricsF& glyph_fm,
+                                     const QString& glyph);
 
     // Renders mode suffix (-, °, +), returns width consumed.
     static qreal paint_mode(QPainter& painter,
@@ -195,6 +272,16 @@ private:
     // Articulation vertical offsets within the articulation zone (top = 0).
     static constexpr qreal k_staccato_top_ratio = 0.08;
     static constexpr qreal k_tied_top_ratio      = 0.62;
+    // Depth of the tie arc's bulge as a fraction of the zone, and how far the
+    // bezier control points are pushed above arc_top so the drawn curve
+    // actually reaches it.  Named because articulation_headroom needs the same
+    // numbers to know where the arc's ink starts.
+    static constexpr qreal k_tied_span_ratio     = 0.40;
+    static constexpr qreal k_tied_overshoot      = 0.15;
+    // Radius of the staccato diamond, and its clearance above the floor of
+    // the rect it is drawn in.
+    static constexpr qreal k_staccato_dot_r      = 3.0;
+    static constexpr qreal k_staccato_floor_gap  = 1.0;
 
     // Extra horizontal padding between chord elements
     static constexpr qreal k_element_spacing = 2.0;

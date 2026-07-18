@@ -598,7 +598,8 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
     // Does any bar on this line carry a custom beat count that differs from
     // the song's time signature?  When true, compute_layout reserves
-    // k_beat_dot_zone_height above the chord row for the dot row.
+    // a beat-dot zone above the chord row — but only when the line also has
+    // articulations; see beat_dot_zone_height.
     auto line_has_beat_dots = [&](const std::vector<raw_bar>& bars) {
         const unsigned sig_beats = song_.time_sig().count();
         for (const auto& rb : bars)
@@ -625,10 +626,29 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
 
     // Bar height for a line, from the current (possibly auto-fit-shrunk)
     // grid fonts.  Reads the plain_/duration_ height vars measure() sets.
+    // The bars of a line as plain model pointers, for scan_articulations.
+    auto bar_ptrs = [](const std::vector<raw_bar>& bars) {
+        std::vector<const model::bar*> out;
+        out.reserve(bars.size());
+        for (const auto& rb : bars)
+            out.push_back(rb.bar);
+        return out;
+    };
+
+    // Clear space above a line's topmost painted content.  Shared by the
+    // height calculation and by Pass 4, so the space reserved for the dot row
+    // and the space it is drawn into are always the same number.
+    auto line_headroom = [&](const std::vector<raw_bar>& bars) -> qreal {
+        bool is_dur = false;
+        for (const auto& rb : bars)
+            if (bar_renderer::is_duration_mode(*rb.bar)) { is_dur = true; break; }
+        return beat_dot_headroom(scan_articulations(bar_ptrs(bars)), is_dur);
+    };
+
     auto line_bar_height = [&](const std::vector<raw_bar>& bars) -> qreal {
         bool has_art  = line_has_articulation(bars);
         bool has_dots = line_has_beat_dots(bars);
-        qreal beat_dot_h = has_dots ? k_beat_dot_zone_height : 0.0;
+        qreal beat_dot_h = beat_dot_zone_height(has_dots, line_headroom(bars));
         for (const auto& rb : bars)
             if (bar_renderer::is_duration_mode(*rb.bar))
                 return beat_dot_h + (has_art ? duration_h_art : duration_h_bare);
@@ -840,9 +860,14 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         line_layout line;
 
         qreal actual_bar_h = line_bar_height(raw.bars);
-        line.is_duration_mode = (actual_bar_h == duration_h_bare || actual_bar_h == duration_h_art
-                              || actual_bar_h == k_beat_dot_zone_height + duration_h_bare
-                              || actual_bar_h == k_beat_dot_zone_height + duration_h_art);
+        // Ask the bars directly rather than inferring the mode by comparing
+        // actual_bar_h against the four heights it could have been built from.
+        // That inference was exact-float equality over a sum whose terms now
+        // depend on two independent conditions, so every change to what the
+        // beat-dot zone reserves silently invalidated one of its cases.
+        line.is_duration_mode = false;
+        for (const auto& rb : raw.bars)
+            if (bar_renderer::is_duration_mode(*rb.bar)) { line.is_duration_mode = true; break; }
         line.has_articulation = line_has_articulation(raw.bars);
         line.has_voltas       = line_has_voltas(raw.bars);
         line.has_beat_dots    = line_has_beat_dots(raw.bars);
@@ -853,7 +878,8 @@ void song_body_widget::compute_layout(const QRectF& content_rect)
         // line-bounding rect (insertion-slot placement, section-end
         // rules, hit-testing whitespace) see the true vertical extent.
         qreal volta_zone_h    = line.has_voltas    ? k_volta_zone_height    : 0.0;
-        qreal beat_dot_zone_h = line.has_beat_dots ? k_beat_dot_zone_height : 0.0;
+        qreal beat_dot_zone_h = beat_dot_zone_height(line.has_beat_dots,
+                                                     line_headroom(raw.bars));
         qreal bar_top_y       = y + volta_zone_h + beat_dot_zone_h;
 
         // Section label comes from the first bar only.  Sections on
@@ -1711,6 +1737,20 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
     if (line.section_label)
         paint_section_label(painter, *line.section_label, line.section_col_rect);
 
+    // Recomputed rather than carried on line_layout: it is a pure function of
+    // the line's bars and fonts, and both this and compute_layout's reservation
+    // go through beat_dot_headroom, so they cannot disagree.
+    qreal dot_headroom = 0.0;
+    if (line.has_beat_dots)
+    {
+        std::vector<const model::bar*> line_bars;
+        line_bars.reserve(line.bars.size());
+        for (const auto& b : line.bars)
+            line_bars.push_back(b.bar);
+        dot_headroom = beat_dot_headroom(scan_articulations(line_bars),
+                                         line.is_duration_mode);
+    }
+
     std::size_t bar_idx = first_bar_index;
     for (const auto& bl : line.bars)
     {
@@ -1735,7 +1775,7 @@ void song_body_widget::paint_line(QPainter& painter, const line_layout& line,
                             effective_time_signature(bar_idx));
 
         if (bl.draw_beat_parens)
-            paint_beat_dots(painter, bl);
+            paint_beat_dots(painter, bl, dot_headroom);
 
         if (bl.show_continuation_dot)
             paint_continuation_dot(painter, bl.rect, bl.num_center_y);
@@ -1848,15 +1888,57 @@ void song_body_widget::paint_drag_indicator(QPainter& painter) const
 }
 
 // ---------------------------------------------------------------------------
+// scan_articulations / beat_dot_headroom
+// ---------------------------------------------------------------------------
+song_body_widget::art_kinds
+song_body_widget::scan_articulations(const std::vector<const model::bar*>& bars)
+{
+    art_kinds k;
+    for (const auto* b : bars)
+    {
+        if (!b) continue;
+        for (const auto& ch : b->chords())
+        {
+            if (ch.is_staccato()) k.staccato = true;
+            if (ch.is_pushed())   k.pushed   = true;
+            if (ch.is_tied())     k.tied     = true;
+            if (ch.is_staccato() && ch.is_pushed()) k.both = true;
+        }
+    }
+    return k;
+}
+
+qreal song_body_widget::beat_dot_headroom(const art_kinds& kinds,
+                                          bool is_duration_mode) const
+{
+    // Mirrors bar_renderer::number_row_center_y: a duration-mode bar starts its
+    // chord slot at rect.top(), a plain one after a fixed top_pad.
+    constexpr qreal k_bar_top_pad   = 2.0;   // matches bar_renderer top_pad
+    constexpr qreal k_plain_top_pad = 4.0;   // matches chord_renderer
+    const qreal base = is_duration_mode ? 0.0 : k_bar_top_pad;
+
+    if (!kinds.any())
+        return base + k_plain_top_pad;
+
+    QFontMetricsF artFm(fonts_.articulation);
+    const qreal art_h = artFm.ascent() + artFm.descent();
+    return base + chord_renderer::articulation_headroom(
+                      fonts_, art_h,
+                      kinds.staccato, kinds.pushed, kinds.tied, kinds.both);
+}
+
+// ---------------------------------------------------------------------------
 // paint_beat_dots
 // ---------------------------------------------------------------------------
 // Draws one filled dot per beat, centred horizontally over the bar's chord
-// column and vertically centred in the k_beat_dot_zone_height strip that
-// compute_layout reserved immediately above bl.rect.  The dots are evenly
-// spaced within the chord-column width (excluding the time-sig slot on the
-// left), so they read as a count of beats rather than as decoration.
+// column.  Vertically the row hangs just above the chord numbers: inside the
+// reserved zone above bl.rect on a line with articulations, and inside the
+// bar's own unused top padding on a line without.  The dots are evenly spaced
+// within the chord-column width (excluding the time-sig slot on the left), so
+// they read as a count of beats rather than as decoration.
 void song_body_widget::paint_beat_dots(QPainter& painter,
-                                       const bar_layout& bl) const
+                                       const bar_layout& bl,
+                                       qreal headroom) const
 {
     if (bl.beat_count == 0 || !bl.bar)
         return;
@@ -1864,9 +1946,16 @@ void song_body_widget::paint_beat_dots(QPainter& painter,
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    constexpr qreal dot_r = 1.1;
-    const qreal zone_top  = bl.rect.top() - k_beat_dot_zone_height;
-    const qreal dot_cy    = zone_top + k_beat_dot_zone_height / 2.0;
+    constexpr qreal dot_r = k_beat_dot_radius;
+
+    // The dot row hangs k_beat_dot_gap above the topmost thing the bar paints.
+    // `headroom` is how much clear space sits below bl.rect.top() before that
+    // content starts; compute_layout reserved above bl.rect only whatever the
+    // headroom couldn't absorb, so measuring down from bl.rect.top() by the
+    // headroom and then back up by the gap lands the row correctly whether the
+    // space came from the reserved zone, the bar's top padding, or the empty
+    // upper part of the articulation zone.
+    const qreal dot_cy = bl.rect.top() + headroom - k_beat_dot_gap - dot_r;
 
     // Mirror bar_renderer's geometry exactly.
     // The '(' is placed at chords_left - paren_w - 2.

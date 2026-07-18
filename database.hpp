@@ -136,18 +136,62 @@ private:
         sqlite3_stmt* stmt_;
     };
 
+    // Scoped write transaction.
+    //
+    // Nesting is tracked by an explicit depth counter on the database, NOT by
+    // asking SQLite what state it is in.  The previous implementation used
+    // sqlite3_txn_state() == SQLITE_TXN_NONE to decide whether to issue BEGIN,
+    // which is unsound in two directions: a SELECT left mid-iteration holds an
+    // open read transaction, so txn_state reports READ and a genuine top-level
+    // write silently became a no-op wrapper (losing atomicity — the individual
+    // statements then autocommitted one at a time, so a failure part-way
+    // through left the database half-written with nothing to roll back); and
+    // conversely BEGIN is deferred, so immediately after a real BEGIN with no
+    // statement executed yet txn_state still reports NONE, and a genuinely
+    // nested transaction would issue a second BEGIN and fail.
+    //
+    // With a depth counter the outermost scope owns the physical BEGIN and is
+    // the only one that commits.  Inner scopes join it.  If any scope — inner
+    // or outer — is destroyed without commit() (an exception, an early return),
+    // the whole transaction is marked abandoned and the outermost scope rolls
+    // back rather than committing a partial write.
     class transaction
     {
     public:
-        transaction(database& db);
+        explicit transaction(database& db);
         ~transaction();
+
+        transaction(const transaction&) = delete;
+        transaction& operator=(const transaction&) = delete;
 
         void commit();
 
     private:
         database& db_;
-        bool is_committed_;
-        bool is_active_;
+        bool owns_begin_;   // this scope issued the physical BEGIN
+        bool resolved_;     // commit() ran to a decision on this scope
+    };
+
+    // Borrows a prepared statement for the duration of a scope, resetting it
+    // both on entry and on exit.  The exit reset is the point: a statement
+    // left mid-row (a SELECT abandoned early, or an INSERT ... RETURNING whose
+    // single row was read but never stepped past) keeps a read transaction
+    // open on the connection.  That no longer breaks transaction nesting now
+    // that depth is tracked explicitly, but it still pins the connection's
+    // snapshot and blocks COMMIT, so it is worth not doing.
+    class stmt_guard
+    {
+    public:
+        explicit stmt_guard(prepared& p) : p_(p) { p_.reset(); }
+        ~stmt_guard() { p_.reset(); }
+
+        stmt_guard(const stmt_guard&) = delete;
+        stmt_guard& operator=(const stmt_guard&) = delete;
+
+        sqlite3_stmt* ptr() const { return p_.ptr(); }
+
+    private:
+        prepared& p_;
     };
 
     void check_version();
@@ -170,8 +214,26 @@ private:
     std::vector<model::chord> select_chords(std::uint64_t bar_id);
     std::uint64_t time_signature_id(const model::time_signature& ts);
 
+    // Reset every cached prepared statement.  Called before COMMIT and before
+    // ROLLBACK: SQLite refuses to end a transaction while statements are still
+    // in progress, and any statement left mid-row would otherwise survive into
+    // the next transaction holding a stale read.
+    void reset_all_statements();
+    // Reset the statements and issue ROLLBACK, logging the outcome.  Used by
+    // the transaction destructor and by commit() when the transaction has been
+    // abandoned by an inner scope.
+    void rollback_all();
+
     sqlite3* db_;
     std::map<statement, std::unique_ptr<prepared>> prepared_statements_;
+
+    // Nesting depth of live transaction objects.  0 means no transaction is
+    // open, so the next transaction constructed issues the physical BEGIN.
+    int txn_depth_ = 0;
+    // Set when any transaction scope is destroyed without a successful
+    // commit().  The outermost scope reads this and rolls back instead of
+    // committing, so a failed inner step can never be committed by its caller.
+    bool txn_abandoned_ = false;
 };
 
 inline bool database::in_memory() const

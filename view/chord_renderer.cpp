@@ -2,6 +2,7 @@
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <cmath>
+#include <algorithm>
 
 namespace nashville::view
 {
@@ -62,7 +63,7 @@ QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
     qreal row_width = 0;
 
     if (ch.step())
-        row_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
+        row_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
 
     row_width += nmFm.horizontalAdvance(QString::number(ch.number()));
 
@@ -86,10 +87,12 @@ QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
 
     if (ch.bass_note())
     {
-        row_width += modFm.horizontalAdvance("/") + k_element_spacing;
+        // Matches paint_bass_note: slash, its accidental, and the bass digit
+        // all draw at number size, so their reserved width comes from nmFm.
+        row_width += nmFm.horizontalAdvance("/") + k_element_spacing;
         if (ch.bass_note_step())
-            row_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
-        row_width += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
+            row_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
+        row_width += nmFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
 
     qreal number_height = nmFm.height();
@@ -130,16 +133,20 @@ void chord_renderer::paint(QPainter& painter,
     QRectF numRect(rect.left(), rect.top() + top_offset,
                    rect.width(), rect.height() - top_offset);
 
-    // Paint number row; get tight rect around the number glyph for diamond.
+    // Paint number row; get tight rect around the number glyph (for
+    // articulation centring) and the full symbol's ink extent (for the
+    // diamond, so extensions/mode/bass sit inside it).
     qreal row_right = 0.0;
-    QRectF numberGlyphRect = paint_number_row(painter, numRect, ch, fonts, row_right);
+    QRectF chordExtent;
+    QRectF numberGlyphRect =
+        paint_number_row(painter, numRect, ch, fonts, row_right, chordExtent);
 
     if (line_has_articulation)
         paint_articulations(painter, artRect, ch, fonts,
                             numberGlyphRect.center().x(), row_right);
 
     if (ch.is_diamond())
-        paint_diamond(painter, numberGlyphRect, artRect.bottom(), numRect.bottom() - 1.0, fonts);
+        paint_diamond(painter, chordExtent, artRect.bottom(), numRect.bottom() - 1.0, fonts);
 
     painter.restore();
 }
@@ -333,7 +340,8 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
                                       const QRectF& rowRect,
                                       const model::chord& ch,
                                       const Fonts& fonts,
-                                      qreal& row_right)
+                                      qreal& row_right,
+                                      QRectF& chord_extent)
 {
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
@@ -341,7 +349,7 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
     // Compute total row width for centering
     qreal total_width = 0;
     if (ch.step())
-        total_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
+        total_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
     total_width += nmFm.horizontalAdvance(QString::number(ch.number()));
     if (ch.mode() == model::chord::type::MINOR)
         total_width += modFm.horizontalAdvance("-") + k_element_spacing;
@@ -354,10 +362,12 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
                           prettify_extensions(ch.extensions())) + k_element_spacing;
     if (ch.bass_note())
     {
-        total_width += modFm.horizontalAdvance("/") + k_element_spacing;
+        // Slash, its accidental, and the bass digit all draw at number size
+        // now (see paint_bass_note), so their width is reserved against nmFm.
+        total_width += nmFm.horizontalAdvance("/") + k_element_spacing;
         if (ch.bass_note_step())
-            total_width += modFm.horizontalAdvance(kFlat) + k_element_spacing;
-        total_width += modFm.horizontalAdvance(QString::number(*ch.bass_note()));
+            total_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
+        total_width += nmFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
 
     // Compute baseline so the tight ink bounds of the number are centred in rowRect.
@@ -370,8 +380,36 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
 
     painter.save();
 
-    // Step — raised slightly, smaller font
-    x += paint_step(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.4);
+    // Accumulate the tight ink bounds of every part as we draw, so the
+    // diamond can be drawn around the whole symbol (not just the number).
+    // A part drawn as string s at pen position (gx, gy) with font metrics fm
+    // occupies fm.tightBoundingRect(s) translated to that origin.
+    chord_extent = QRectF();
+    auto unite_ink = [&](const QString& s, const QFontMetricsF& fm,
+                         qreal gx, qreal gy) {
+        if (s.isEmpty()) return;
+        const QRectF tb = fm.tightBoundingRect(s);
+        const QRectF ink(gx + tb.left(), gy + tb.top(), tb.width(), tb.height());
+        chord_extent = chord_extent.isNull() ? ink : chord_extent.united(ink);
+    };
+
+    // Step (♭/♯) — drawn at number size now (see paint_step), and still
+    // ink-centred against the number digit's ink rather than sharing its
+    // baseline outright: even at matching font size, a ♭/♯ glyph's own ink
+    // doesn't sit at exactly the same vertical centre as a digit's, so the
+    // centring still matters — it's just a small correction now rather than
+    // the large one a size mismatch previously demanded.
+    QString step_glyph;
+    if (ch.step())
+        step_glyph = (ch.step() == model::chord::flat_sharp::FLAT)
+                     ? QString(kFlat) : QString(kSharp);
+    const qreal step_gy = ch.step()
+                          ? accidental_baseline(baseline, nmFm, nmFm, step_glyph)
+                          : baseline;
+    const qreal step_gx = x;
+    x += paint_step(painter, ch, fonts, x, step_gy);
+    if (ch.step())
+        unite_ink(step_glyph, nmFm, step_gx, step_gy);
 
     // Number — dominant
     painter.setFont(fonts.number);
@@ -383,26 +421,68 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
                            baseline + tbr.top(),
                            tbr.width(),
                            tbr.height());
+    chord_extent = chord_extent.isNull()
+                       ? numberGlyphRect
+                       : chord_extent.united(numberGlyphRect);
     x += nmFm.horizontalAdvance(num_str);
 
-    // Mode suffix
+    // Mode suffix (raised to the top of the number — mirror paint_mode).
+    const qreal mode_gx = x;
+    const qreal mode_gy = baseline - nmFm.ascent() + modFm.ascent();
     x += paint_mode(painter, ch, fonts, x, baseline);
+    {
+        QString mode_s;
+        switch (ch.mode())
+        {
+            case model::chord::type::MINOR:      mode_s = "-";       break;
+            case model::chord::type::DIMINISHED: mode_s = kDiminish; break;
+            case model::chord::type::AUGMENTED:  mode_s = "+";       break;
+            default: break;
+        }
+        unite_ink(mode_s, modFm, mode_gx, mode_gy);
+    }
 
     // Extensions — superscripted
-    x += paint_extensions(painter, ch, fonts, x, baseline - nmFm.ascent() * 0.3);
+    const qreal ext_gx = x;
+    const qreal ext_gy = baseline - nmFm.ascent() * 0.3;
+    x += paint_extensions(painter, ch, fonts, x, ext_gy);
+    if (!ch.extensions().empty())
+        unite_ink(prettify_extensions(ch.extensions()), modFm, ext_gx, ext_gy);
 
-    // Bass note
+    // Bass note (drawn on the number baseline, so it shares the number's
+    // vertical band; extend the extent's right edge to cover it).
     x += paint_bass_note(painter, ch, fonts, x, baseline);
 
     painter.restore();
 
     row_right = x;
+    if (ch.bass_note())
+        chord_extent.setRight(std::max(chord_extent.right(), row_right));
     return numberGlyphRect;
 }
 
 // ---------------------------------------------------------------------------
 // Private: paint_step
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// accidental_baseline — ink-centre a ♭/♯ glyph against a reference digit
+// ---------------------------------------------------------------------------
+qreal chord_renderer::accidental_baseline(qreal digit_baseline,
+                                          const QFontMetricsF& ref_fm,
+                                          const QFontMetricsF& glyph_fm,
+                                          const QString& glyph)
+{
+    // "0" stands in for the digit itself — any digit has near-identical
+    // vertical ink metrics in a given font, and this needs to work with a
+    // font/size pair (a large number digit, a small accidental) rather than
+    // one specific character.
+    const QRectF ref_tbr   = ref_fm.tightBoundingRect(QStringLiteral("0"));
+    const QRectF glyph_tbr = glyph_fm.tightBoundingRect(glyph);
+    const qreal ref_centre   = (ref_tbr.top()   + ref_tbr.bottom())   / 2.0;
+    const qreal glyph_centre = (glyph_tbr.top() + glyph_tbr.bottom()) / 2.0;
+    return digit_baseline + ref_centre - glyph_centre;
+}
+
 qreal chord_renderer::paint_step(QPainter& painter,
                                 const model::chord& ch,
                                 const Fonts& fonts,
@@ -411,8 +491,12 @@ qreal chord_renderer::paint_step(QPainter& painter,
     if (!ch.step())
         return 0.0;
 
-    painter.setFont(fonts.modifier);
-    QFontMetricsF fm(fonts.modifier);
+    // Drawn at number size, not modifier size.  It sits directly beside the
+    // chord number as part of the same symbol (flat-seven, sharp-four), not
+    // as a smaller annotation of it the way an extension or a mode suffix
+    // is — so it needs to read as a peer of the number, not a modifier on it.
+    painter.setFont(fonts.number);
+    QFontMetricsF fm(fonts.number);
     QString glyph = (ch.step() == model::chord::flat_sharp::FLAT)
                     ? QString(kFlat) : QString(kSharp);
     painter.drawText(QPointF(x, baseline), glyph);
@@ -477,27 +561,14 @@ qreal chord_renderer::paint_extensions(QPainter& painter,
     // Common text fonts draw ♯ / ♭ with their visual ink centre near
     // the x-height — well below the cap-height centre of a digit — so
     // a naïve same-baseline draw makes "7♯9" look like "7" and "9"
-    // sitting astride a dropped "♯".  Same problem the margin renderer
-    // solves for "F#" in the key circle; same fix here.  Compute each
-    // glyph's tight-bounding-rect centre and shift the accidental's
-    // baseline so its ink centre lands at the digit's ink centre.
-    //
-    // The reference glyph is a digit — "0" is fine, any digit has
-    // ~identical vertical metrics — because extension strings are
-    // digit-dominated ("b9", "#11", "7b9").  Even when the extension
-    // contains letters like "maj7", the digit-aligned accidental still
-    // reads correctly: it's the digits and the accidental that are the
-    // visually heavy elements; the letters fade between them.
-    QRectF ref_tbr   = fm.tightBoundingRect(QStringLiteral("0"));
-    QRectF flat_tbr  = fm.tightBoundingRect(QString(kFlatCh));
-    QRectF sharp_tbr = fm.tightBoundingRect(QString(kSharpCh));
+    // sitting astride a dropped "♯".  Ink-centre each accidental against a
+    // reference digit in this same font (see accidental_baseline) — the
+    // same routine every step glyph in the row goes through, so the leading
+    // step, an extension accidental, and a bass-note accidental all read the
+    // same way.
+    const qreal flat_baseline  = accidental_baseline(baseline, fm, fm, QString(kFlatCh));
+    const qreal sharp_baseline = accidental_baseline(baseline, fm, fm, QString(kSharpCh));
 
-    qreal ref_centre   = (ref_tbr.top()   + ref_tbr.bottom())   / 2.0;
-    qreal flat_centre  = (flat_tbr.top()  + flat_tbr.bottom())  / 2.0;
-    qreal sharp_centre = (sharp_tbr.top() + sharp_tbr.bottom()) / 2.0;
-
-    const qreal flat_baseline  = baseline + ref_centre - flat_centre;
-    const qreal sharp_baseline = baseline + ref_centre - sharp_centre;
 
     // Walk character by character so each glyph gets its own y.  This
     // matters because painter.drawText takes a single baseline per call.
@@ -543,8 +614,14 @@ qreal chord_renderer::paint_bass_note(QPainter& painter,
     if (!ch.bass_note())
         return 0.0;
 
-    painter.setFont(fonts.modifier);
-    QFontMetricsF fm(fonts.modifier);
+    // Slash, accidental, and bass digit all draw at number size — the same
+    // size as the chord number itself, not the smaller modifier size used
+    // for extensions and the mode suffix.  A bass note is a full alternate
+    // root (chord-over-bass), not an annotation of the main number, so it
+    // reads as one when it's the same size as the number rather than
+    // shrunk beneath it.
+    painter.setFont(fonts.number);
+    QFontMetricsF fm(fonts.number);
     qreal consumed = 0;
 
     painter.drawText(QPointF(x, baseline), "/");
@@ -555,7 +632,10 @@ qreal chord_renderer::paint_bass_note(QPainter& painter,
     {
         QString g = (ch.bass_note_step() == model::chord::flat_sharp::FLAT)
                     ? QString(kFlat) : QString(kSharp);
-        painter.drawText(QPointF(x, baseline), g);
+        // Same-font accidental-before-digit as the leading step, so the same
+        // small ink-centring correction applies (see accidental_baseline).
+        const qreal g_y = accidental_baseline(baseline, fm, fm, g);
+        painter.drawText(QPointF(x, g_y), g);
         qreal w = fm.horizontalAdvance(g) + k_element_spacing;
         consumed += w;
         x += w;
@@ -575,9 +655,9 @@ void chord_renderer::paint_staccato(QPainter& painter, const QRectF& artRect,
                                     qreal number_center_x)
 {
     painter.save();
-    constexpr qreal dot_r = 3.0;
+    constexpr qreal dot_r = k_staccato_dot_r;
     qreal cx    = number_center_x;
-    qreal cy    = artRect.bottom() - dot_r - 1.0;
+    qreal cy    = artRect.bottom() - dot_r - k_staccato_floor_gap;
     QPolygonF diamond;
     diamond << QPointF(cx,          cy - dot_r)
             << QPointF(cx + dot_r,  cy)
@@ -619,7 +699,7 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 
     // arc_top is the peak of the upward bulge; base_y is the endpoint height.
     qreal arc_top  = artRect.top() + artRect.height() * k_tied_top_ratio;
-    qreal arc_span = artRect.height() * 0.40;   // deeper arc
+    qreal arc_span = artRect.height() * k_tied_span_ratio;   // deeper arc
     qreal margin   = artRect.width() * 0.08;
 
     qreal base_y   = arc_top + arc_span;
@@ -637,7 +717,7 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 
     // Symmetric cubic bezier: endpoints at base_y, control points pushed
     // above arc_top so the actual curve peak reaches close to arc_top.
-    qreal cp_y = arc_top - arc_span * 0.15;   // slightly above arc_top
+    qreal cp_y = arc_top - arc_span * k_tied_overshoot;   // slightly above arc_top
     QPainterPath path;
     path.moveTo(start_x, base_y);
     path.cubicTo(start_x + (end_x - start_x) * 0.25, cp_y,
@@ -651,21 +731,102 @@ void chord_renderer::paint_tied_arc(QPainter& painter, const QRectF& artRect,
 }
 
 // ---------------------------------------------------------------------------
-// Private: paint_diamond — drawn around the number glyph rect
+// articulation_headroom — clear space at the top of the articulation zone
 // ---------------------------------------------------------------------------
-void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect,
+qreal chord_renderer::articulation_headroom(const Fonts& fonts, qreal art_h,
+                                            bool has_staccato, bool has_pushed,
+                                            bool has_tied,
+                                            bool has_both_on_one_chord)
+{
+    if (art_h <= 0.0)
+        return 0.0;
+
+    // With nothing drawn the whole zone is clear.  Each articulation present
+    // pulls this down to wherever its own ink starts; the lowest value wins.
+    qreal head = art_h;
+
+    if (has_staccato)
+    {
+        // paint_staccato centres the diamond k_staccato_dot_r +
+        // k_staccato_floor_gap above the floor of the rect it is given.  For a
+        // chord that is both staccato and pushed, paint_articulations hands it
+        // only the top half of the zone, so its floor is at art_h / 2.
+        const qreal floor_y = has_both_on_one_chord ? art_h * 0.5 : art_h;
+        head = std::min(head, floor_y - (2.0 * k_staccato_dot_r
+                                         + k_staccato_floor_gap));
+    }
+
+    if (has_pushed)
+    {
+        // paint_pushed draws '>' with the zone's floor as its text baseline,
+        // so its ink rises by the glyph's own ink ascent — not the font's,
+        // which would over-reserve by the ascender height no '>' uses.
+        QFontMetricsF fm(fonts.articulation);
+        const qreal ink_ascent = -fm.tightBoundingRect(">").top();
+        head = std::min(head, art_h - ink_ascent);
+    }
+
+    if (has_tied)
+    {
+        // The drawn curve peaks between cp_y and arc_top; cp_y is the higher
+        // of the two, so measuring to it is the safe choice.
+        const qreal arc_top  = art_h * k_tied_top_ratio;
+        const qreal arc_span = art_h * k_tied_span_ratio;
+        head = std::min(head, arc_top - arc_span * k_tied_overshoot);
+    }
+
+    return std::max(0.0, head);
+}
+
+// ---------------------------------------------------------------------------
+// diamond_bounds — bounding rect of the diamond enclosing `content`
+// ---------------------------------------------------------------------------
+QRectF chord_renderer::diamond_bounds(const QRectF& content, const Fonts& fonts)
+{
+    const qreal pad_h = diamond_padding_h(fonts);
+    const qreal pad_v = diamond_padding_v(fonts);
+
+    // Start from the padded rect, as before.
+    qreal a = content.width()  * 0.5 + pad_h;   // horizontal half-axis
+    qreal b = content.height() * 0.5 + pad_v;   // vertical half-axis
+    if (a <= 0.0 || b <= 0.0)
+        return content;
+
+    // How much of the diamond the content's own corner uses up.  Both terms
+    // compete for the same budget of 1.0, so a symbol that is wide relative to
+    // its padding leaves almost nothing for the vertical term and its top
+    // corners spill out through the sloping edges.  That is why the fault
+    // showed up as "not tall enough" on 1maj7 and not at all on 6-: the
+    // extensions make the symbol much wider without making it much taller.
+    const qreal fill = (content.width() * 0.5) / a + (content.height() * 0.5) / b;
+
+    if (fill > k_diamond_corner_fill)
+    {
+        // Grow both axes by the same factor, so the diamond keeps the
+        // proportions the fixed paddings were tuned for instead of turning
+        // into a tall spike.  Capped so a very wide symbol can't produce a
+        // diamond that overruns the line spacing.
+        qreal s = fill / k_diamond_corner_fill;
+        if (s > k_diamond_max_growth)
+            s = k_diamond_max_growth;
+        a *= s;
+        b *= s;
+    }
+
+    const QPointF c = content.center();
+    return QRectF(c.x() - a, c.y() - b, a * 2.0, b * 2.0);
+}
+
+// ---------------------------------------------------------------------------
+// Private: paint_diamond — drawn around the full chord symbol's ink
+// ---------------------------------------------------------------------------
+void chord_renderer::paint_diamond(QPainter& painter, const QRectF& contentRect,
                                    qreal /*art_bottom*/, qreal /*max_bottom*/,
                                    const Fonts& fonts)
 {
     painter.save();
-    // Scale the padding with the live number font so the diamond stays
-    // proportional to the number it surrounds; at the small scales the
-    // horizontal auto-fit produces, a fixed overhang would reach into the
-    // line above/below and the diamonds would collide.
-    const qreal pad_h = diamond_padding_h(fonts);
-    const qreal pad_v = diamond_padding_v(fonts);
-    QRectF r = numberRect.adjusted(-pad_h, -pad_v, pad_h, pad_v);
-    QPointF center = r.center();
+    const QRectF r = diamond_bounds(contentRect, fonts);
+    const QPointF center = r.center();
     QPolygonF diamond;
     diamond << QPointF(center.x(), r.top())
             << QPointF(r.right(),  center.y())
@@ -673,7 +834,7 @@ void chord_renderer::paint_diamond(QPainter& painter, const QRectF& numberRect,
             << QPointF(r.left(),   center.y());
 
     painter.setBrush(Qt::NoBrush);
-    painter.setPen(QPen(painter.pen().color(), 1.5));
+    painter.setPen(QPen(painter.pen().color(), 1.0));
     painter.drawPolygon(diamond);
     painter.restore();
 }

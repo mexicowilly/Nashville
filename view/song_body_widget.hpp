@@ -449,11 +449,15 @@ private:
     // compute_layout when any bar on the line carries a volta number.
     void paint_volta_brackets(QPainter& painter,
                               const line_layout& line) const;
-    // Paints a row of filled dots above bl.rect for a bar whose number_of_beats
-    // differs from the song time signature.  beat_count dots are drawn,
-    // centred horizontally over the bar's chord column.
+    // Paints a row of filled dots for a bar whose number_of_beats differs from
+    // the song time signature.  beat_count dots are drawn, centred
+    // horizontally over the bar's chord column.  line_has_articulation selects
+    // where they sit vertically: above bl.rect in the reserved zone when the
+    // line carries articulations, otherwise inside the bar's own top padding
+    // (see beat_dot_zone_height).
     void paint_beat_dots(QPainter& painter,
-                         const bar_layout& bl) const;
+                         const bar_layout& bl,
+                         qreal headroom) const;
 
     // Returns a per-song-bar pair {draw_begin_repeat, draw_end_repeat}
     // derived from each bar's repeat() flag PLUS the implicit end-repeat
@@ -758,11 +762,62 @@ private:
     // small downward hook).  Lines without voltas don't reserve this so
     // the rest of the chart packs as densely as before.
     static constexpr qreal k_volta_zone_height   = 18.0;
+    // Radius of a single beat dot, and the clear space between the bottom of
+    // the dot row and the top of the bar rect below it.  The zone height is
+    // derived from these two rather than set independently, so the space
+    // reserved and the space drawn into can't drift apart.
+    static constexpr qreal k_beat_dot_radius     = 1.1;
+    static constexpr qreal k_beat_dot_gap        = 3.0;
     // Vertical zone above a bar's rect when that bar has a custom beat count.
     // Holds a row of filled dots (one per beat) centred horizontally over the
-    // bar's chord column and all articulations above it.  Sized to hold one
-    // dot diameter plus small top/bottom breathing room.
-    static constexpr qreal k_beat_dot_zone_height = 10.0;
+    // bar's chord column and all articulations above it.  The dots are
+    // bottom-aligned in this zone — hung just above the bar — rather than
+    // centred in it: centring in a zone sized well above the dots' own extent
+    // pushed them away from the chords they annotate and spent the rest of the
+    // zone on nothing, which compounds badly on a chart with custom beats on
+    // every line.  The zone is now exactly the dot row plus its gap.
+    static constexpr qreal k_beat_dot_zone_height =
+        2.0 * k_beat_dot_radius + k_beat_dot_gap;
+
+    // The zone is only reserved when the line ALSO carries articulations.
+    // With no articulations the bar already has top padding above its chord
+    // numbers (bar_renderer's top_pad plus chord_renderer's k_plain_top_pad)
+    // that nothing occupies, and the dot row fits inside it — so reserving a
+    // separate strip there both pushed the dots away from the chords they
+    // annotate and cost a line's worth of height per page.  When there ARE
+    // articulations that padding is real ink, so the strip is still needed.
+    // Every site that reserves or consumes the zone must go through this, or
+    // the dots and the space allowed for them drift apart.
+    // Which above-number articulations occur anywhere on a line.  `both` means
+    // some single chord is BOTH staccato and pushed, which is the arrangement
+    // that reaches highest into the articulation zone.
+    struct art_kinds
+    {
+        bool staccato = false;
+        bool pushed   = false;
+        bool tied     = false;
+        bool both     = false;
+        bool any() const { return staccato || pushed || tied; }
+    };
+    static art_kinds scan_articulations(const std::vector<const model::bar*>& bars);
+
+    // Clear vertical space above a line's topmost painted content, measured
+    // down from the top of the bar rect.  This is where the beat-dot row goes.
+    // It is the bar's own top padding plus, on a line with articulations, the
+    // empty upper part of the articulation zone (articulations are anchored to
+    // that zone's floor — see chord_renderer::articulation_headroom).
+    qreal beat_dot_headroom(const art_kinds& kinds, bool is_duration_mode) const;
+
+    // Height that must be reserved ABOVE the bar rect for the dot row: only
+    // whatever the headroom can't already absorb.  Lines with enough slack
+    // above their content reserve nothing at all.
+    static qreal beat_dot_zone_height(bool has_beat_dots, qreal headroom)
+    {
+        if (!has_beat_dots)
+            return 0.0;
+        const qreal needed = 2.0 * k_beat_dot_radius + k_beat_dot_gap;
+        return needed > headroom ? needed - headroom : 0.0;
+    }
     static constexpr qreal k_content_padding    = 12.0;
     static constexpr int   k_divider_hit_width  = 5;
     // Geometry of the always-visible margin-resize grabber drawn at the top

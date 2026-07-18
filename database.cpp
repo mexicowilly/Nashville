@@ -460,54 +460,106 @@ void database::prepared::reset()
     sqlite3_reset(stmt_);
 }
 
+void database::reset_all_statements()
+{
+    for (auto& p : prepared_statements_)
+        p.second->reset();
+}
+
+void database::rollback_all()
+{
+    // Statements first: SQLite will not end a transaction while any statement
+    // is still stepping, and a ROLLBACK that fails here would leave the write
+    // open and (worse) unnoticed, since the caller is usually already
+    // unwinding from an exception.
+    reset_all_statements();
+    char* err = nullptr;
+    if (sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &err) != SQLITE_OK)
+    {
+        // Nothing useful to throw towards — this runs during unwinding — but
+        // it must not pass silently.  A failed rollback means the database is
+        // in a state we did not intend.
+        lgr()->error("ROLLBACK failed: {}", err ? err : "unknown error");
+        sqlite3_free(err);
+        return;
+    }
+    lgr()->debug("Rolled back transaction");
+}
+
 database::transaction::transaction(database& db)
     : db_(db),
-      is_committed_(false),
-      is_active_(false)
+      owns_begin_(db.txn_depth_ == 0),
+      resolved_(false)
 {
-    if (sqlite3_txn_state(db.db_, nullptr) == SQLITE_TXN_NONE)
+    if (owns_begin_)
     {
         char* err = nullptr;
         if (sqlite3_exec(db.db_, "BEGIN;", nullptr, nullptr, &err) != SQLITE_OK)
         {
             std::string msg = err ? err : "unknown error";
             sqlite3_free(err);
+            // Depth is not yet incremented and this object's destructor will
+            // not run, so the counter stays consistent.
             throw std::runtime_error("Could not begin transaction: " + msg);
         }
-        is_active_ = true;
-        db.lgr()->debug("Created active transaction");
+        db.txn_abandoned_ = false;
     }
-    else
-    {
-        db.lgr()->debug("Created inactive transaction");
-    }
+    ++db.txn_depth_;
+    db.lgr()->debug("Entered transaction scope (depth {}{})",
+                    db.txn_depth_, owns_begin_ ? ", began" : ", joined");
 }
 
 database::transaction::~transaction()
 {
-    if (is_active_ && !is_committed_)
+    --db_.txn_depth_;
+
+    // A scope that never reached commit() poisons the whole transaction.  For
+    // an inner scope that is the only way to tell the outer one that its work
+    // is incomplete; for the outer scope it simply means "roll back".
+    if (!resolved_)
+        db_.txn_abandoned_ = true;
+
+    if (owns_begin_)
     {
-        sqlite3_exec(db_.db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-        db_.lgr()->debug("Rolled back active transaction");
+        if (!resolved_)
+            db_.rollback_all();
+        // The physical transaction is over either way, so the flag must not
+        // leak into whatever transaction is opened next.
+        db_.txn_abandoned_ = false;
     }
 }
 
 void database::transaction::commit()
 {
-    if (is_active_)
+    if (resolved_)
+        return;
+    resolved_ = true;
+
+    // An inner scope has no physical transaction to commit; reaching here just
+    // records that its portion of the work completed.
+    if (!owns_begin_)
+        return;
+
+    if (db_.txn_abandoned_)
     {
-        for (auto& p : db_.prepared_statements_)
-            p.second->reset();
-        char* err = nullptr;
-        if (sqlite3_exec(db_.db_, "COMMIT;", nullptr, nullptr, &err) != SQLITE_OK)
-        {
-            std::string msg = err ? err : "unknown error";
-            sqlite3_free(err);
-            throw std::runtime_error("Could not commit transaction: " + msg);
-        }
-        is_committed_ = true;
-        db_.lgr()->debug("Committed active transaction");
+        // Some nested operation was destroyed without committing.  Its writes
+        // are in this transaction, so committing would persist a partial
+        // change — exactly the failure this class exists to prevent.
+        db_.rollback_all();
+        throw std::runtime_error(
+            "Transaction rolled back: a nested database operation did not complete");
     }
+
+    db_.reset_all_statements();
+    char* err = nullptr;
+    if (sqlite3_exec(db_.db_, "COMMIT;", nullptr, nullptr, &err) != SQLITE_OK)
+    {
+        std::string msg = err ? err : "unknown error";
+        sqlite3_free(err);
+        db_.rollback_all();
+        throw std::runtime_error("Could not commit transaction: " + msg);
+    }
+    db_.lgr()->debug("Committed transaction");
 }
 
 database::database()
@@ -689,7 +741,9 @@ std::uint64_t database::insert_bar(const model::bar& b)
         throw std::runtime_error("Could not insert a bar: "s + error_msg(rc));
     lgr()->debug("Inserted bar: {}", b.to_user_input());
     assert(sqlite3_column_count(raw) == 1);
-    return sqlite3_column_int64(raw, 0);
+    const std::uint64_t new_id = sqlite3_column_int64(raw, 0);
+    ins_b->reset();   // don't leave the statement mid-row
+    return new_id;
 }
 
 std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t chord_id, unsigned index)
@@ -706,7 +760,9 @@ std::uint64_t database::insert_bar_chord(std::uint64_t bar_id, std::uint64_t cho
         throw std::runtime_error("Could not insert a bar chord: "s + error_msg(rc));
     lgr()->debug("Inserted relation bar({}) with chord({}) position {}", bar_id, chord_id, index);
     assert(sqlite3_column_count(raw) == 1);
-    return sqlite3_column_int64(raw, 0);
+    const std::uint64_t new_id = sqlite3_column_int64(raw, 0);
+    ins_bc->reset();   // don't leave the statement mid-row
+    return new_id;
 }
 
 std::uint64_t database::insert_chord(const model::chord& c)
@@ -735,8 +791,11 @@ std::uint64_t database::insert_chord(const model::chord& c)
     {
         assert(sqlite3_column_count(raw) == 1);
         lgr()->debug("Found existing chord: {}", c.to_user_input());
-        return sqlite3_column_int64(raw, 0);
+        const std::uint64_t found_id = sqlite3_column_int64(raw, 0);
+        sel_c->reset();   // don't leave the statement mid-row
+        return found_id;
     }
+    sel_c->reset();
     assert(prepared_statements_.count(statement::INSERT_CHORD) == 1);
     auto& ins_c = prepared_statements_[statement::INSERT_CHORD];
     ins_c->reset();
@@ -761,7 +820,9 @@ std::uint64_t database::insert_chord(const model::chord& c)
         throw std::runtime_error("Could not insert a chord: "s + error_msg(rc));
     assert(sqlite3_column_count(raw) == 1);
     lgr()->debug("Inserted new chord: {}", c.to_user_input());
-    return sqlite3_column_int64(raw, 0);
+    const std::uint64_t new_id = sqlite3_column_int64(raw, 0);
+    ins_c->reset();   // don't leave the statement mid-row
+    return new_id;
 }
 
 playlist_id database::insert_playlist(const model::playlist& pl)
@@ -1130,7 +1191,9 @@ std::uint64_t database::insert_song_bar(std::uint64_t song_id, std::uint64_t bar
         throw std::runtime_error("Could not insert a song bar: "s + error_msg(rc));
     lgr()->debug("Inserted relation song({}) with bar({}) position {}", song_id, bar_id, index);
     assert(sqlite3_column_count(raw) == 1);
-    return sqlite3_column_int64(raw, 0);
+    const std::uint64_t new_id = sqlite3_column_int64(raw, 0);
+    ins_sb->reset();   // don't leave the statement mid-row
+    return new_id;
 }
 
 void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
@@ -1155,6 +1218,14 @@ void database::maybe_remove_chord(std::uint64_t bar_id, std::uint64_t chord_id)
 
 void database::move_to_file(const std::filesystem::path& file_name)
 {
+    // Swapping db_ and prepared_statements_ out from under a live transaction
+    // would strand the BEGIN on a connection that is about to be closed and
+    // leave txn_depth_ describing a connection that no longer exists.  No
+    // caller does this today; the check makes it a loud failure rather than a
+    // quiet corruption if one ever does.
+    if (txn_depth_ != 0)
+        throw std::runtime_error("Cannot save the database to a file while a transaction is open");
+
     auto abs = std::filesystem::absolute(file_name).lexically_normal();
 
     // Write to a sibling temp file first, then atomically rename it over the
@@ -1233,6 +1304,10 @@ void database::move_to_file(const std::filesystem::path& file_name)
 
 void database::open_file(const std::filesystem::path& file_name)
 {
+    // See move_to_file: the connection swap is not safe mid-transaction.
+    if (txn_depth_ != 0)
+        throw std::runtime_error("Cannot open a database file while a transaction is open");
+
     auto abs = std::filesystem::absolute(file_name).lexically_normal();
 
     // Open the target as its own database (which prepares its statements and
@@ -1333,7 +1408,13 @@ void database::remove_song(const std::string& s)
     sqlite3_bind_text(sel_s->ptr(), 1, s.c_str(), s.length(), SQLITE_STATIC);
     auto rc = sqlite3_step(sel_s->ptr());
     if (rc == SQLITE_DONE)
-        return;  // no such song
+    {
+        // Nothing to do — but commit rather than falling out of scope, so this
+        // no-op doesn't mark the transaction abandoned for an enclosing caller.
+        sel_s->reset();
+        tx.commit();
+        return;
+    }
     if (rc != SQLITE_ROW)
         throw std::runtime_error("Could not look up song '"s + s + "': " + error_msg(rc));
     auto song_id = sqlite3_column_int64(sel_s->ptr(), 0);
@@ -1359,9 +1440,17 @@ std::optional<playlist_id> database::playlist_id_of(const std::string& name)
     auto& sel_pl = prepared_statements_[statement::SELECT_PLAYLIST_ID];
     sel_pl->reset();
     sqlite3_bind_text(sel_pl->ptr(), 1, name.c_str(), name.length(), SQLITE_STATIC);
+    // The statement is reset on every exit path.  Returning while it still sat
+    // on its row left an open read transaction on the connection for the rest
+    // of the session.
     auto rc = sqlite3_step(sel_pl->ptr());
     if (rc == SQLITE_ROW)
-        return playlist_id{ sqlite3_column_int64(sel_pl->ptr(), 0) };
+    {
+        const std::int64_t found = sqlite3_column_int64(sel_pl->ptr(), 0);
+        sel_pl->reset();
+        return playlist_id{ found };
+    }
+    sel_pl->reset();
     if (rc == SQLITE_DONE)
         return std::nullopt;
     throw std::runtime_error("Could not look up playlist '"s + name + "': " + error_msg(rc));
@@ -1778,37 +1867,59 @@ std::uint64_t database::time_signature_id(const model::time_signature& ts)
 std::vector<stored_song> database::last_open_songs()
 {
     std::vector<stored_song> result;
-    prepared sel_ids(db_, "SELECT last_open_song_ids FROM metadata;");
-    int rc = sqlite3_step(sel_ids.ptr());
-    if (rc == SQLITE_ROW)
+
+    // Both lookups are fully drained into plain values before any song is
+    // loaded.  select_song() opens a transaction and commits it, and a
+    // statement still stepping on this connection at that moment can block the
+    // COMMIT; the previous shape held the metadata row — and then each name
+    // row — open across the whole load.  Nothing here stays mid-row.
+    std::string id_list;
     {
-        if (sqlite3_column_type(sel_ids.ptr(), 0) == SQLITE_TEXT)
+        prepared sel_ids(db_, "SELECT last_open_song_ids FROM metadata;");
+        int rc = sqlite3_step(sel_ids.ptr());
+        if (rc == SQLITE_ROW)
         {
-            prepared sel_name(db_, "SELECT name FROM song WHERE id = ?1;");
-            std::istringstream in(reinterpret_cast<const char*>(sqlite3_column_text(sel_ids.ptr(), 0)));
-            std::string id;
-            while (std::getline(in, id, ',') && !id.empty())
-            {
-                sel_name.reset();
-                sqlite3_bind_int64(sel_name.ptr(), 1, std::stol(id));
-                int rc2 = sqlite3_step(sel_name.ptr());
-                try
-                {
-                    if (rc2 == SQLITE_ROW)
-                        result.push_back(select_song(reinterpret_cast<const char*>(sqlite3_column_text(sel_name.ptr(), 0))));
-                    else
-                        lgr()->warn("Unable to look up previously open song with id "s + id + ": " + error_msg(rc2));
-                }
-                catch (std::runtime_error& e)
-                {
-                    lgr()->warn("Error loading previously open song with id "s + id + ": " + e.what());
-                }
-            }
+            if (sqlite3_column_type(sel_ids.ptr(), 0) == SQLITE_TEXT)
+                id_list = reinterpret_cast<const char*>(sqlite3_column_text(sel_ids.ptr(), 0));
         }
+        else if (rc != SQLITE_DONE)
+        {
+            throw std::runtime_error("Error looking up last open songs: "s + error_msg(rc));
+        }
+        sel_ids.reset();
     }
-    else if (rc != SQLITE_DONE)
+    if (id_list.empty())
+        return result;
+
+    std::vector<std::pair<std::string, std::string>> to_load;   // (id, name)
     {
-        throw std::runtime_error("Error looking up last open songs: "s + error_msg(rc));
+        prepared sel_name(db_, "SELECT name FROM song WHERE id = ?1;");
+        std::istringstream in(id_list);
+        std::string id;
+        while (std::getline(in, id, ',') && !id.empty())
+        {
+            sel_name.reset();
+            sqlite3_bind_int64(sel_name.ptr(), 1, std::stol(id));
+            int rc2 = sqlite3_step(sel_name.ptr());
+            if (rc2 == SQLITE_ROW)
+                to_load.emplace_back(
+                    id, reinterpret_cast<const char*>(sqlite3_column_text(sel_name.ptr(), 0)));
+            else
+                lgr()->warn("Unable to look up previously open song with id "s + id + ": " + error_msg(rc2));
+        }
+        sel_name.reset();
+    }
+
+    for (const auto& [id, name] : to_load)
+    {
+        try
+        {
+            result.push_back(select_song(name));
+        }
+        catch (std::runtime_error& e)
+        {
+            lgr()->warn("Error loading previously open song with id "s + id + ": " + e.what());
+        }
     }
     return result;
 }
