@@ -44,7 +44,18 @@ private:
                           QString& accidental,
                           QString& suffix);
 
+    // SMuFL metronome-mark glyph (metNote*) for a beat unit.  These are
+    // complete notes — notehead, stem and flag — unlike the bare notehead
+    // codepoints, so every value renders with the stem it should have.
+    // Dotted values return their undotted glyph; the dot is painted
+    // separately by paint().
     static QString tempo_glyph(model::chord::time beat_unit);
+
+    static bool tempo_is_dotted(model::chord::time beat_unit);
+
+    // Reference glyph used to derive one shared font size for the whole
+    // metronome set — see the sizing comment in paint().
+    static constexpr char16_t k_tempo_ref_glyph = u'\uECA5'; // metNoteQuarterUp
 
     static constexpr qreal k_element_spacing = 12.0;
     static constexpr qreal k_top_padding    = 16.0;

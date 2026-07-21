@@ -36,29 +36,12 @@ static QString prettify_extensions(const std::string& ext_str)
 }
 
 // ---------------------------------------------------------------------------
-// Public: size_hint
+// Private: content_row_width
 // ---------------------------------------------------------------------------
-QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
+qreal chord_renderer::content_row_width(const model::chord& ch, const Fonts& fonts)
 {
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
-
-    // A rest occupies no chord-number zone; its width is just the rest glyph
-    // (plus an augmentation dot when dotted) drawn in the rhythm row.  Height
-    // stays the standard chord-slot height so the row lines up with neighbours.
-    if (ch.is_rest())
-    {
-        const model::chord::time dur =
-            ch.duration().value_or(model::chord::time::WHOLE);
-        QFont rf = rest_font(fonts, k_rhythm_row_px);
-        QFontMetricsF rfm(rf);
-        qreal w = rfm.tightBoundingRect(rest_glyph_for(dur)).width();
-        if (is_dotted(dur))
-            w += k_element_spacing + 2.0 * 1.8;   // dot diameter
-        w += 4.0;                                  // a little horizontal breathing room
-        qreal total_height = nmFm.height() / k_number_zone_ratio;
-        return QSizeF(w, total_height);
-    }
 
     qreal row_width = 0;
 
@@ -94,6 +77,58 @@ QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
             row_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
         row_width += nmFm.horizontalAdvance(QString::number(*ch.bass_note()));
     }
+
+    return row_width;
+}
+
+// ---------------------------------------------------------------------------
+// Public: size_hint
+// ---------------------------------------------------------------------------
+QSizeF chord_renderer::size_hint(const model::chord& ch, const Fonts& fonts)
+{
+    QFontMetricsF nmFm(fonts.number);
+
+    // A rest occupies no chord-number zone; its width is just the rest glyph
+    // (plus an augmentation dot when dotted) drawn in the rhythm row.  Height
+    // stays the standard chord-slot height so the row lines up with neighbours.
+    if (ch.is_rest())
+    {
+        const model::chord::time dur =
+            ch.duration().value_or(model::chord::time::WHOLE);
+        QFont rf = rest_font(fonts, k_rhythm_row_px);
+        QFontMetricsF rfm(rf);
+        qreal w = rfm.tightBoundingRect(rest_glyph_for(dur)).width();
+        if (is_dotted(dur))
+            w += k_element_spacing + 2.0 * 1.8;   // dot diameter
+        w += 4.0;                                  // a little horizontal breathing room
+        qreal total_height = nmFm.height() / k_number_zone_ratio;
+        return QSizeF(w, total_height);
+    }
+
+    qreal row_width = content_row_width(ch, fonts);
+
+    // NOTE: size_hint deliberately does NOT reserve extra width for a
+    // diamond's overhang, even though the diamond drawn around this chord's
+    // ink is genuinely wider than the ink (see diamond_bounds).  An earlier
+    // version of this function did grow row_width here, on the reasoning
+    // that the extra width stops a wide diamond from bleeding into its
+    // neighbour's slot within the same bar.  That reasoning was correct only
+    // for THIS bar in isolation — but this return value feeds
+    // bar_renderer::width_hint's total for the whole bar, which becomes
+    // col_widths[j] in song_body_widget's layout: the width of bar-column j,
+    // shared as the MAX across every line that has a bar in that position.
+    // Growing it for one diamond chord on one line therefore widened that
+    // column on every OTHER line too — and since an ordinary bar stretches
+    // its chords to fill its full column width (see the comment on that in
+    // bar_renderer::paint), chords on lines with no diamond at all visibly
+    // shifted right, and a line-extension continuation dot (anchored to a
+    // bar's rect.right(), which is exactly this widened column width)
+    // shifted with them.  Local correctness for one chord, at the cost of
+    // cross-line misalignment for everything else sharing its column — not
+    // a trade worth making silently, so it's reverted here.  A diamond may
+    // once again overhang slightly into the inter-chord gap on an unusually
+    // wide symbol; see chord_renderer::paint, which no longer insets for it
+    // either, for the matching half of this revert.
 
     qreal number_height = nmFm.height();
     qreal total_height  = number_height / k_number_zone_ratio;
@@ -132,6 +167,14 @@ void chord_renderer::paint(QPainter& painter,
     QRectF artRect(rect.left(), rect.top(), rect.width(), art_height);
     QRectF numRect(rect.left(), rect.top() + top_offset,
                    rect.width(), rect.height() - top_offset);
+
+    // NOTE: this used to inset numRect for a diamond chord, matching extra
+    // width size_hint reserved for the diamond's overhang.  size_hint no
+    // longer reserves that width — see its comment for why — so there is
+    // nothing here to centre into any more; insetting against a rect that
+    // was never widened would just squeeze the content into less room than
+    // it needs.  A wide diamond can once again overhang slightly past this
+    // slot's edges into the inter-chord gap.
 
     // Paint number row; get tight rect around the number glyph (for
     // articulation centring) and the full symbol's ink extent (for the
@@ -345,30 +388,6 @@ QRectF chord_renderer::paint_number_row(QPainter& painter,
 {
     QFontMetricsF nmFm(fonts.number);
     QFontMetricsF modFm(fonts.modifier);
-
-    // Compute total row width for centering
-    qreal total_width = 0;
-    if (ch.step())
-        total_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
-    total_width += nmFm.horizontalAdvance(QString::number(ch.number()));
-    if (ch.mode() == model::chord::type::MINOR)
-        total_width += modFm.horizontalAdvance("-") + k_element_spacing;
-    else if (ch.mode() == model::chord::type::DIMINISHED)
-        total_width += modFm.horizontalAdvance(kDiminish) + k_element_spacing;
-    else if (ch.mode() == model::chord::type::AUGMENTED)
-        total_width += modFm.horizontalAdvance("+") + k_element_spacing;
-    if (!ch.extensions().empty())
-        total_width += modFm.horizontalAdvance(
-                          prettify_extensions(ch.extensions())) + k_element_spacing;
-    if (ch.bass_note())
-    {
-        // Slash, its accidental, and the bass digit all draw at number size
-        // now (see paint_bass_note), so their width is reserved against nmFm.
-        total_width += nmFm.horizontalAdvance("/") + k_element_spacing;
-        if (ch.bass_note_step())
-            total_width += nmFm.horizontalAdvance(kFlat) + k_element_spacing;
-        total_width += nmFm.horizontalAdvance(QString::number(*ch.bass_note()));
-    }
 
     // Compute baseline so the tight ink bounds of the number are centred in rowRect.
     QString num_str = QString::number(ch.number());

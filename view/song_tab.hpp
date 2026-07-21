@@ -117,6 +117,16 @@ signals:
     // tab label and the side-panel song list.
     void renamed();
 
+    // Emitted the first time this tab's song acquires a database row id —
+    // i.e. right after its first successful save.  Before that, song_identity()
+    // returns nullopt and main_window::persist_open_tabs() has nothing to
+    // record for this tab; a brand-new song otherwise stayed unremembered
+    // in the last-open-tabs list until some unrelated event (closing another
+    // tab, a reorder, a rename) happened to call persist_open_tabs() again.
+    // Only fires once per tab, on that first id assignment — later saves
+    // don't re-emit it, since membership hasn't changed after that point.
+    void saved();
+
 protected:
     // Capture every paint event from the song_widget (and its child
     // song_body_widget) so we can restart the debounce timer.  Using

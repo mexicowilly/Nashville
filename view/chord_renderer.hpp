@@ -175,6 +175,14 @@ public:
                                     qreal row_right);
 
 private:
+    // Sum of the widths of every element size_hint lays out left-to-right —
+    // number, step, mode, extensions, bass note.  This IS size_hint's
+    // returned width for a non-diamond, non-rest chord; factored out mainly
+    // so paint_number_row's own former copy of the same formula (dead code —
+    // computed, never read) could be deleted without leaving the formula
+    // living in only one undocumented place.
+    static qreal content_row_width(const model::chord& ch, const Fonts& fonts);
+
     // --- Articulation helpers ---
     static void paint_staccato(QPainter& painter, const QRectF& artRect,
                                qreal number_center_x);
@@ -280,7 +288,7 @@ private:
     static constexpr qreal k_tied_overshoot      = 0.15;
     // Radius of the staccato diamond, and its clearance above the floor of
     // the rect it is drawn in.
-    static constexpr qreal k_staccato_dot_r      = 3.0;
+    static constexpr qreal k_staccato_dot_r      = 1.5;
     static constexpr qreal k_staccato_floor_gap  = 1.0;
 
     // Extra horizontal padding between chord elements

@@ -22,12 +22,12 @@ static unsigned duration_in_16ths(model::chord::time t);
 // substitute for the staff lines that would normally anchor the dots'
 // vertical position in conventional notation.
 namespace {
-constexpr qreal k_thick_w   = 3.0;   // thick vertical bar
+constexpr qreal k_thick_w   = 2.0;   // thick vertical bar
 constexpr qreal k_thin_w    = 1.0;   // thin vertical bar
-constexpr qreal k_bars_gap  = 3.0;   // gap between thick and thin
-constexpr qreal k_dot_r     = 1.6;   // dot radius
+constexpr qreal k_bars_gap  = 2.0;   // gap between thick and thin
+constexpr qreal k_dot_r     = 1.0;   // dot radius
 constexpr qreal k_dot_inset = 4.0;   // dot offset from the bar's centre
-constexpr qreal k_wing_len  = 6.0;   // length of each wing stroke
+constexpr qreal k_wing_len  = 5.0;   // length of each wing stroke
 constexpr qreal k_wing_dy   = 3.0;   // vertical drop from bar end to wing tip
 
 // --- Modulation indicator geometry ---------------------------------------
@@ -149,7 +149,7 @@ qreal bar_renderer::modulation_slot_width(const model::bar& bar,
 qreal bar_renderer::width_hint(const model::bar& bar,
                               qreal /*height*/,
                               const chord_renderer::Fonts& fonts,
-                              bool draw_begin_repeat,
+                              bool /*draw_begin_repeat*/,
                               bool draw_end_repeat,
                               qreal modulation_slot_w,
                               bool draw_beat_parens)
@@ -163,12 +163,16 @@ qreal bar_renderer::width_hint(const model::bar& bar,
         // sliver — visible only as a thin gap — which doesn't read as
         // "a bar landed here."  Reserve the time-sig slot plus one
         // chord's worth of width so the new bar occupies a recognisable
-        // column.  Repeat-mark slots still grow the width when set, in
-        // case the empty bar inherits a BEGIN/END flag from a follow-up
-        // edit.
+        // column.  An end-repeat slot still grows the width when set, in
+        // case the empty bar inherits an END flag from a follow-up edit;
+        // begin-repeat does not need to (see the main path below).
         qreal w = k_time_sig_slot_w + k_empty_bar_chord_slot_w;
-        if (draw_begin_repeat) w += k_repeat_slot_w;
-        if (draw_end_repeat)   w += k_repeat_slot_w;
+        // Begin-repeat draws inside the (usually blank) time-sig slot rather
+        // than needing extra width of its own — see the matching note below,
+        // where width_hint's main path explains why.  End-repeat still gets
+        // its own reserved slot; unlike the time-sig slot, there's nothing
+        // already reserved on the trailing edge for it to share.
+        if (draw_end_repeat) w += k_repeat_slot_w;
         w += modulation_slot_w;
         return w;
     }
@@ -188,10 +192,25 @@ qreal bar_renderer::width_hint(const model::bar& bar,
     total_width += modulation_slot_w;
 
     // Repeat marks each consume a dedicated slot so the chord row never
-    // ends up sharing horizontal space with the dots and wings.  Width
-    // is identical on both sides for visual symmetry.
-    if (draw_begin_repeat) total_width += k_repeat_slot_w;
-    if (draw_end_repeat)   total_width += k_repeat_slot_w;
+    // ends up sharing horizontal space with the dots and wings — for
+    // end-repeat, which sits at the bar's trailing edge where nothing else
+    // is reserved.  Begin-repeat is different: it sits at the LEADING edge,
+    // which already carries a k_time_sig_slot_w reservation on every bar
+    // (present whether or not this bar actually shows time-sig digits, so
+    // columns stay aligned).  That slot is blank on the common bar with no
+    // displayed time signature, and k_repeat_slot_w (12px) comfortably fits
+    // inside it (20px) — so begin-repeat draws there instead of demanding
+    // its own additional width.  Doing it this way, rather than adding a
+    // slot of its own, is what keeps a begin-repeat bar's chord number at
+    // the same x as every other bar in its column: reserving separate width
+    // pushed chords_left rightward for that one bar while every column-mate
+    // without the flag stayed put, which is exactly the misalignment this
+    // was chosen to avoid.  (A bar that both changes time signature AND
+    // begins a repeat is the one case this doesn't cover — the two would
+    // compete for the same blank slot — but that combination is rare enough
+    // not to warrant a wider reservation on every other bar to guard against
+    // it.)
+    if (draw_end_repeat) total_width += k_repeat_slot_w;
 
     // Beat-count parentheses.  paint() clamps this bar's chord-scaling to
     // never exceed 1.0 (see the scale computation there), so a beat-
@@ -351,19 +370,31 @@ void bar_renderer::paint(QPainter& painter,
     qreal rhythm_row_h = line_duration_mode ? k_rhythm_row_px : rect.height() * k_rhythm_row_ratio;
 
     // --- Layout: reserve slots for repeat marks first ---
-    // The repeat-mark slots sit at the bar's outer edges, OUTSIDE the
-    // time-signature slot's left position — i.e. the begin-repeat is
-    // the leftmost element of the bar, the end-repeat the rightmost.
-    // Reserving them up-front keeps the chord-row math independent of
-    // whether repeat marks are drawn (they just shrink the available
-    // chord-row width on the affected sides).
+    // End-repeat sits at the bar's trailing edge, where nothing else is
+    // reserved, so it gets a dedicated slot carved out of interior_right —
+    // shrinking the available chord-row width on that side without moving
+    // where content starts.
+    //
+    // Begin-repeat does NOT get the equivalent treatment on the left.  It is
+    // drawn inside the k_time_sig_slot_w reservation below, which every bar
+    // already carries (blank on a bar with no displayed time signature) —
+    // see width_hint for why.  interior_left therefore never moves for
+    // begin-repeat, and neither does chords_left: every bar in a column
+    // starts its chord number at the same x whether or not that particular
+    // bar shows the mark.  Shifting interior_left here, as this used to do,
+    // pushed a begin-repeat bar's number right of every other bar in its
+    // column — those bars had no such shift, since draw_begin_repeat is
+    // per-bar, not shared across the column the way this reservation is.
     qreal begin_repeat_left = rect.left();
     qreal end_repeat_right  = rect.right();
-    qreal interior_left  = rect.left()  + (draw_begin_repeat ? k_repeat_slot_w : 0.0);
-    qreal interior_right = rect.right() - (draw_end_repeat   ? k_repeat_slot_w : 0.0);
+    qreal interior_left  = rect.left();
+    qreal interior_right = rect.right() - (draw_end_repeat ? k_repeat_slot_w : 0.0);
 
     // --- Time signature: always reserve k_time_sig_slot_w so chord columns align ---
-    // Paint glyphs only when this bar actually has a time sig change.
+    // Paint glyphs only when this bar actually has a time sig change.  A
+    // begin-repeat mark, when this bar has one, is painted inside this same
+    // reserved slot (see paint_repeat_mark below) rather than pushing
+    // chords_left past it.
     qreal chords_left = interior_left + k_time_sig_slot_w;
 
     if (bar.time_sig())

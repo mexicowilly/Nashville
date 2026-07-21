@@ -189,57 +189,118 @@ void margin_renderer::paint(QPainter& painter,
     // 3. Tempo — note glyph (Bravura) + " = " + BPM (Georgia), centered
     // ----------------------------------------------------------------
     auto [bpm, beat_unit] = song.tempo();
-    QString glyph_str = tempo_glyph(beat_unit);
-    QString text_str  = " = " + QString::number(bpm);
+    QString    glyph_str = tempo_glyph(beat_unit);
+    const bool dotted    = tempo_is_dotted(beat_unit);
+    QString    text_str  = " = " + QString::number(bpm);
 
-    // Scale Bravura so its glyph cap-height matches Georgia's.
+    // Scale Bravura from a single *reference* glyph rather than from the
+    // glyph actually being drawn.  SMuFL metronome notes have intrinsic
+    // relative sizes — a whole note is a short wide oval with no stem, a
+    // quarter is tall and thin — so sizing each one individually to the same
+    // ink height blows the shorter glyphs up by several times (a bare whole
+    // note is ~250 units against the quarter's ~830, i.e. 3.3x too big).
+    // One shared scale factor keeps the set in correct relative proportion,
+    // with the quarter note's ink matching Georgia's cap height.
     QFont scaled_music = music_font;
     {
         QFontMetricsF mfm(music_font);
-        QRectF gtbr = mfm.tightBoundingRect(glyph_str);
+        QRectF ref_tbr = mfm.tightBoundingRect(QString(QChar(k_tempo_ref_glyph)));
         qreal target_h = base_fm.ascent();  // match Georgia cap height
-        if (gtbr.height() > 0.0)
-            scaled_music.setPointSizeF(music_font.pointSizeF() * (target_h / gtbr.height()));
+        if (ref_tbr.height() > 0.0)
+            scaled_music.setPointSizeF(music_font.pointSizeF() * (target_h / ref_tbr.height()));
     }
     QFontMetricsF scaled_mfm(scaled_music);
 
-    qreal glyph_w = scaled_mfm.horizontalAdvance(glyph_str);
+    // Compensate for any negative left bearing in the Bravura glyph.
+    QRectF gtbr = scaled_mfm.tightBoundingRect(glyph_str);
+
+    // Augmentation dot for dotted beat units, painted as a filled circle to
+    // the right of the note (matching how chord_renderer dots rests in the
+    // rhythm row).  Sized off the cap height so it tracks font_scale.
+    const qreal dot_r    = dotted ? std::max(1.0, base_fm.ascent() * 0.075) : 0.0;
+    const qreal dot_gap  = dotted ? dot_r * 1.5 : 0.0;
+    const qreal dot_span = dotted ? (dot_gap + dot_r * 2.0) : 0.0;
+
+    qreal glyph_w = scaled_mfm.horizontalAdvance(glyph_str) + dot_span;
     qreal text_w  = base_fm.horizontalAdvance(text_str);
     qreal total_w = glyph_w + text_w;
     qreal start_x = cx - total_w / 2.0;
     qreal baseline_y = y + base_fm.ascent();
 
-    // Compensate for any negative left bearing in the Bravura glyph.
-    QRectF gtbr = scaled_mfm.tightBoundingRect(glyph_str);
     qreal glyph_draw_x = start_x - std::min(0.0, gtbr.left());
 
+    // Vertical alignment.  Bravura centres its noteheads on the baseline, so
+    // drawing the glyph on the text baseline leaves the head's centre a half
+    // x-height below the ink of "= NNN" — the number reads as floating above
+    // the note.  Engraving convention puts the notehead level with the middle
+    // of the equals sign, so lift the glyph by the difference between the two
+    // ink centres.  Both are measured rather than assumed, so the alignment
+    // holds across font_scale and any font substitution.
+    qreal head_centre = 0.0;
+    {
+        QRectF head_tbr = scaled_mfm.tightBoundingRect(QString(QChar(u'\uE0A4')));
+        if (head_tbr.height() > 0.0)
+            head_centre = (head_tbr.top() + head_tbr.bottom()) / 2.0;
+    }
+    qreal eq_centre = 0.0;
+    {
+        QRectF eq_tbr = base_fm.tightBoundingRect("=");
+        if (eq_tbr.height() > 0.0)
+            eq_centre = (eq_tbr.top() + eq_tbr.bottom()) / 2.0;  // negative: above baseline
+    }
+    const qreal glyph_baseline = baseline_y + eq_centre - head_centre;
+
     painter.setFont(scaled_music);
-    painter.drawText(QPointF(glyph_draw_x, baseline_y), glyph_str);
+    painter.setPen(QPen(Qt::black, 1.0));
+    painter.drawText(QPointF(glyph_draw_x, glyph_baseline), glyph_str);
+
+    if (dotted)
+    {
+        // Dot rides at the notehead's centre, which is where the equals sign
+        // now sits too.
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::black);
+        painter.drawEllipse(
+            QPointF(glyph_draw_x + gtbr.right() + dot_gap + dot_r,
+                    glyph_baseline + head_centre),
+            dot_r, dot_r);
+        painter.restore();
+    }
 
     painter.setFont(base_font);
+    painter.setPen(QPen(Qt::black, 1.0));
     painter.drawText(QPointF(start_x + glyph_w, baseline_y), text_str);
 
     if (out_layout)
     {
         qreal pad_h = 6.0;
         qreal pad_v = 2.0;
+
+        // The glyph now sits above the text baseline's cap line, so grow the
+        // hit rects upward to whichever of the two starts higher.
+        qreal glyph_top = glyph_baseline + gtbr.top();
+        qreal rect_top  = std::min(y, glyph_top) - pad_v;
+        qreal rect_h    = (y + row_h) - rect_top + pad_v;
+
         out_layout->tempo_rect = QRectF(start_x - pad_h,
-                                        y - pad_v,
+                                        rect_top,
                                         total_w + pad_h * 2.0,
-                                        row_h + pad_v * 2.0);
+                                        rect_h);
 
         // Sub-rects so the glyph and the BPM number can be clicked
         // independently.  Glyph hit-target hugs the glyph; BPM hit-target
         // covers the " = NNN" text (the equals sign goes with the number
         // so the clickable region looks visually balanced).
         out_layout->tempo_glyph_rect = QRectF(start_x - pad_h,
-                                              y - pad_v,
+                                              rect_top,
                                               glyph_w + pad_h,
-                                              row_h + pad_v * 2.0);
+                                              rect_h);
         out_layout->tempo_bpm_rect   = QRectF(start_x + glyph_w,
-                                              y - pad_v,
+                                              rect_top,
                                               text_w + pad_h,
-                                              row_h + pad_v * 2.0);
+                                              rect_h);
     }
 
     painter.restore();
@@ -296,22 +357,40 @@ void margin_renderer::parse_key(const std::string& key,
 // ---------------------------------------------------------------------------
 QString margin_renderer::tempo_glyph(model::chord::time beat_unit)
 {
+    // SMuFL metronome marks (U+ECA0 block).  These are purpose-built for
+    // "note = NNN" tempo indications: each is a complete note with the
+    // correct stem and flag, drawn at a consistent optical weight.  The
+    // plain Unicode music characters (U+2669 ♩, U+266A ♪) have no whole- or
+    // half-note counterparts, which is why the previous mixed approach fell
+    // back to bare noteheads for those two values.
     switch (beat_unit)
     {
-        case model::chord::time::QUARTER:
-        case model::chord::time::DOTTED_QUARTER:
-            return "\u2669"; // ♩
-        case model::chord::time::EIGHTH:
-        case model::chord::time::DOTTED_EIGHTH:
-            return "\u266A"; // ♪
+        case model::chord::time::WHOLE:
+            return "\uECA2"; // metNoteWhole (stemless by design)
         case model::chord::time::HALF:
         case model::chord::time::DOTTED_HALF:
-            return "\uE0A3"; // Bravura: noteheadHalf (stem drawn separately — acceptable here)
-        case model::chord::time::WHOLE:
-            return "\uE0A2"; // Bravura: noteheadWhole
+            return "\uECA3"; // metNoteHalfUp
+        case model::chord::time::QUARTER:
+        case model::chord::time::DOTTED_QUARTER:
+            return "\uECA5"; // metNoteQuarterUp
+        case model::chord::time::EIGHTH:
+        case model::chord::time::DOTTED_EIGHTH:
+            return "\uECA7"; // metNote8thUp
+        case model::chord::time::SIXTEENTH:
+            return "\uECA9"; // metNote16thUp
         default:
-            return "\u2669";
+            return "\uECA5";
     }
+}
+
+// ---------------------------------------------------------------------------
+// tempo_is_dotted
+// ---------------------------------------------------------------------------
+bool margin_renderer::tempo_is_dotted(model::chord::time beat_unit)
+{
+    return beat_unit == model::chord::time::DOTTED_EIGHTH  ||
+           beat_unit == model::chord::time::DOTTED_QUARTER ||
+           beat_unit == model::chord::time::DOTTED_HALF;
 }
 
 } // namespace nashville::view

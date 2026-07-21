@@ -796,6 +796,14 @@ std::uint64_t database::insert_chord(const model::chord& c)
         return found_id;
     }
     sel_c->reset();
+    // SQLITE_DONE means the probe genuinely found no matching chord — proceed
+    // to insert.  Anything else (SQLITE_ERROR, SQLITE_BUSY, ...) is a failed
+    // query, not a negative result, and must not be treated as "insert a new
+    // one": doing so silently created a duplicate chord row on every transient
+    // error or lock contention the probe hit.
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error("Could not look up chord '"s + c.to_user_input()
+                                 + "': " + error_msg(rc));
     assert(prepared_statements_.count(statement::INSERT_CHORD) == 1);
     auto& ins_c = prepared_statements_[statement::INSERT_CHORD];
     ins_c->reset();
@@ -943,6 +951,23 @@ void database::write_song_body(std::int64_t song_id, const model::song& s,
             "database. Keeping the existing bars to prevent data loss.",
             s.name(), song_id);
         return;
+    }
+
+    // Tripwire: an authorised empty write that is ABOUT to wipe a chart that
+    // really did have bars is the exact path that has caused real data loss
+    // before (see song_tab's allow_empty_persist_once_) — the backstop above
+    // was bypassed on purpose, not because there was nothing to lose.  That
+    // should only ever happen right after a confirmed "delete all bars", so
+    // logging it here costs nothing in the common case and gives a future
+    // sighting of the same symptom an immediate answer: if this line is in
+    // the log at the right time, the wipe was authorised and something
+    // upstream authorised it wrongly; if it isn't, it's a new bug.
+    if (s.bars().empty() && allow_empty_bars && song_has_bars(song_id))
+    {
+        lgr()->warn(
+            "Writing an authorised empty bar set for song '{}' (id {}), "
+            "replacing a previously non-empty chart.",
+            s.name(), song_id);
     }
 
     // Clear any bars from a previous save before writing the current set.

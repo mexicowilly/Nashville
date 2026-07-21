@@ -1847,7 +1847,7 @@ void song_body_widget::paint_continuation_dot(QPainter& painter,
                                            qreal num_center_y) const
 {
     painter.save();
-    constexpr qreal dot_r = 3.0;
+    constexpr qreal dot_r = 1.5;
     qreal cx = preceding_bar_rect.right() + k_inter_bar_spacing / 2.0;
     qreal cy = num_center_y;
     painter.setBrush(Qt::black);
@@ -1963,8 +1963,15 @@ void song_body_widget::paint_beat_dots(QPainter& painter,
     // right edge of the last chord's *natural* (unscaled) glyph width — the
     // same value bar_renderer uses.  We replicate that here so the dots span
     // exactly [chords_left, last_chord_right], the same content region.
-    const qreal interior_left  = bl.rect.left()
-                                + (bl.draw_begin_repeat ? bar_renderer::k_repeat_slot_w : 0.0);
+    //
+    // interior_left does NOT shift for begin-repeat, matching bar_renderer's
+    // paint(): a begin-repeat mark draws inside the (usually blank)
+    // k_time_sig_slot_w reservation rather than claiming a slot of its own,
+    // specifically so a begin-repeat bar's content starts at the same x as
+    // every other bar in its column.  If this mirror shifted while the real
+    // paint() didn't, the dot row would drift right of the chords it's
+    // supposed to sit above on exactly the bars this was written to fix.
+    const qreal interior_left  = bl.rect.left();
     const qreal interior_right = bl.rect.right()
                                  - (bl.draw_end_repeat  ? bar_renderer::k_repeat_slot_w : 0.0);
     // The modulation indicator (if any) sits between the time-sig slot and

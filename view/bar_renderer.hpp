@@ -68,10 +68,17 @@ public:
                                      bool line_duration_mode,
                                      bool line_has_articulation);
 
-    // Width of a repeat-mark slot at the left or right edge of a bar.
+    // Width of a repeat-mark slot at the RIGHT edge of a bar (end-repeat).
     // Public so the layout pass can include it in width budgeting and
     // volta-bracket placement.  Sized to give the wings room to extend
     // outward without colliding with the bar's chord column.
+    //
+    // Begin-repeat does not use a dedicated slot of its own — it is small
+    // enough (12px) to draw inside the k_time_sig_slot_w reservation below,
+    // which every bar already carries.  See width_hint's comment for why:
+    // in short, a real per-bar left slot would shift that one bar's chord
+    // number relative to every other bar in its column, since the flag is
+    // per-bar while the column width is shared.
     static constexpr qreal k_repeat_slot_w = 12.0;
 
     // Width always reserved at the left of a bar for a time-signature glyph.

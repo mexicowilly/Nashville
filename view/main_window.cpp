@@ -793,16 +793,21 @@ void main_window::add_tab(std::unique_ptr<model::song> song,
     // Membership just changed; record it now rather than waiting for
     // whatever the next unrelated event happens to be.  A never-saved song
     // has no id yet (song_identity() is nullopt) and is simply omitted from
-    // this write, same as persist_open_tabs always does for it.
-    //
-    // Known gap: a brand-new song's tab has no id until its first successful
-    // save, which happens on song_tab's own debounced timer with nothing
-    // reported back here.  Such a tab is therefore still unremembered until
-    // some OTHER event re-triggers persist_open_tabs() (renaming it, opening
-    // or closing a different tab, reordering).  Closing that gap needs a
-    // signal from song_tab on first save, which touches song_tab.hpp/.cpp —
-    // out of scope here since I don't have the header in front of me.
+    // this write, same as persist_open_tabs always does for it — it is
+    // picked up by the write below once its first save assigns one.
     persist_open_tabs();
+
+    // A brand-new song's tab has no id until its first successful save,
+    // which runs on song_tab's own debounced timer with nothing reported
+    // back here — so the write above omits it, and it stayed unremembered
+    // until some unrelated event (renaming it, opening or closing a
+    // different tab, reordering) happened to call persist_open_tabs()
+    // again.  song_tab::saved closes that gap: it fires exactly once, on
+    // the transition from no id to an id, so a song created and never
+    // otherwise touched still ends up recorded.
+    connect(tab, &song_tab::saved, this, [this]() {
+        persist_open_tabs();
+    });
 }
 
 void main_window::restore_open_tabs()

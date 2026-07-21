@@ -253,6 +253,12 @@ void song_tab::save()
 
     try
     {
+        // This is the branch a brand-new song's first save takes — id_ is
+        // still unset going in.  Detect that here, before insert_song()
+        // assigns it, so saved() fires exactly once: on the transition from
+        // no id to an id, never on the ordinary updates after.
+        const bool first_save = !id_;
+
         if (id_)
             // Only a save that the user explicitly authorised by confirming
             // "delete all bars" may write an empty bar set.  Derive this from
@@ -277,6 +283,16 @@ void song_tab::save()
         // only rebuilds the hidden view page).
         if (info_panel_)
             info_panel_->refresh_view();
+
+        // Tell main_window this tab now has an id worth remembering in the
+        // last-open-tabs list.  Only after the write above actually
+        // succeeded — an exception skips this line, same as it skips
+        // last_saved_'s refresh, so a failed first save doesn't announce an
+        // id that (for update_song's case) was never really assigned, or
+        // (for insert_song's case) get emitted for a save that's about to
+        // be reported as failed below anyway.
+        if (first_save)
+            emit saved();
     }
     catch (const std::exception& e)
     {
