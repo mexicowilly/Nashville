@@ -218,7 +218,7 @@ void margin_renderer::paint(QPainter& painter,
     // the right of the note (matching how chord_renderer dots rests in the
     // rhythm row).  Sized off the cap height so it tracks font_scale.
     const qreal dot_r    = dotted ? std::max(1.0, base_fm.ascent() * 0.075) : 0.0;
-    const qreal dot_gap  = dotted ? dot_r * 1.5 : 0.0;
+    const qreal dot_gap  = dotted ? dot_r * 1.0 : 0.0;
     const qreal dot_span = dotted ? (dot_gap + dot_r * 2.0) : 0.0;
 
     qreal glyph_w = scaled_mfm.horizontalAdvance(glyph_str) + dot_span;
